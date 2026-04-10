@@ -3,7 +3,7 @@
 <package format="3">
   <name>vidalia_bringup</name>
   <version>0.0.0</version>
-  <description>Bringup for Farm-ng Amiga SLAM stack (VLP-16 + RTAB-Map + odometry bridge) — ROS 2 Foxy / Ubuntu 20.04</description>
+  <description>Bringup for Farm-ng Amiga SLAM stack (VLP-16 + RTAB-Map + odometry bridge) — Vidalia deployment, ROS 2 Foxy</description>
   <maintainer email="59524535+muneebelahimalik@users.noreply.github.com">muneebelahimalik</maintainer>
   <license>MIT</license>
 
@@ -33,7 +33,7 @@
   <exec_depend>velodyne_driver</exec_depend>
   <exec_depend>velodyne_pointcloud</exec_depend>
 
-  <!-- Runtime: SLAM stack (Foxy uses rtabmap_ros, not split packages) -->
+  <!-- Runtime: SLAM stack (Foxy uses unified rtabmap_ros package) -->
   <exec_depend>rtabmap_ros</exec_depend>
 
   <!-- Runtime: optional EKF fusion -->

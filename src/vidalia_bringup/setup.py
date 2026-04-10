@@ -20,7 +20,7 @@ setup(
     zip_safe=True,
     maintainer='muneebelahimalik',
     maintainer_email='59524535+muneebelahimalik@users.noreply.github.com',
-    description='Bringup for Farm-ng Amiga SLAM stack (ROS 2 Foxy)',
+    description='Bringup for Farm-ng Amiga SLAM stack — Vidalia deployment (ROS 2 Foxy)',
     license='MIT',
     entry_points={
         'console_scripts': [
