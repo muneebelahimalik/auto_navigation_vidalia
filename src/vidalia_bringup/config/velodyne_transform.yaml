@@ -1,0 +1,11 @@
+velodyne_transform_node:
+  ros__parameters:
+    model: VLP16
+    calibration: /opt/ros/foxy/share/velodyne_pointcloud/params/VLP16db.yaml
+    min_range: 0.5
+    max_range: 100.0
+    organize_cloud: false
+    target_frame: "velodyne"
+    fixed_frame: "velodyne"
+    view_direction: 0.0
+    view_width: 6.283185307
