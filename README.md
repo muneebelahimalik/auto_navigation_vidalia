@@ -1,8 +1,7 @@
-# Vidalia Auto Navigation Workspace
+# Auto Navigation Vidalia
 
-ROS 2 Foxy Fitzroy + Ubuntu 20.04 (Focal) + VLP-16
+ROS2 Foxy Fitzroy + VLP-16 | Ubuntu 20.04.6 LTS (Focal Fossa)
 
-Migrated from `amiga_slam` for the Vidalia deployment target.
-- Package: `vidalia_bringup`
-- Workspace: `~/auto_navigation_vidalia`
-- ROS distro: `foxy`
+Autonomous 3D SLAM and navigation for the farm-ng Amiga robot using a Velodyne VLP-16 LiDAR.
+
+Migrated from amiga_slam (ROS2 Humble) and adapted for ROS2 Foxy on Ubuntu 20.04.
