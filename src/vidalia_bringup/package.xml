@@ -1,0 +1,58 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>vidalia_bringup</name>
+  <version>0.0.0</version>
+  <description>Bringup for Farm-ng Amiga SLAM stack (VLP-16 + RTAB-Map + odometry bridge) — ROS 2 Foxy / Ubuntu 20.04</description>
+  <maintainer email="59524535+muneebelahimalik@users.noreply.github.com">muneebelahimalik</maintainer>
+  <license>MIT</license>
+
+  <!-- Python test linters -->
+  <test_depend>ament_copyright</test_depend>
+  <test_depend>ament_flake8</test_depend>
+  <test_depend>ament_pep257</test_depend>
+  <test_depend>python3-pytest</test_depend>
+
+  <!-- Runtime: Python stdlib supplement -->
+  <exec_depend>python3-yaml</exec_depend>
+  <exec_depend>python3-numpy</exec_depend>
+
+  <!-- Runtime: sensor messages (VLP-16 PointCloud2) -->
+  <exec_depend>sensor_msgs</exec_depend>
+
+  <!-- Runtime: ROS 2 message / TF dependencies for amiga nodes -->
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
+  <exec_depend>nav_msgs</exec_depend>
+  <exec_depend>nav2_msgs</exec_depend>
+  <exec_depend>std_srvs</exec_depend>
+  <exec_depend>tf2_ros</exec_depend>
+  <exec_depend>robot_state_publisher</exec_depend>
+
+  <!-- Runtime: sensor stack -->
+  <exec_depend>velodyne_driver</exec_depend>
+  <exec_depend>velodyne_pointcloud</exec_depend>
+
+  <!-- Runtime: SLAM stack (Foxy uses rtabmap_ros, not split packages) -->
+  <exec_depend>rtabmap_ros</exec_depend>
+
+  <!-- Runtime: optional EKF fusion -->
+  <exec_depend>robot_localization</exec_depend>
+
+  <!-- Runtime: Nav2 autonomous navigation -->
+  <exec_depend>nav2_bringup</exec_depend>
+  <exec_depend>nav2_bt_navigator</exec_depend>
+  <exec_depend>nav2_controller</exec_depend>
+  <exec_depend>nav2_planner</exec_depend>
+  <exec_depend>nav2_behaviors</exec_depend>
+  <exec_depend>nav2_waypoint_follower</exec_depend>
+  <exec_depend>nav2_lifecycle_manager</exec_depend>
+  <exec_depend>nav2_costmap_2d</exec_depend>
+  <exec_depend>dwb_core</exec_depend>
+  <exec_depend>nav2_navfn_planner</exec_depend>
+  <exec_depend>nav2_regulated_pure_pursuit_controller</exec_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>
