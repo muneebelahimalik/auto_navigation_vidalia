@@ -4,8 +4,14 @@ velodyne_transform_node:
     calibration: /opt/ros/foxy/share/velodyne_pointcloud/params/VLP16db.yaml
     min_range: 0.5
     max_range: 100.0
+
+    # Publish an unorganized cloud (height=1), easier for downstream
     organize_cloud: false
+
+    # Do not transform the cloud to another frame here
     target_frame: "velodyne"
     fixed_frame: "velodyne"
+
+    # Full 360 deg
     view_direction: 0.0
     view_width: 6.283185307

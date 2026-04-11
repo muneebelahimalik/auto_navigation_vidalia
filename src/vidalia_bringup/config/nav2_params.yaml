@@ -1,14 +1,20 @@
 # nav2_params.yaml — Nav2 Foxy configuration for the farm-ng Amiga robot.
 #
 # Robot specs:
-#   Footprint  : 1.10 m (L) × 0.93 m (W)   →  ±0.55 m fwd/back, ±0.465 m sides
+#   Footprint  : 1.10 m (L) x 0.93 m (W)   ->  +-0.55 m fwd/back, +-0.465 m sides
 #   Max speed  : 1.5 m/s linear, 1.0 rad/s angular  (hard limits in the bridge)
 #   Drive type : Differential (skid-steer four-wheel)
 #   Sensor     : Velodyne VLP-16 at x=1.13 m, z=0.80 m on base_link
 #
-# Localization: RTAB-Map publishes map->odom TF — no AMCL needed.
+# Localization: RTAB-Map publishes map->odom TF -- no AMCL needed.
 # Obstacle detection: /velodyne_points (PointCloud2) on both costmaps.
+#
+# Typical usage (via localize_nav.launch.py or slam_nav.launch.py):
+#   ros2 launch vidalia_bringup localize_nav.launch.py database_path:=~/maps/field.db
 
+# ---------------------------------------------------------------------------
+# BT Navigator
+# ---------------------------------------------------------------------------
 bt_navigator:
   ros__parameters:
     use_sim_time: false
@@ -41,11 +47,17 @@ bt_navigator:
       - nav2_transform_available_condition_bt_node
       - nav2_time_expired_condition_bt_node
       - nav2_distance_traveled_condition_bt_node
-      - nav2_single_trigger_bt_node
       - nav2_navigate_to_pose_action_bt_node
-      - nav2_planner_selector_bt_node
-      - nav2_controller_selector_bt_node
+      # NOTE: the following plugins were added in Galactic/Humble and are NOT
+      # available in ROS 2 Foxy:
+      #   nav2_navigate_through_poses_action_bt_node
+      #   nav2_compute_path_through_poses_action_bt_node
+      #   nav2_remove_passed_goals_action_bt_node
+      #   nav2_goal_checker_selector_bt_node
 
+# ---------------------------------------------------------------------------
+# Controller Server  (local planner + local costmap)
+# ---------------------------------------------------------------------------
 controller_server:
   ros__parameters:
     use_sim_time: false
@@ -95,6 +107,9 @@ controller_server:
       max_angular_accel: 1.2
       max_robot_pose_search_dist: 10.0
 
+# ---------------------------------------------------------------------------
+# Planner Server  (global planner + global costmap)
+# ---------------------------------------------------------------------------
 planner_server:
   ros__parameters:
     use_sim_time: false
@@ -107,6 +122,9 @@ planner_server:
       use_astar: true
       allow_unknown: true
 
+# ---------------------------------------------------------------------------
+# Behavior Server  (recoveries: spin, back-up, wait)
+# ---------------------------------------------------------------------------
 behavior_server:
   ros__parameters:
     use_sim_time: false
@@ -128,12 +146,19 @@ behavior_server:
     min_rotational_vel: 0.3
     rotational_acc_lim: 1.2
 
+# ---------------------------------------------------------------------------
+# Waypoint Follower
+# ---------------------------------------------------------------------------
 waypoint_follower:
   ros__parameters:
     use_sim_time: false
     loop_rate: 20
     stop_on_failure: false
+    # waypoint_task_executor_plugin / wait_at_waypoint not available in ROS 2 Foxy
 
+# ---------------------------------------------------------------------------
+# Local Costmap   (10 m x 10 m rolling window around the robot)
+# ---------------------------------------------------------------------------
 local_costmap:
   local_costmap:
     ros__parameters:
@@ -169,6 +194,9 @@ local_costmap:
         inflation_radius: 0.75
       always_send_full_costmap: true
 
+# ---------------------------------------------------------------------------
+# Global Costmap   (covers the full map from RTAB-Map)
+# ---------------------------------------------------------------------------
 global_costmap:
   global_costmap:
     ros__parameters:
@@ -207,6 +235,9 @@ global_costmap:
         inflation_radius: 0.75
       always_send_full_costmap: true
 
+# ---------------------------------------------------------------------------
+# Map Saver
+# ---------------------------------------------------------------------------
 map_saver:
   ros__parameters:
     use_sim_time: false
