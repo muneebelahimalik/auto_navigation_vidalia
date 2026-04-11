@@ -1,0 +1,92 @@
+<?xml version="1.0"?>
+<!--
+  Amiga minimal URDF -- base_link + velodyne only (no wheel joints).
+
+  Geometry reference (APPROXIMATE -- measure your physical robot and update):
+    Robot footprint : ~1.10 m (L) x 0.93 m (W)
+    Robot height    : ~0.76 m to top of frame
+    Wheel diameter  : ~0.38 m  ->  wheel axle at z = 0.19 m above ground
+    base_link       : center of footprint, at GROUND LEVEL (z = 0)
+    velodyne origin : where the VLP-16 spin axis intersects the sensor base
+
+  base_link -> velodyne transform (MUST be measured physically and updated):
+    x  =  1.130 m  (44.5 in forward from wheelbase midpoint to LiDAR spin axis)
+    y  =  0.0   m  (centered left-right)
+    z  =  0.800 m  (LiDAR spin axis height above ground)
+    roll  = 0  rad
+    pitch = 0  rad
+    yaw   = 0  rad
+
+  After measuring, update the <origin> below AND the matching static TF args in
+  launch/tf_static_base_to_velodyne.launch.py.
+-->
+<robot name="amiga_min">
+
+  <!-- ===== base_link ===== -->
+  <link name="base_link">
+    <visual>
+      <origin xyz="0 0 0.38" rpy="0 0 0"/>
+      <geometry>
+        <box size="1.10 0.93 0.76"/>
+      </geometry>
+      <material name="grey">
+        <color rgba="0.4 0.4 0.4 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0.38" rpy="0 0 0"/>
+      <geometry>
+        <box size="1.10 0.93 0.76"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <mass value="75.0"/>
+      <origin xyz="0 0 0.38" rpy="0 0 0"/>
+      <inertia ixx="5.0" ixy="0.0" ixz="0.0"
+               iyy="8.0" iyz="0.0"
+               izz="10.0"/>
+    </inertial>
+  </link>
+
+  <!-- ===== velodyne ===== -->
+  <link name="velodyne">
+    <visual>
+      <origin xyz="0 0 0.036" rpy="0 0 0"/>
+      <geometry>
+        <cylinder length="0.072" radius="0.052"/>
+      </geometry>
+      <material name="black">
+        <color rgba="0.1 0.1 0.1 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0.036" rpy="0 0 0"/>
+      <geometry>
+        <cylinder length="0.072" radius="0.052"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <mass value="0.83"/>
+      <origin xyz="0 0 0.036" rpy="0 0 0"/>
+      <inertia ixx="0.001" ixy="0.0" ixz="0.0"
+               iyy="0.001" iyz="0.0"
+               izz="0.001"/>
+    </inertial>
+  </link>
+
+  <!-- ===== base_link -> velodyne (fixed joint) ===== -->
+  <!--
+    Physically measured values (2025-03-05):
+      x = 1.130 m  (44.5 in forward from wheelbase midpoint to LiDAR spin axis)
+      y = 0.000 m  (centered on robot centreline)
+      z = 0.800 m  (LiDAR spin axis height above ground)
+      roll = pitch = yaw = 0  (mount level, LiDAR front aligns with robot +x)
+    Matches tf_static_base_to_velodyne.launch.py.
+  -->
+  <joint name="base_to_velodyne" type="fixed">
+    <parent link="base_link"/>
+    <child link="velodyne"/>
+    <origin xyz="1.130 0.0 0.80" rpy="0 0 0"/>
+  </joint>
+
+</robot>

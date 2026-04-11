@@ -1,0 +1,41 @@
+# field_coverage.yaml — Field coverage planner configuration.
+#
+# Edit field_corners to match the actual field boundary before each deployment.
+# All coordinates are in the map frame (same frame as your RTAB-Map database).
+#
+# Workflow:
+#   1. Build a map with slam_nav.launch.py (drive the field perimeter first).
+#   2. Open RViz2 and note the map-frame coordinates of each field corner.
+#   3. Enter those corners below (CCW order, any convex or concave polygon).
+#   4. Set row_heading to align rows with the onion bed direction.
+#   5. Launch field_coverage.launch.py and call ~/start_coverage.
+
+field_coverage_planner:
+  ros__parameters:
+
+    # Field boundary (map frame, flat list: x0,y0, x1,y1, x2,y2, x3,y3, ...)
+    # Default: a 20 m x 10 m placeholder -- replace with actual field corners.
+    field_corners:
+      - 0.0
+      - 0.0
+      - 20.0
+      - 0.0
+      - 20.0
+      - 10.0
+      - 0.0
+      - 10.0
+
+    # Row spacing (metres) -- set to match onion bed spacing.
+    # Typical onion beds: 2 rows at 22.5 cm spacing -> 45 cm per pass.
+    row_spacing: 0.45
+
+    # Row heading (degrees from map +X axis, CCW positive)
+    # 0.0  = rows run East-West
+    # 90.0 = rows run North-South
+    row_heading: 0.0
+
+    # Start margin (metres) -- pull row endpoints inward from boundary.
+    start_margin: 0.5
+
+    # TF frame for waypoints -- must match the Nav2 global costmap frame.
+    nav_frame: map

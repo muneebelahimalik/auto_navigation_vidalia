@@ -1,0 +1,75 @@
+# ekf.yaml — robot_localization EKF configuration for Amiga + VLP-16 SLAM.
+#
+# Fuses two odometry sources:
+#   odom0 = /odom          (ICP odometry from rtabmap_ros -- position + velocity)
+#   odom1 = /wheel_odom    (Amiga wheel dead-reckoning -- velocity only, lower trust)
+#
+# Output: /odometry/filtered  +  odom -> base_link TF
+#
+# To use this instead of ICP-only odometry:
+#   1. Set publish_tf: false in icp_odometry (so it does NOT broadcast odom->base_link)
+#   2. Launch this EKF node -- it will own the odom->base_link TF
+#   3. Remap rtabmap's odom input to /odometry/filtered
+#
+# See launch/amiga_bringup_nodes.launch.py for a ready-made bringup.
+
+ekf_filter_node:
+  ros__parameters:
+
+    frequency: 30.0
+    sensor_timeout: 0.1
+    two_d_mode: true
+
+    odom_frame: odom
+    base_link_frame: base_link
+    world_frame: odom
+    publish_tf: true
+    publish_acceleration: false
+
+    odom0: /odom
+    odom0_config:
+      - [true,  true,  false, false, false, true,  true,  false, false, false, false,  true,  false, false, false]
+    odom0_queue_size: 5
+    odom0_differential: false
+    odom0_relative: false
+
+    odom1: /wheel_odom
+    odom1_config:
+      - [false, false, false, false, false, false, true,  false, false, false, false,  true,  false, false, false]
+    odom1_queue_size: 5
+    odom1_differential: false
+    odom1_relative: false
+
+    process_noise_covariance:
+      - [0.05,  0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0]
+      - [0.0,   0.05,  0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0]
+      - [0.0,   0.0,   0.06,  0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0]
+      - [0.0,   0.0,   0.0,   0.03,  0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0]
+      - [0.0,   0.0,   0.0,   0.0,   0.03,  0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0]
+      - [0.0,   0.0,   0.0,   0.0,   0.0,   0.06,  0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0]
+      - [0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.025, 0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0]
+      - [0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.025, 0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0]
+      - [0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.04,  0.0,   0.0,   0.0,   0.0,   0.0,   0.0]
+      - [0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.01,  0.0,   0.0,   0.0,   0.0,   0.0]
+      - [0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.01,  0.0,   0.0,   0.0,   0.0]
+      - [0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.02,  0.0,   0.0,   0.0]
+      - [0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.01,  0.0,   0.0]
+      - [0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.01,  0.0]
+      - [0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.015]
+
+    initial_estimate_covariance:
+      - [1e-9,  0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0]
+      - [0.0,   1e-9,  0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0]
+      - [0.0,   0.0,   1e-9,  0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0]
+      - [0.0,   0.0,   0.0,   1e-9,  0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0]
+      - [0.0,   0.0,   0.0,   0.0,   1e-9,  0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0]
+      - [0.0,   0.0,   0.0,   0.0,   0.0,   1e-9,  0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0]
+      - [0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   1e-9,  0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0]
+      - [0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   1e-9,  0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0]
+      - [0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   1e-9,  0.0,   0.0,   0.0,   0.0,   0.0,   0.0]
+      - [0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   1e-9,  0.0,   0.0,   0.0,   0.0,   0.0]
+      - [0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   1e-9,  0.0,   0.0,   0.0,   0.0]
+      - [0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   1e-9,  0.0,   0.0,   0.0]
+      - [0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   1e-9,  0.0,   0.0]
+      - [0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   1e-9,  0.0]
+      - [0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   1e-9]
