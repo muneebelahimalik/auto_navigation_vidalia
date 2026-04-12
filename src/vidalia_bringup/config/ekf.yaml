@@ -1,0 +1,99 @@
+# ekf.yaml — robot_localization EKF configuration for Amiga + VLP-16 SLAM.
+#
+# Fuses two odometry sources:
+#   odom0 = /odom          (ICP odometry from rtabmap_odom — position + velocity)
+#   odom1 = /wheel_odom    (Amiga wheel dead-reckoning — velocity only, lower trust)
+#
+# Output: /odometry/filtered  +  odom → base_link TF
+#
+# To use this instead of ICP-only odometry:
+#   1. Set publish_tf: false in icp_odometry (so it does NOT broadcast odom→base_link)
+#   2. Launch this EKF node — it will own the odom→base_link TF
+#   3. Remap rtabmap's odom input to /odometry/filtered
+#
+# See launch/vidalia_bringup_nodes.launch.py for a ready-made bringup.
+#
+# robot_localization state vector: [x, y, z, roll, pitch, yaw, vx, vy, vz, vroll, vpitch, vyaw, ax, ay, az]
+# odom_config index mapping:       [0, 1, 2, 3,    4,     5,   6,  7,  8,  9,     10,    11,   12, 13, 14]
+
+ekf_filter_node:
+  ros__parameters:
+
+    frequency: 30.0            # EKF update rate (Hz)
+    sensor_timeout: 0.1        # Drop sensors silent for >100 ms
+    two_d_mode: true           # Constrain to x/y/yaw (ground vehicle on flat field)
+
+    # Frame configuration
+    odom_frame: odom
+    base_link_frame: base_link
+    world_frame: odom
+    publish_tf: true           # EKF owns the odom → base_link TF
+    publish_acceleration: false
+
+    # --------------------------------------------------------------------------
+    # Source 0: ICP Odometry (/odom from rtabmap_odom icp_odometry)
+    # LiDAR ICP gives reliable absolute pose estimates; use position + velocity.
+    # --------------------------------------------------------------------------
+    odom0: /odom
+    odom0_config:
+      # x      y      z      roll   pitch  yaw    vx     vy     vz     vroll  vpitch  vyaw   ax     ay     az
+      - [true,  true,  false, false, false, true,  true,  false, false, false, false,  true,  false, false, false]
+    odom0_queue_size: 5
+    odom0_differential: false
+    odom0_relative: false
+
+    # --------------------------------------------------------------------------
+    # Source 1: Wheel Odometry (/wheel_odom from amiga_odometry node)
+    # Wheel encoders give velocity estimates; use only velocity (not position,
+    # since position accumulates slip error on agricultural soil).
+    # Lower trust: higher process noise via odom1_config.
+    # --------------------------------------------------------------------------
+    odom1: /wheel_odom
+    odom1_config:
+      # x      y      z      roll   pitch  yaw    vx     vy     vz     vroll  vpitch  vyaw   ax     ay     az
+      - [false, false, false, false, false, false, true,  false, false, false, false,  true,  false, false, false]
+    odom1_queue_size: 5
+    odom1_differential: false
+    odom1_relative: false
+
+    # --------------------------------------------------------------------------
+    # Process noise covariance (Q matrix diagonal).
+    # Higher values → trust sensor inputs more than the model prediction.
+    # Tuned for agricultural soil (some wheel slip, variable terrain).
+    # --------------------------------------------------------------------------
+    process_noise_covariance:
+      - [0.05,  0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0]
+      - [0.0,   0.05,  0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0]
+      - [0.0,   0.0,   0.06,  0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0]
+      - [0.0,   0.0,   0.0,   0.03,  0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0]
+      - [0.0,   0.0,   0.0,   0.0,   0.03,  0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0]
+      - [0.0,   0.0,   0.0,   0.0,   0.0,   0.06,  0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0]
+      - [0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.025, 0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0]
+      - [0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.025, 0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0]
+      - [0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.04,  0.0,   0.0,   0.0,   0.0,   0.0,   0.0]
+      - [0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.01,  0.0,   0.0,   0.0,   0.0,   0.0]
+      - [0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.01,  0.0,   0.0,   0.0,   0.0]
+      - [0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.02,  0.0,   0.0,   0.0]
+      - [0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.01,  0.0,   0.0]
+      - [0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.01,  0.0]
+      - [0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.015]
+
+    # --------------------------------------------------------------------------
+    # Initial estimate error covariance (P0 matrix)
+    # --------------------------------------------------------------------------
+    initial_estimate_covariance:
+      - [1e-9,  0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0]
+      - [0.0,   1e-9,  0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0]
+      - [0.0,   0.0,   1e-9,  0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0]
+      - [0.0,   0.0,   0.0,   1e-9,  0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0]
+      - [0.0,   0.0,   0.0,   0.0,   1e-9,  0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0]
+      - [0.0,   0.0,   0.0,   0.0,   0.0,   1e-9,  0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0]
+      - [0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   1e-9,  0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0]
+      - [0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   1e-9,  0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0]
+      - [0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   1e-9,  0.0,   0.0,   0.0,   0.0,   0.0,   0.0]
+      - [0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   1e-9,  0.0,   0.0,   0.0,   0.0,   0.0]
+      - [0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   1e-9,  0.0,   0.0,   0.0,   0.0]
+      - [0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   1e-9,  0.0,   0.0,   0.0]
+      - [0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   1e-9,  0.0,   0.0]
+      - [0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   1e-9,  0.0]
+      - [0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   0.0,   1e-9]

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-amiga_odometry.py — wheel odometry node for the farm-ng Amiga (ROS 2 Foxy).
+amiga_odometry.py — wheel odometry node for the farm-ng Amiga (ROS 2 Humble).
 
 Subscribes
 ----------
@@ -17,14 +17,14 @@ Publishes
       child_frame_id  = "base_link"
 
     NOTE: The topic name is /wheel_odom (not /odom) so it does not collide
-    with the ICP odometry already published by rtabmap_ros.  The two
+    with the ICP odometry already published by rtabmap_odom.  The two
     odometry streams can be fused later with robot_localization EKF
     (see config/ekf.yaml).
 
 Parameters
 ----------
 publish_tf  (bool, default false)
-    When true, also broadcasts odom->base_link TF.  Keep false while
+    When true, also broadcasts odom→base_link TF.  Keep false while
     icp_odometry is running (it owns that TF); set true only if you want
     to run wheel odometry *instead of* ICP.
 
@@ -37,11 +37,19 @@ odom_topic  (str, default '/wheel_odom')
 Notes on covariance
 -------------------
 Covariance values are intentionally conservative for soft agricultural soil:
-  * position_sigma  = 0.10 m   (wheel slip in field conditions)
-  * heading_sigma   = 0.05 rad (yaw drift between ICP updates)
-  * linear_v_sigma  = 0.05 m/s (encoder noise + slip)
-  * angular_v_sigma = 0.02 rad/s
+  • position_sigma  = 0.10 m   (wheel slip in field conditions)
+  • heading_sigma   = 0.05 rad (yaw drift between ICP updates)
+  • linear_v_sigma  = 0.05 m/s (encoder noise + slip)
+  • angular_v_sigma = 0.02 rad/s
 These will be scaled by robot_localization EKF and do not need to be exact.
+
+ROS 1 bridge note
+-----------------
+The amiga_ros_bridge is a ROS 1 Noetic package.  To get /amiga/vel into
+ROS 2 Humble either:
+  1. Run ros1_bridge (recommended for initial testing)
+  2. Write / use a native ROS 2 gRPC client for the Amiga canbus service
+  3. Use the farm-ng Python SDK in a ROS 2 node (future work)
 """
 
 import math
@@ -79,11 +87,11 @@ class AmigaOdometry(Node):
         lin_v_var = 0.05 ** 2     # linear velocity variance
         ang_v_var = 0.02 ** 2     # angular velocity variance
 
-        # Flat 6x6 row-major: [x, y, z, roll, pitch, yaw]
+        # Flat 6×6 row-major: [x, y, z, roll, pitch, yaw]
         self._pose_cov = [0.0] * 36
         self._pose_cov[0] = pos_var    # xx
         self._pose_cov[7] = pos_var    # yy
-        self._pose_cov[14] = 1e-9      # zz (planar -- very small)
+        self._pose_cov[14] = 1e-9      # zz (planar — very small)
         self._pose_cov[21] = 1e-9      # roll (planar)
         self._pose_cov[28] = 1e-9      # pitch (planar)
         self._pose_cov[35] = head_var  # yaw
@@ -106,7 +114,7 @@ class AmigaOdometry(Node):
         self.create_subscription(TwistStamped, vel_topic, self._vel_cb, 10)
 
         self.get_logger().info(
-            f'amiga_odometry started: {vel_topic} -> {odom_topic}'
+            f'amiga_odometry started: {vel_topic} → {odom_topic}'
             + (' + TF' if publish_tf else '')
         )
 

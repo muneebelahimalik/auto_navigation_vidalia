@@ -1,0 +1,4 @@
+# base_link -> velodyne (edit these after physical mounting)
+base_link_to_velodyne:
+  xyz: [0.0, 0.0, 0.0]     # meters
+  rpy: [0.0, 0.0, 0.0]     # radians

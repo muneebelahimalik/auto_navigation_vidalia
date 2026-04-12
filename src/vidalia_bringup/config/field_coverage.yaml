@@ -1,0 +1,58 @@
+# field_coverage.yaml — Field coverage planner configuration.
+#
+# Edit field_corners to match the actual field boundary before each deployment.
+# All coordinates are in the map frame (same frame as your RTAB-Map database).
+#
+# Workflow:
+#   1. Build a map with slam_nav.launch.py (drive the field perimeter first).
+#   2. Open RViz2 and note the map-frame coordinates of each field corner
+#      (click "Publish Point" tool in RViz2 to read x/y coordinates).
+#   3. Enter those corners below (CCW order, any convex or concave polygon).
+#   4. Set row_heading to align rows with the onion bed direction.
+#   5. Launch field_coverage.launch.py and call ~/start_coverage.
+#
+# To mark corners while driving:
+#   ros2 topic echo /clicked_point   # in RViz2: "Publish Point" → corner coords
+
+field_coverage_planner:
+  ros__parameters:
+
+    # -----------------------------------------------------------------------
+    # Field boundary (map frame, flat list: x0,y0, x1,y1, x2,y2, x3,y3, ...)
+    # Default: a 20 m × 10 m placeholder — replace with actual field corners.
+    # -----------------------------------------------------------------------
+    field_corners:
+      - 0.0        # corner 0 x
+      - 0.0        # corner 0 y
+      - 20.0       # corner 1 x
+      - 0.0        # corner 1 y
+      - 20.0       # corner 2 x
+      - 10.0       # corner 2 y
+      - 0.0        # corner 3 x
+      - 10.0       # corner 3 y
+
+    # -----------------------------------------------------------------------
+    # Row spacing (metres)
+    # Set to match onion bed spacing so each pass covers one set of rows.
+    # Typical onion beds: 2 rows at 22.5 cm spacing → 45 cm per pass.
+    # Robot width is 93 cm, so 45 cm gives slight overlap between passes.
+    # -----------------------------------------------------------------------
+    row_spacing: 0.45
+
+    # -----------------------------------------------------------------------
+    # Row heading (degrees from map +X axis, CCW positive)
+    # 0.0  = rows run East-West  (robot drives East then West alternately)
+    # 90.0 = rows run North-South
+    # Set this to align with the actual orientation of the onion beds.
+    # -----------------------------------------------------------------------
+    row_heading: 0.0
+
+    # -----------------------------------------------------------------------
+    # Start margin (metres)
+    # Pull the start/end of each row this far inside the field polygon.
+    # Prevents the robot from driving right up to the boundary fence/ditch.
+    # -----------------------------------------------------------------------
+    start_margin: 0.5
+
+    # TF frame for waypoints — must match the Nav2 global costmap frame.
+    nav_frame: map

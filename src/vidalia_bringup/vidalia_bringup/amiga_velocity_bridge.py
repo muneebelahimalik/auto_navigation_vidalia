@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-amiga_velocity_bridge.py — velocity command relay for the farm-ng Amiga (ROS 2 Foxy).
+amiga_velocity_bridge.py — velocity command relay for the farm-ng Amiga (ROS 2 Humble).
 
 This node bridges the gap between the standard ROS 2 navigation command topic
 (/cmd_vel, used by Nav2 and teleop tools) and the Amiga-specific topic that the
@@ -16,7 +16,7 @@ Subscribes
 Publishes
 ---------
 /amiga/cmd_vel  (geometry_msgs/Twist)
-    Velocity command consumed by amiga_ros_bridge -> Amiga gRPC canbus service.
+    Velocity command consumed by amiga_ros_bridge → Amiga gRPC canbus service.
 
 Parameters
 ----------
@@ -35,6 +35,20 @@ max_angular  (float, default 1.0)
 watchdog_timeout (float, default 0.5)
     If no /cmd_vel message is received for this many seconds, publish a zero
     Twist to stop the robot safely.
+
+Usage
+-----
+When using Nav2 for autonomous navigation, Nav2 publishes to /cmd_vel by
+default.  This node re-publishes those commands to /amiga/cmd_vel so the
+Amiga drives.
+
+For manual teleop with keyboard:
+    ros2 run teleop_twist_keyboard teleop_twist_keyboard
+    # (publishes to /cmd_vel by default)
+
+For the amiga_ros_bridge (ROS 1) to receive these commands you need either:
+  1. ros1_bridge running to forward /amiga/cmd_vel from ROS 2 → ROS 1
+  2. A native ROS 2 gRPC client for the Amiga canbus service
 """
 
 import rclpy
@@ -73,7 +87,7 @@ class AmigaVelocityBridge(Node):
         self._watchdog = self.create_timer(0.1, self._watchdog_cb)
 
         self.get_logger().info(
-            f'amiga_velocity_bridge: {in_topic} -> {out_topic} '
+            f'amiga_velocity_bridge: {in_topic} → {out_topic} '
             f'(max_lin={self._max_lin} m/s, max_ang={self._max_ang} rad/s, '
             f'watchdog={timeout} s)'
         )
