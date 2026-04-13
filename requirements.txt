@@ -1,0 +1,19 @@
+# farm-ng Amiga OS 2.0 (Barley) Python SDK
+# Install into the farm-ng venv or system Python (NOT a venv that ROS 2 cannot see).
+#
+# On the Amiga brain:
+#   Option A — use the pre-installed farm-ng venv:
+#       source /farm_ng_image/venv/bin/activate
+#
+#   Option B — install into your own Python environment (user install):
+#       pip install --user -r requirements.txt
+#
+# On a dev PC:
+#   pip install -r requirements.txt
+
+# protobuf >=3.20 is required — the system apt package (3.12.4) is too old.
+protobuf>=3.20,<=5.27.5
+
+# farm-ng OS 2.0 SDK
+farm-ng-core>=2.0.0
+farm-ng-amiga>=2.0.0

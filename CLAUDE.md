@@ -4,15 +4,65 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-ROS 2 Foxy workspace for 3D SLAM + autonomous navigation on the farm-ng Amiga robot using a Velodyne VLP-16 LiDAR.  The single ROS 2 package (`vidalia_bringup`) handles sensor bringup, static TF publishing, RTAB-Map-based SLAM, native farm-ng gRPC connectivity, and Nav2 autonomous navigation.
+Autonomous navigation workspace for the farm-ng Amiga robot using a Velodyne VLP-16 LiDAR.
+Goal: fully autonomous laser-based weed control in onion fields.
 
-**System**: Ubuntu 20.04.6 LTS (Focal Fossa), ROS 2 Foxy Fitzroy
+Two parallel stacks are maintained:
+
+| Stack | Entry point | When to use |
+|---|---|---|
+| **Native Python** (recommended on brain) | `python3 main.py` | Amiga brain (camphor-clone) — ROS 2 not installed |
+| **ROS 2 Foxy** (dev PC / future) | `ros2 launch vidalia_bringup …` | Development PC with ROS 2 Foxy installed |
+
+**System — Amiga brain (camphor-clone)**:
+- OS: Ubuntu 20.04.6 LTS (Focal Fossa), ARM64
+- Python: 3.8.10
+- **ROS 2 Foxy is NOT installed** on the brain.  The base image uses an overlay
+  filesystem; anything installed outside `~/` (including `/opt/ros/`) is wiped on reboot.
+- The farm-ng Python SDK (OS 2.0 / Barley) is pre-installed at `/farm_ng_image/venv/`.
+- All code, configs, and installs must live under `~/` (NVMe, persistent).
+
+**System — Development PC**:
+- OS: Ubuntu 22.04.5 LTS (Jammy Jellyfish)
+- ROS 2 not yet installed (install Humble for RViz/bag recording if needed).
+- SSH access: `ssh farm-ng-user-laserweeding@100.66.121.56` (Tailscale)
 
 **Ultimate goal**: fully autonomous laser-based weed control in onion fields.
 
 ## Build & Run Commands
 
 All commands assume the workspace root is `~/auto_navigation_vidalia`.
+
+---
+
+### Native Python Stack (Amiga brain — no ROS 2 required)
+
+**One-time setup (on the brain):**
+```bash
+# Option A — activate the pre-installed farm-ng venv (preferred):
+source /farm_ng_image/venv/bin/activate
+
+# Option B — install into user Python:
+bash scripts/install_farmng.sh
+```
+
+**Run:**
+```bash
+python3 main.py
+python3 main.py --config /path/to/service_config.json
+```
+
+**Source environment:**
+```bash
+source scripts/env.sh    # activates farm-ng venv and/or ROS 2 if available
+```
+
+---
+
+### ROS 2 Foxy Workspace (development PC only)
+
+> **Note:** ROS 2 Foxy is NOT installed on the Amiga brain.
+> Run `scripts/build.sh` only on a PC with ROS 2 Foxy installed.
 
 **Build:**
 ```bash
@@ -22,11 +72,6 @@ colcon build --symlink-install
 source install/setup.bash
 ```
 Or use the helper script: `bash scripts/build.sh`
-
-**Source environment (without rebuilding):**
-```bash
-source scripts/env.sh
-```
 
 ---
 
@@ -118,7 +163,7 @@ bash scripts/save_map.sh                     # saves to ~/maps/<timestamp>/
 bash scripts/save_map.sh /data/field_map     # saves to specified directory
 ```
 
-**Run tests:**
+**Run tests (dev PC only — requires ROS 2 + colcon):**
 ```bash
 colcon test --packages-select vidalia_bringup
 colcon test-result --verbose
@@ -127,6 +172,46 @@ colcon test-result --verbose
 ---
 
 ## Architecture
+
+### Native Python Stack (no ROS 2)
+
+```
+Velodyne VLP-16 (192.168.1.201 UDP :2368)
+        ↓  lidar/lidar_driver.py    — raw UDP packets → VelodynePoint list (10 Hz)
+navigation/nav_logic.py             — obstacle avoidance, speed control
+        ↓  canbus/canbus_interface.py
+Amiga canbus service (:6001 Tailscale)
+        ↓  Twist2d via request_reply("/twist")
+Amiga wheels
+```
+
+**Key files:**
+| File | Purpose |
+|---|---|
+| `main.py` | Entry point; loads `service_config.json`, starts LiDAR + nav loop |
+| `service_config.json` | Combined `EventServiceConfigList` for canbus (:6001) + filter (:20001) |
+| `requirements.txt` | `farm-ng-core>=2.0.0`, `farm-ng-amiga>=2.0.0`, `protobuf>=3.20` |
+| `canbus/canbus_interface.py` | `CanbusInterface` — `send_twist(linear, angular)` via `request_reply` |
+| `lidar/lidar_driver.py` | `LidarDriver` — async UDP receiver, yields 360° scans |
+| `navigation/nav_logic.py` | `NavLogic` — reactive forward navigation with obstacle stop |
+
+**farm-ng OS 2.0 API pattern (DO NOT use deprecated OS 1.0 classes):**
+```python
+from farm_ng.canbus.canbus_pb2 import Twist2d
+from farm_ng.core.event_client import EventClient
+from farm_ng.core.event_service_pb2 import EventServiceConfig
+
+# Send a velocity command:
+await client.request_reply("/twist", Twist2d(linear_velocity_x=0.5, angular_velocity=0.0))
+
+# Subscribe to a service:
+async for event, message in EventClient(config).subscribe(config.subscriptions[0], decode=True):
+    ...
+```
+
+---
+
+### ROS 2 Stack (Foxy — dev PC)
 
 ### TF Tree
 ```
