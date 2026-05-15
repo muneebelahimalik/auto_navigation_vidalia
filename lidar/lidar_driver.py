@@ -6,13 +6,18 @@ The VLP-16 is NOT a farm-ng gRPC service — it communicates over its own
 proprietary UDP protocol on port 2368.  This driver binds to the data port,
 receives raw 1206-byte firing packets, and converts them into 3D point lists.
 
-Network setup:
-    VLP-16 IP:   192.168.1.201  (factory default)
-    Receive port: 2368           (data port, UDP)
-    Bind address: "" (0.0.0.0)  (receive from all interfaces)
+Network setup (Amiga brain — camphor-clone):
+    VLP-16 IP:      192.168.1.201  (fixed — set in VLP-16 web UI)
+    Amiga host IP:  192.168.1.100  (secondary alias on eth0, added by
+                    vidalia-lidar-network.service / setup_lidar_network.sh)
+    Receive port:   2368           (data port, UDP)
+    Bind address:   "" (0.0.0.0)  (receive from all interfaces)
+    VLP-16 dest IP: 192.168.1.100  (configured in VLP-16 web UI → Host addr)
 
-    On the Amiga brain, ensure the network interface connected to the VLP-16
-    has an IP in the 192.168.1.x /24 subnet (e.g. 192.168.1.100).
+    The Amiga eth0 primary IP is 10.95.76.1/24 (set by farmng_network_config.sh).
+    The 192.168.1.100/24 alias is added automatically at boot by the
+    vidalia-lidar-network systemd service.  To add it manually:
+        sudo bash scripts/setup_lidar_network.sh
 
 Coordinate frame (robot-centric, right-hand rule):
     X  — right
@@ -67,7 +72,7 @@ VLP16_VERTICAL_ANGLES = (
 )
 
 
-@dataclass(slots=True)
+@dataclass()
 class VelodynePoint:
     """Single calibrated 3D return from the VLP-16."""
     x: float          # metres (right of sensor)
