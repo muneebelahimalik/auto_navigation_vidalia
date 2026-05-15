@@ -138,6 +138,21 @@ async def run(port: int, every_n: int) -> None:
     print("=" * 56)
 
     async with FoxgloveServer("0.0.0.0", port, "VLP-16 LiDAR") as server:
+        # Yield to the event loop so the server task can run and bind the port.
+        # Without this, serve() is called lazily and the port may never open.
+        await asyncio.sleep(0)
+        try:
+            ws_server = await asyncio.wait_for(server.wait_opened(), timeout=5.0)
+            bound = [s.getsockname() for s in (ws_server.sockets or [])]
+            print(f" Listening on: {bound}")
+        except asyncio.TimeoutError:
+            print(f" ERROR: WebSocket server failed to bind port {port}.")
+            print(f"        Check: sudo ss -tlnp | grep {port}")
+            return
+        except Exception as e:
+            print(f" ERROR starting WebSocket server: {e!r}")
+            return
+
         chan_id = await server.add_channel({
             "topic": "/velodyne_points",
             "encoding": "json",
