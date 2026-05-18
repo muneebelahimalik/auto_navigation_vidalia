@@ -25,7 +25,7 @@ Coordinate frame (robot-centric, right-hand rule):
     Z  — up
 
 The VLP-16 mount is at base_link origin offset:
-    x=+1.130 m (forward), z=+0.800 m (up)
+    x=+0.959 m (forward, 37.75 in), z=+0.699 m (up, 27.5 in)
     (matches tf_static_base_to_velodyne.launch.py and amiga_min.urdf)
 
 For Foxglove visualisation, the brain's built-in Foxglove service streams
