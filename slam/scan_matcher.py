@@ -72,12 +72,18 @@ def extract_2d_slice(
     return np.array(pts, dtype=np.float64) if pts else np.zeros((0, 2), dtype=np.float64)
 
 
-def downsample(pts: np.ndarray, n: int = 400) -> np.ndarray:
-    """Uniform random downsample to at most n points."""
-    if len(pts) <= n:
+def voxel_downsample(pts: np.ndarray, voxel: float = 0.15) -> np.ndarray:
+    """Keep one point per voxel cell (grid-based, preserves structure)."""
+    if len(pts) == 0:
         return pts
-    idx = np.random.choice(len(pts), n, replace=False)
+    keys = np.floor(pts / voxel).astype(np.int32)
+    _, idx = np.unique(keys[:, 0] * 100003 + keys[:, 1], return_index=True)
     return pts[idx]
+
+
+def downsample(pts: np.ndarray, n: int = 400) -> np.ndarray:
+    """Voxel-grid downsample (replaces random sampling to preserve structure)."""
+    return voxel_downsample(pts, 0.15)
 
 
 def icp_2d(
@@ -86,7 +92,7 @@ def icp_2d(
     init_pose: Pose2D,
     max_iter: int = 25,
     tol: float = 1e-4,
-    max_correspondence_dist: float = 0.8,
+    max_correspondence_dist: float = 0.50,
 ) -> Tuple[Pose2D, float]:
     """
     Point-to-point 2D ICP.

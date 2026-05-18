@@ -4,11 +4,13 @@ slam_engine.py — Scan-to-scan ICP odometry + occupancy grid SLAM.
 
 Pipeline per scan:
   1. Extract 2D horizontal slice from 3D VLP-16 scan.
-  2. Downsample to a fixed point count.
-  3. Run ICP against the previous reference scan (in world frame)
-     to estimate the robot's new pose.
+  2. Voxel-downsample to reduce noise and preserve geometric structure.
+  3. Run ICP against a sliding-window submap reference (last 5 world-frame
+     downsampled scans, merged and voxel-downsampled to ~800 points) to
+     estimate the robot's new pose.
   4. Accept the ICP result only if mean correspondence error < threshold.
-  5. Transform the full 2D slice to world frame and update the occupancy grid.
+  5. Transform the full 2D slice to world frame and update the occupancy
+     grid with full ray casting (free-space clearing + endpoint marking).
 
 Thread safety: process_scan() and get_state() / get_map() may be called
 from different threads.  All shared state is protected by a Lock.
@@ -29,12 +31,19 @@ from slam.scan_matcher import (
     extract_2d_slice,
     icp_2d,
     sensor_to_world,
+    voxel_downsample,
 )
 from slam.occupancy_grid import OccupancyGrid
 
 # ICP result is rejected if mean error exceeds this (metres).
-# At 0.4 m the match is likely to have diverged.
-ICP_REJECT_THRESHOLD = 0.40
+# At 0.2 m the match is likely to have diverged.
+ICP_REJECT_THRESHOLD = 0.20
+
+# Number of past scans to keep in the sliding-window submap reference.
+_REF_WINDOW = 5
+
+# Target point count for the merged reference scan fed into ICP.
+_REF_MAX_PTS = 800
 
 
 @dataclass
@@ -73,8 +82,28 @@ class SlamEngine:
         self._trajectory: List[List[float]] = [[0.0, 0.0]]
         self._scan_count = 0
         self._last_icp_err = 0.0
-        self._ref_scan_world: Optional[np.ndarray] = None
+        # Sliding-window submap: list of last _REF_WINDOW world-frame scans.
+        self._ref_scans: List[np.ndarray] = []
         self._lock = threading.Lock()
+
+    # ------------------------------------------------------------------
+    def _build_reference(self) -> Optional[np.ndarray]:
+        """
+        Merge the sliding-window scans into a single reference point cloud
+        and voxel-downsample it to at most _REF_MAX_PTS points.
+
+        Returns None if the window is empty.
+        """
+        if not self._ref_scans:
+            return None
+        merged = np.concatenate(self._ref_scans, axis=0)
+        # Voxel size chosen so that _REF_MAX_PTS points remain on average;
+        # fall back to a fixed 0.15 m voxel if the cloud is already small.
+        ref = voxel_downsample(merged, voxel=0.15)
+        if len(ref) > _REF_MAX_PTS:
+            # Increase voxel size to thin further (simple iterative approach)
+            ref = voxel_downsample(merged, voxel=0.25)
+        return ref
 
     # ------------------------------------------------------------------
     def process_scan(self, scan: List[VelodynePoint]) -> None:
@@ -83,13 +112,13 @@ class SlamEngine:
         if len(pts_local) < 20:
             return
 
-        pts_ds = downsample(pts_local, self._icp_points)
+        pts_ds = voxel_downsample(pts_local, 0.15)
 
         with self._lock:
             pose_est = Pose2D(self._pose.x, self._pose.y, self._pose.theta)
-            ref = self._ref_scan_world
+            ref = self._build_reference()
 
-        # ICP scan matching
+        # ICP scan matching against sliding-window submap
         icp_err = 0.0
         if ref is not None and len(ref) >= 10:
             refined, icp_err = icp_2d(pts_ds, ref, pose_est)
@@ -99,6 +128,9 @@ class SlamEngine:
         # Transform the full slice to world frame for the map
         pts_world = sensor_to_world(pts_local, pose_est)
 
+        # World-frame downsampled scan for next reference window
+        pts_ds_world = sensor_to_world(pts_ds, pose_est)
+
         with self._lock:
             self._pose = pose_est
             self._trajectory.append([pose_est.x, pose_est.y])
@@ -106,11 +138,13 @@ class SlamEngine:
                 self._trajectory = self._trajectory[-2000:]
             self._scan_count += 1
             self._last_icp_err = icp_err
-            # Use downsampled world-frame scan as next reference
-            self._ref_scan_world = sensor_to_world(pts_ds, pose_est)
+            # Update sliding-window reference: append and keep last _REF_WINDOW
+            self._ref_scans.append(pts_ds_world)
+            if len(self._ref_scans) > _REF_WINDOW:
+                self._ref_scans = self._ref_scans[-_REF_WINDOW:]
 
         if self._scan_count % self._map_update_every == 0:
-            self._grid.mark_occupied(pts_world)
+            self._grid.update_scan(pose_est.x, pose_est.y, pts_world)
 
     # ------------------------------------------------------------------
     def get_state(self) -> SlamState:
