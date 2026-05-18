@@ -1,4 +1,8 @@
-# base_link -> velodyne (edit these after physical mounting)
+# base_link -> velodyne (physically measured 2025)
+# x = 0.959 m (37.75 in forward from robot body centre to LiDAR spin axis)
+# y = 0.000 m (centred on robot centreline)
+# z = 0.699 m (27.5 in — LiDAR spin axis height above ground)
+# Matches amiga_min.urdf and tf_static_base_to_velodyne.launch.py
 base_link_to_velodyne:
-  xyz: [0.0, 0.0, 0.0]     # meters
-  rpy: [0.0, 0.0, 0.0]     # radians
+  xyz: [0.959, 0.0, 0.699]  # meters
+  rpy: [0.0, 0.0, 0.0]      # radians (mount is level, front aligned with robot +Y)
