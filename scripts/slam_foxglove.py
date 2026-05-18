@@ -103,25 +103,120 @@ _DTYPE_MAP = np.dtype({
     "itemsize": POINT_STRIDE,
 })
 
+# Full PointCloud schema — identical to the working visualize_lidar.py version.
+# Foxglove traverses the schema recursively; bare {"type":"array"} with no
+# "items" causes "Cannot read properties of undefined (reading 'type')".
 _POINT_CLOUD_SCHEMA = json.dumps({
     "type": "object",
     "properties": {
-        "timestamp":    {"type": "object",
-                         "properties": {"sec": {"type": "integer"},
-                                        "nsec": {"type": "integer"}}},
+        "timestamp": {
+            "type": "object",
+            "properties": {"sec":  {"type": "integer"},
+                           "nsec": {"type": "integer"}},
+        },
         "frame_id":     {"type": "string"},
-        "pose":         {"type": "object"},
+        "pose": {
+            "type": "object",
+            "properties": {
+                "position": {
+                    "type": "object",
+                    "properties": {"x": {"type": "number"},
+                                   "y": {"type": "number"},
+                                   "z": {"type": "number"}},
+                },
+                "orientation": {
+                    "type": "object",
+                    "properties": {"x": {"type": "number"},
+                                   "y": {"type": "number"},
+                                   "z": {"type": "number"},
+                                   "w": {"type": "number"}},
+                },
+            },
+        },
         "point_stride": {"type": "integer"},
-        "fields":       {"type": "array"},
-        "data":         {"type": "string", "contentEncoding": "base64"},
+        "fields": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name":   {"type": "string"},
+                    "offset": {"type": "integer"},
+                    "type":   {"type": "integer"},
+                },
+            },
+        },
+        "data": {"type": "string", "contentEncoding": "base64"},
     },
 })
+
+# Helpers used inside the SceneUpdate schema
+_TS    = {"type": "object", "properties": {"sec":  {"type": "integer"},
+                                            "nsec": {"type": "integer"}}}
+_VEC3  = {"type": "object", "properties": {"x": {"type": "number"},
+                                            "y": {"type": "number"},
+                                            "z": {"type": "number"}}}
+_QUAT  = {"type": "object", "properties": {"x": {"type": "number"},
+                                            "y": {"type": "number"},
+                                            "z": {"type": "number"},
+                                            "w": {"type": "number"}}}
+_POSE  = {"type": "object", "properties": {"position": _VEC3, "orientation": _QUAT}}
+_COLOR = {"type": "object", "properties": {"r": {"type": "number"},
+                                            "g": {"type": "number"},
+                                            "b": {"type": "number"},
+                                            "a": {"type": "number"}}}
 
 _SCENE_UPDATE_SCHEMA = json.dumps({
     "type": "object",
     "properties": {
-        "deletions": {"type": "array"},
-        "entities":  {"type": "array"},
+        "deletions": {"type": "array", "items": {"type": "object"}},
+        "entities": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "timestamp":    _TS,
+                    "frame_id":     {"type": "string"},
+                    "id":           {"type": "string"},
+                    "lifetime":     _TS,
+                    "frame_locked": {"type": "boolean"},
+                    "metadata":     {"type": "array", "items": {"type": "object"}},
+                    "arrows":       {"type": "array", "items": {"type": "object"}},
+                    "cubes":        {"type": "array", "items": {"type": "object"}},
+                    "cylinders":    {"type": "array", "items": {"type": "object"}},
+                    "triangles":    {"type": "array", "items": {"type": "object"}},
+                    "texts":        {"type": "array", "items": {"type": "object"}},
+                    "models":       {"type": "array", "items": {"type": "object"}},
+                    "spheres": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "pose":  _POSE,
+                                "size":  _VEC3,
+                                "color": _COLOR,
+                            },
+                        },
+                    },
+                    "lines": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "type":           {"type": "integer"},
+                                "pose":           _POSE,
+                                "thickness":      {"type": "number"},
+                                "scale_invariant": {"type": "boolean"},
+                                "points":  {"type": "array", "items": _VEC3},
+                                "color":   _COLOR,
+                                "colors":  {"type": "array", "items": _COLOR},
+                                "indices": {"type": "array",
+                                            "items": {"type": "integer"}},
+                            },
+                        },
+                    },
+                },
+            },
+        },
     },
 })
 
