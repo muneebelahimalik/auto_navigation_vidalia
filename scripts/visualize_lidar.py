@@ -52,7 +52,8 @@ from lidar.lidar_driver import LidarDriver
 # Foxglove PointCloud schema (JSON encoding)
 # ---------------------------------------------------------------------------
 # PackedElementField numeric types:
-FLOAT32 = 9
+# Foxglove PackedElementField NumericType: FLOAT32=7, UINT8=1
+FLOAT32 = 7
 UINT8   = 1
 
 POINT_STRIDE = 16   # x(4) + y(4) + z(4) + intensity(1) + ring(1) + pad(2)

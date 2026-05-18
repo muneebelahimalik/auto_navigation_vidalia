@@ -70,7 +70,9 @@ from slam.scan_matcher import extract_2d_slice, sensor_to_world
 # ---------------------------------------------------------------------------
 # Foxglove PointCloud schema + binary packing  (mirrors visualize_lidar.py)
 # ---------------------------------------------------------------------------
-FLOAT32 = 9
+# Foxglove PackedElementField NumericType enum (foxglove/schemas PackedElementField.proto)
+# UNKNOWN=0  UINT8=1  INT8=2  UINT16=3  INT16=4  UINT32=5  INT32=6  FLOAT32=7  FLOAT64=8
+FLOAT32 = 7
 UINT8 = 1
 POINT_STRIDE = 16   # x(4) y(4) z(4) intensity(1) ring(1) pad(2)
 
@@ -235,14 +237,30 @@ def _pc_msg(arr: np.ndarray, fields: list, frame_id: str, sec: int, nsec: int) -
     }).encode()
 
 
-def _pack_raw(scan, every_n: int) -> np.ndarray:
+def _pack_raw(scan, every_n: int, pose) -> np.ndarray:
+    """
+    Pack raw 3D scan into a PointCloud already transformed into the map frame.
+
+    Publishing with frame_id='map' avoids the 'Missing transform velodyne→map'
+    error — Foxglove never needs to look up a TF for this topic.
+
+    Transform:
+        map_x, map_y = R(theta) @ [sx, sy] + [pose.x, pose.y]
+        map_z        = sz + LIDAR_MOUNT_HEIGHT   (sensor z → height above ground)
+    """
+    from lidar.obstacle_filter import LIDAR_MOUNT_HEIGHT
     pts = scan[::every_n] if every_n > 1 else scan
-    arr = np.zeros(len(pts), dtype=_DTYPE_RAW)
-    arr["x"]         = [p.x         for p in pts]
-    arr["y"]         = [p.y         for p in pts]
-    arr["z"]         = [p.z         for p in pts]
-    arr["intensity"] = [p.intensity  for p in pts]
-    arr["ring"]      = [p.ring       for p in pts]
+    n = len(pts)
+    arr = np.zeros(n, dtype=_DTYPE_RAW)
+
+    c, s = math.cos(pose.theta), math.sin(pose.theta)
+    for i, p in enumerate(pts):
+        # Standard 2D rotation then translate
+        arr["x"][i] = float(c * p.x - s * p.y + pose.x)
+        arr["y"][i] = float(s * p.x + c * p.y + pose.y)
+        arr["z"][i] = float(p.z + LIDAR_MOUNT_HEIGHT)
+        arr["intensity"][i] = p.intensity
+        arr["ring"][i]      = p.ring
     return arr
 
 
@@ -439,11 +457,11 @@ async def run(args: argparse.Namespace) -> None:
                 await loop.run_in_executor(None, slam.process_scan, raw_scan)
                 state = slam.get_state()
 
-                # ── raw 3D scan (sensor frame) ──────────────────────────
+                # ── raw 3D scan (map frame — avoids missing velodyne→map TF) ──
                 await server.send_message(
                     ch_raw, ts_ns,
-                    _pc_msg(_pack_raw(raw_scan, args.every_n),
-                            FIELDS_RAW, "velodyne", sec, nsec),
+                    _pc_msg(_pack_raw(raw_scan, args.every_n, state.pose),
+                            FIELDS_RAW, "map", sec, nsec),
                 )
 
                 # ── 2D horizontal slice (world frame) ───────────────────
