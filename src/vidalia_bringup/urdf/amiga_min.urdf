@@ -82,17 +82,17 @@
 
   <!-- ===== base_link → velodyne (fixed joint) ===== -->
   <!--
-    Physically measured values (2025-03-05):
-      x = 1.130 m  (44.5 in forward from wheelbase midpoint to LiDAR spin axis)
-      y = 0.000 m  (centered on robot centreline)
-      z = 0.800 m  (LiDAR spin axis height above ground)
-      roll = pitch = yaw = 0  (mount level, LiDAR front aligns with robot +x)
+    Physically measured values:
+  x = 0.959 m  (37.75 in forward from robot body center to LiDAR spin axis)
+  y = 0.000 m  (centered on robot centreline)
+  z = 0.699 m  (27.5 in LiDAR spin axis height above ground)
+  roll = pitch = yaw = 0  (mount level, LiDAR front aligns with robot +x)
     Matches tf_static_base_to_velodyne.launch.py.
   -->
   <joint name="base_to_velodyne" type="fixed">
     <parent link="base_link"/>
     <child link="velodyne"/>
-    <origin xyz="1.130 0.0 0.80" rpy="0 0 0"/>
+    <origin xyz="0.959 0.0 0.699" rpy="0 0 0"/>
   </joint>
 
 </robot>
