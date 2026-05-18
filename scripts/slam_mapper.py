@@ -162,7 +162,14 @@ def main() -> None:
         print()
 
         async with LidarDriver() as lidar:
+            print(f" Waiting for LiDAR packets on UDP port 2368 …")
+            print(f" (If this hangs, check: ping 192.168.1.201  and  sudo tcpdump -i any udp port 2368 -c 5 -q)")
+            print()
+            first = True
             async for scan in lidar.scan_stream():
+                if first:
+                    print(f" First scan received — {len(scan):,} points. Mapping started.")
+                    first = False
                 e.process_scan(scan)
                 scans_since += 1
 
