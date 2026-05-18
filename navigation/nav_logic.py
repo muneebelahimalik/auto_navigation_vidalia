@@ -13,66 +13,29 @@ safety corridor.
 For full field coverage with boustrophedon row patterns, see:
     src/vidalia_bringup/vidalia_bringup/autonomous_row_coverage.py  (ROS 2)
     src/vidalia_bringup/vidalia_bringup/field_coverage_planner.py   (ROS 2)
-
-These modules can be ported to the native Python stack once ROS 2 is available,
-or adapted to publish waypoints via EventServiceGrpc.
 """
 
 from __future__ import annotations
 
 import asyncio
-import math
-from typing import List
 
 from canbus.canbus_interface import CanbusInterface
-from lidar.lidar_driver import LidarDriver, VelodynePoint
+from lidar.lidar_driver import LidarDriver
+from lidar.obstacle_filter import (  # noqa: F401 (re-exported for callers)
+    LIDAR_MOUNT_HEIGHT,
+    LOOK_AHEAD_DIST,
+    MIN_OBSTACLE_GROUND_HEIGHT,
+    ROBOT_HALF_WIDTH,
+    front_zone_points,
+    nearest_range,
+    nearest_in_sector,
+    sector_counts,
+    validate_lidar_startup,
+)
 
-# ---------------------------------------------------------------------------
-# Safety geometry (metres)
-# ---------------------------------------------------------------------------
-# Amiga body width = 0.93 m; half-width + 0.135 m clearance = 0.60 m
-ROBOT_HALF_WIDTH = 0.60
-
-# Distance ahead to monitor for obstacles
-LOOK_AHEAD_DIST = 2.0
-
-# Hard-stop threshold — stop immediately if an obstacle is within this range
-STOP_DISTANCE = 0.80
-
-# Minimum height above ground to count as an obstacle (filter spurious ground returns)
-MIN_OBSTACLE_HEIGHT = 0.10   # metres
-
-# Maximum speed for field operation (conservative)
-MAX_LINEAR = 0.8   # m/s
-
-
-def _front_zone_points(
-    points: List[VelodynePoint],
-    look_ahead: float = LOOK_AHEAD_DIST,
-    half_width: float = ROBOT_HALF_WIDTH,
-    min_height: float = MIN_OBSTACLE_HEIGHT,
-) -> List[VelodynePoint]:
-    """
-    Return only LiDAR points inside the forward safety corridor.
-
-    The corridor is a rectangular prism:
-        Y in (0, look_ahead]   — directly ahead of the robot
-        |X| < half_width       — within robot width + clearance
-        Z > min_height         — above ground (filters road surface returns)
-    """
-    return [
-        p for p in points
-        if 0.0 < p.y <= look_ahead
-        and abs(p.x) < half_width
-        and p.z > min_height
-    ]
-
-
-def _nearest_range(zone_points: List[VelodynePoint]) -> float:
-    """Return the planar range to the closest point in the zone, or inf."""
-    if not zone_points:
-        return math.inf
-    return min(math.hypot(p.x, p.y) for p in zone_points)
+# Maximum speed for field operation
+MAX_LINEAR = 0.8    # m/s
+STOP_DISTANCE = 0.80  # metres — hard-stop threshold
 
 
 class NavLogic:
@@ -96,20 +59,30 @@ class NavLogic:
         self._canbus = canbus
         self._running = False
 
-    async def run(self, lidar: LidarDriver) -> None:
-        """Main control loop.  Runs until stop() is called or lidar closes."""
+    async def run(self, lidar: LidarDriver, validate: bool = True) -> None:
+        """
+        Main control loop.  Runs until stop() is called or lidar closes.
+
+        If validate=True, calls validate_lidar_startup() before motion and
+        aborts if the sensor looks unhealthy.
+        """
+        if validate:
+            healthy = await validate_lidar_startup(lidar)
+            if not healthy:
+                print("[NavLogic] aborting — LiDAR validation failed")
+                return
+
         self._running = True
         async for scan in lidar.scan_stream():
             if not self._running:
                 break
 
-            front = _front_zone_points(scan)
-            nearest = _nearest_range(front)
+            front = front_zone_points(scan)
+            nearest = nearest_range(front)
 
             if nearest <= STOP_DISTANCE:
                 await self._canbus.stop()
             elif nearest <= LOOK_AHEAD_DIST:
-                # Scale speed linearly: 0 at STOP_DISTANCE → MAX_LINEAR at LOOK_AHEAD_DIST
                 ratio = (nearest - STOP_DISTANCE) / (LOOK_AHEAD_DIST - STOP_DISTANCE)
                 await self._canbus.send_twist(MAX_LINEAR * ratio, 0.0)
             else:
