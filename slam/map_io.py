@@ -188,7 +188,7 @@ def render_png(
             lo = crop[gy, gx]
             if lo > 0.5:
                 # Map log-odds 0.5→10 to grey 180→20
-                v = int(180 - (lo / grid._L_CLAMP) * 160)
+                v = int(180 - (lo / grid._L_MAX) * 160)
                 v = max(20, min(180, v))
                 py0, py1 = gy * upsample, (gy + 1) * upsample
                 px0, px1 = gx * upsample, (gx + 1) * upsample
