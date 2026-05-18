@@ -25,7 +25,7 @@ Coordinate frame (robot-centric, right-hand rule):
     Z  — up
 
 The VLP-16 mount is at base_link origin offset:
-    x=+1.130 m (forward), z=+0.800 m (up)
+    x=+0.959 m (forward, 37.75 in), z=+0.699 m (up, 27.5 in)
     (matches tf_static_base_to_velodyne.launch.py and amiga_min.urdf)
 
 For Foxglove visualisation, the brain's built-in Foxglove service streams
@@ -154,6 +154,8 @@ class LidarDriver:
     async def __aenter__(self) -> "LidarDriver":
         self._loop = asyncio.get_running_loop()
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
         self._sock.setblocking(False)
         self._sock.bind(("", self._port))
         return self

@@ -4,7 +4,7 @@
 #   Footprint  : 1.10 m (L) × 0.93 m (W)   →  ±0.55 m fwd/back, ±0.465 m sides
 #   Max speed  : 1.5 m/s linear, 1.0 rad/s angular  (hard limits in the bridge)
 #   Drive type : Differential (skid-steer four-wheel)
-#   Sensor     : Velodyne VLP-16 at x=1.13 m, z=0.80 m on base_link
+#   Sensor     : Velodyne VLP-16 at x=0.959 m (37.75 in), z=0.699 m (27.5 in) on base_link
 #
 # Localization: RTAB-Map publishes map→odom TF — no AMCL needed.
 # Obstacle detection: /velodyne_points (PointCloud2) on both costmaps.
@@ -196,9 +196,9 @@ local_costmap:
           data_type: PointCloud2
           clearing: true
           marking: true
-          # Heights in the sensor frame projected to world z:
-          # VLP-16 is at z=0.80 m; ground returns hit ~z=0.  Obstacles
-          # (weeds, posts, people) are 0.10–2.0 m above ground.
+          # Heights in world (map) frame — costmap uses TF to project points.
+          # VLP-16 spin axis is at z=0.699 m; ground returns project to z≈0.
+          # Obstacles (weeds, posts, people) are 0.10–2.0 m above ground.
           min_obstacle_height: 0.10
           max_obstacle_height: 2.0
           obstacle_range: 5.0    # mark obstacles within 5 m

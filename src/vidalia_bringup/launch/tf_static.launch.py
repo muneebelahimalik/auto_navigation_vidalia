@@ -2,10 +2,11 @@ from launch import LaunchDescription
 from launch_ros.actions import Node
 
 def generate_launch_description():
-    # Update these once you physically mount the VLP-16 (meters, radians)
-    x = 0.0
+    # Physically measured 2025: 37.75 in forward, 27.5 in up
+    # Matches amiga_min.urdf and tf_static_base_to_velodyne.launch.py
+    x = 0.959
     y = 0.0
-    z = 0.0
+    z = 0.699
     roll = 0.0
     pitch = 0.0
     yaw = 0.0

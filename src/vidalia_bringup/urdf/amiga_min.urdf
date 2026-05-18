@@ -9,13 +9,13 @@
     base_link       : center of footprint, at GROUND LEVEL (z = 0)
     velodyne origin : where the VLP-16 spin axis intersects the sensor base
 
-  base_link → velodyne transform (MUST be measured physically and updated):
-    x  =  0.0  m  (centered fore-aft; adjust if LiDAR is forward/aft of center)
-    y  =  0.0  m  (centered left-right)
-    z  =  0.80 m  (rough estimate: 0.76 m frame height + ~0.04 m bracket)
+  base_link → velodyne transform (physically measured 2025):
+    x  =  0.959 m  (37.75 in — forward from robot body centre to LiDAR spin axis)
+    y  =  0.000 m  (centred on robot centreline)
+    z  =  0.699 m  (27.5 in  — LiDAR spin axis height above ground)
     roll  = 0  rad
     pitch = 0  rad
-    yaw   = 0  rad  (set to pi if sensor is rear-mounted / inverted)
+    yaw   = 0  rad  (mount is level; LiDAR front aligns with robot +Y/forward)
 
   After measuring, update the <origin> below AND the matching static TF args in
   launch/tf_static_base_to_velodyne.launch.py.
