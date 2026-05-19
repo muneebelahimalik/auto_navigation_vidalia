@@ -128,38 +128,6 @@ async def _canbus_loop(config, odom: WheelOdometry) -> None:
             ],
         }, EventServiceConfig())
 
-    # Try localhost first (avoids Tailscale loopback quirks), then Tailscale hostname
-    working_client = None
-    working_cfg = None
-    first_event = None
-    first_payload = None
-
-    for host in ('localhost', config.host):
-        cfg = _make(host)
-        print(f" [canbus] Trying {host}:{cfg.port} …")
-        try:
-            cl = EventClient(cfg)
-            event, payload = await asyncio.wait_for(
-                cl.subscribe(cfg.subscriptions[0], decode=False).__anext__(),
-                timeout=3.0,
-            )
-            working_client = cl
-            working_cfg = cfg
-            first_event = event
-            first_payload = payload
-            print(f"\n [canbus] Connected via {host}:{cfg.port} — receiving AmigaTpdo1")
-            break
-        except asyncio.TimeoutError:
-            print(f" [canbus] {host}:{cfg.port} — no response in 3 s")
-        except asyncio.CancelledError:
-            return
-        except Exception as exc:
-            print(f" [canbus] {host}:{cfg.port} failed: {exc}")
-
-    if working_client is None:
-        print(" [canbus] All hosts failed — falling back to constant-velocity prediction.")
-        return
-
     def _decode(ev, pl):
         try:
             if _p2p is not None:
@@ -169,22 +137,32 @@ async def _canbus_loop(config, odom: WheelOdometry) -> None:
         except Exception:
             return None
 
-    try:
-        # Process the already-fetched first message
-        tpdo1 = _decode(first_event, first_payload)
-        if tpdo1 is not None:
-            odom.update(float(tpdo1.meas_speed), float(tpdo1.meas_ang_rate), time.monotonic())
+    # Try localhost first (avoids Tailscale routing quirks on-brain),
+    # then fall back to the configured Tailscale hostname.
+    # Note: gRPC generators block until the server sends a message so we
+    # cannot use asyncio.wait_for for the probe — just subscribe directly
+    # and report on first message arrival.
+    for host in ('localhost', config.host):
+        cfg = _make(host)
+        print(f" [canbus] Subscribing to {host}:{cfg.port} …")
+        try:
+            client = EventClient(cfg)
+            first = True
+            async for event, payload in client.subscribe(cfg.subscriptions[0], decode=False):
+                if first:
+                    print(f"\n [canbus] Connected via {host}:{cfg.port} — receiving AmigaTpdo1")
+                    first = False
+                tpdo1 = _decode(event, payload)
+                if tpdo1 is not None:
+                    odom.update(float(tpdo1.meas_speed), float(tpdo1.meas_ang_rate), time.monotonic())
+            # Stream ended cleanly — server closed connection
+            break
+        except asyncio.CancelledError:
+            return
+        except Exception as exc:
+            print(f"\n [canbus] {host}:{cfg.port} error: {exc} — trying next host")
 
-        async for event, payload in working_client.subscribe(
-            working_cfg.subscriptions[0], decode=False
-        ):
-            tpdo1 = _decode(event, payload)
-            if tpdo1 is not None:
-                odom.update(float(tpdo1.meas_speed), float(tpdo1.meas_ang_rate), time.monotonic())
-    except asyncio.CancelledError:
-        pass
-    except Exception as exc:
-        print(f"\n [canbus] Stream error: {exc}")
+    print(" [canbus] All hosts exhausted — falling back to constant-velocity prediction.")
 
 
 # ---------------------------------------------------------------------------
