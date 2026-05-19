@@ -93,23 +93,27 @@ async def _canbus_loop(config, odom: WheelOdometry) -> None:
     try:
         from farm_ng.core.event_client import EventClient
         from farm_ng.canbus.canbus_pb2 import AmigaTpdo1
+        print(f" [canbus] Connecting to {config.host}:{config.port} …")
         client = EventClient(config)
-        first = True
+        first_msg = True
+        warned = False
+        t_start = time.monotonic()
         async for _event, message in client.subscribe(
             config.subscriptions[0], decode=True
         ):
-            if first:
-                print(f"\n [canbus] Connected — receiving AmigaTpdo1")
-                first = False
+            if first_msg:
+                print(f"\n [canbus] Connected — receiving {type(message).__name__}")
+                first_msg = False
             if isinstance(message, AmigaTpdo1):
                 odom.update(
                     message.meas_speed_x,
                     message.meas_ang_rate,
                     time.monotonic(),
                 )
-            elif first:
-                # Log unexpected message type once to aid debugging
-                print(f"\n [canbus] Unexpected message type: {type(message).__name__}")
+            if not warned and time.monotonic() - t_start > 5.0 and not odom.available:
+                print(f"\n [canbus] 5 s elapsed but no AmigaTpdo1 yet"
+                      f" (got {type(message).__name__}) — check service path")
+                warned = True
     except asyncio.CancelledError:
         pass
     except Exception as exc:
