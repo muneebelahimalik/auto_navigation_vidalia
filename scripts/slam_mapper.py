@@ -88,32 +88,58 @@ def _load_canbus_config():
 async def _canbus_loop(config, odom: WheelOdometry) -> None:
     """
     Subscribe to AmigaTpdo1 from the canbus service and feed encoder data
-    into WheelOdometry.  Runs as a background asyncio task.
+    into WheelOdometry.
+
+    Mirrors the exact pattern from amiga_ros2_bridge.py:
+      - decode=False  (raw payload, not auto-decoded)
+      - payload_to_protobuf(event, payload) → AmigaTpdo1.from_proto(...)
+      - AmigaTpdo1 is in farm_ng.canbus.packet (not canbus_pb2)
+      - speed field is meas_speed (not meas_speed_x)
     """
     try:
+        from farm_ng.canbus.packet import AmigaTpdo1
         from farm_ng.core.event_client import EventClient
-        from farm_ng.canbus.canbus_pb2 import AmigaTpdo1
+    except ImportError as exc:
+        print(f"\n [canbus] Import failed: {exc}"
+              f"\n          Falling back to constant-velocity prediction.")
+        return
+
+    # payload_to_protobuf location varies across SDK patch versions
+    _payload_to_proto = None
+    for _mod, _fn in [
+        ("farm_ng.core.events_file_reader", "payload_to_protobuf"),
+        ("farm_ng.core.event_client",        "payload_to_protobuf"),
+    ]:
+        try:
+            import importlib
+            _payload_to_proto = getattr(importlib.import_module(_mod), _fn)
+            break
+        except (ImportError, AttributeError):
+            pass
+
+    try:
         print(f" [canbus] Connecting to {config.host}:{config.port} …")
         client = EventClient(config)
-        first_msg = True
-        warned = False
-        t_start = time.monotonic()
-        async for _event, message in client.subscribe(
-            config.subscriptions[0], decode=True
+        first = True
+        async for event, payload in client.subscribe(
+            config.subscriptions[0], decode=False
         ):
-            if first_msg:
-                print(f"\n [canbus] Connected — receiving {type(message).__name__}")
-                first_msg = False
-            if isinstance(message, AmigaTpdo1):
+            if first:
+                print(f"\n [canbus] Connected — receiving AmigaTpdo1")
+                first = False
+            try:
+                if _payload_to_proto is not None:
+                    message = _payload_to_proto(event, payload)
+                    tpdo1 = AmigaTpdo1.from_proto(message.amiga_tpdo1)
+                else:
+                    tpdo1 = AmigaTpdo1.from_proto(payload)
                 odom.update(
-                    message.meas_speed_x,
-                    message.meas_ang_rate,
+                    float(tpdo1.meas_speed),
+                    float(tpdo1.meas_ang_rate),
                     time.monotonic(),
                 )
-            if not warned and time.monotonic() - t_start > 5.0 and not odom.available:
-                print(f"\n [canbus] 5 s elapsed but no AmigaTpdo1 yet"
-                      f" (got {type(message).__name__}) — check service path")
-                warned = True
+            except Exception:
+                pass   # skip malformed messages
     except asyncio.CancelledError:
         pass
     except Exception as exc:
