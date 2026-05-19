@@ -54,21 +54,24 @@ from slam.map_io import save_map
 
 def _load_canbus_config():
     """
-    Try to load the canbus EventServiceConfig from service_config.json.
+    Load the canbus EventServiceConfig from service_config.json using the
+    same EventServiceConfigList pattern as main.py.
     Returns the config object or None if unavailable / farm-ng SDK not found.
     """
     config_path = Path(__file__).parent.parent / "service_config.json"
     if not config_path.exists():
         return None
     try:
-        from farm_ng.core.event_service_pb2 import EventServiceConfig
-        from google.protobuf.json_format import ParseDict
-        data = json.loads(config_path.read_text())
-        for cfg in data.get("configs", []):
-            if cfg.get("name") == "canbus":
-                return ParseDict(cfg, EventServiceConfig())
-    except Exception:
-        pass
+        from google.protobuf import json_format
+        from farm_ng.core.event_service_pb2 import EventServiceConfigList
+        with open(config_path) as f:
+            raw = json.load(f)
+        config_list = json_format.ParseDict(raw, EventServiceConfigList())
+        for cfg in config_list.configs:
+            if cfg.name == "canbus":
+                return cfg
+    except Exception as exc:
+        print(f" [slam_mapper] Warning: could not load canbus config: {exc}")
     return None
 
 
@@ -79,27 +82,33 @@ def _load_canbus_config():
 async def _canbus_loop(config, odom: WheelOdometry) -> None:
     """
     Subscribe to AmigaTpdo1 from the canbus service and feed encoder data
-    into WheelOdometry.  Runs as a background asyncio task; exits silently
-    on cancellation or connection failure.
+    into WheelOdometry.  Runs as a background asyncio task.
     """
     try:
         from farm_ng.core.event_client import EventClient
         from farm_ng.canbus.canbus_pb2 import AmigaTpdo1
         client = EventClient(config)
+        first = True
         async for _event, message in client.subscribe(
             config.subscriptions[0], decode=True
         ):
+            if first:
+                print(f"\n [canbus] Connected — receiving AmigaTpdo1")
+                first = False
             if isinstance(message, AmigaTpdo1):
                 odom.update(
                     message.meas_speed_x,
                     message.meas_ang_rate,
                     time.monotonic(),
                 )
+            elif first:
+                # Log unexpected message type once to aid debugging
+                print(f"\n [canbus] Unexpected message type: {type(message).__name__}")
     except asyncio.CancelledError:
         pass
-    except Exception:
-        # Canbus unavailable — odometry falls back to constant-velocity
-        pass
+    except Exception as exc:
+        print(f"\n [canbus] Connection failed: {exc}"
+              f"\n          Falling back to constant-velocity prediction.")
 
 
 # ---------------------------------------------------------------------------
