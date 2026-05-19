@@ -90,61 +90,101 @@ async def _canbus_loop(config, odom: WheelOdometry) -> None:
     Subscribe to AmigaTpdo1 from the canbus service and feed encoder data
     into WheelOdometry.
 
-    Mirrors the exact pattern from amiga_ros2_bridge.py:
-      - decode=False  (raw payload, not auto-decoded)
-      - payload_to_protobuf(event, payload) → AmigaTpdo1.from_proto(...)
-      - AmigaTpdo1 is in farm_ng.canbus.packet (not canbus_pb2)
-      - speed field is meas_speed (not meas_speed_x)
+    Mirrors amiga_ros2_bridge.py:
+      - AmigaTpdo1 is in farm_ng.canbus.packet
+      - subscribe(..., decode=False) then payload_to_protobuf + from_proto
+      - speed field is tpdo1.meas_speed (not meas_speed_x)
+
+    Tries localhost first (script runs on-brain), then the configured host.
     """
     try:
+        import importlib
         from farm_ng.canbus.packet import AmigaTpdo1
         from farm_ng.core.event_client import EventClient
+        from farm_ng.core.event_service_pb2 import EventServiceConfig
+        from google.protobuf import json_format
     except ImportError as exc:
         print(f"\n [canbus] Import failed: {exc}"
               f"\n          Falling back to constant-velocity prediction.")
         return
 
     # payload_to_protobuf location varies across SDK patch versions
-    _payload_to_proto = None
-    for _mod, _fn in [
+    _p2p = None
+    for mod_name, fn_name in [
         ("farm_ng.core.events_file_reader", "payload_to_protobuf"),
         ("farm_ng.core.event_client",        "payload_to_protobuf"),
     ]:
         try:
-            import importlib
-            _payload_to_proto = getattr(importlib.import_module(_mod), _fn)
+            _p2p = getattr(importlib.import_module(mod_name), fn_name)
             break
         except (ImportError, AttributeError):
             pass
 
+    def _make(host: str) -> EventServiceConfig:
+        return json_format.ParseDict({
+            'name': 'canbus', 'host': host, 'port': config.port,
+            'subscriptions': [
+                {'uri': {'path': '/state', 'query': 'service_name=canbus'}, 'every_n': 1}
+            ],
+        }, EventServiceConfig())
+
+    # Try localhost first (avoids Tailscale loopback quirks), then Tailscale hostname
+    working_client = None
+    working_cfg = None
+    first_event = None
+    first_payload = None
+
+    for host in ('localhost', config.host):
+        cfg = _make(host)
+        print(f" [canbus] Trying {host}:{cfg.port} …")
+        try:
+            cl = EventClient(cfg)
+            event, payload = await asyncio.wait_for(
+                cl.subscribe(cfg.subscriptions[0], decode=False).__anext__(),
+                timeout=3.0,
+            )
+            working_client = cl
+            working_cfg = cfg
+            first_event = event
+            first_payload = payload
+            print(f"\n [canbus] Connected via {host}:{cfg.port} — receiving AmigaTpdo1")
+            break
+        except asyncio.TimeoutError:
+            print(f" [canbus] {host}:{cfg.port} — no response in 3 s")
+        except asyncio.CancelledError:
+            return
+        except Exception as exc:
+            print(f" [canbus] {host}:{cfg.port} failed: {exc}")
+
+    if working_client is None:
+        print(" [canbus] All hosts failed — falling back to constant-velocity prediction.")
+        return
+
+    def _decode(ev, pl):
+        try:
+            if _p2p is not None:
+                msg = _p2p(ev, pl)
+                return AmigaTpdo1.from_proto(msg.amiga_tpdo1)
+            return AmigaTpdo1.from_proto(pl)
+        except Exception:
+            return None
+
     try:
-        print(f" [canbus] Connecting to {config.host}:{config.port} …")
-        client = EventClient(config)
-        first = True
-        async for event, payload in client.subscribe(
-            config.subscriptions[0], decode=False
+        # Process the already-fetched first message
+        tpdo1 = _decode(first_event, first_payload)
+        if tpdo1 is not None:
+            odom.update(float(tpdo1.meas_speed), float(tpdo1.meas_ang_rate), time.monotonic())
+
+        async for event, payload in working_client.subscribe(
+            working_cfg.subscriptions[0], decode=False
         ):
-            if first:
-                print(f"\n [canbus] Connected — receiving AmigaTpdo1")
-                first = False
-            try:
-                if _payload_to_proto is not None:
-                    message = _payload_to_proto(event, payload)
-                    tpdo1 = AmigaTpdo1.from_proto(message.amiga_tpdo1)
-                else:
-                    tpdo1 = AmigaTpdo1.from_proto(payload)
-                odom.update(
-                    float(tpdo1.meas_speed),
-                    float(tpdo1.meas_ang_rate),
-                    time.monotonic(),
-                )
-            except Exception:
-                pass   # skip malformed messages
+            tpdo1 = _decode(event, payload)
+            if tpdo1 is not None:
+                odom.update(float(tpdo1.meas_speed), float(tpdo1.meas_ang_rate), time.monotonic())
     except asyncio.CancelledError:
         pass
     except Exception as exc:
-        print(f"\n [canbus] Connection failed: {exc}"
-              f"\n          Falling back to constant-velocity prediction.")
+        print(f"\n [canbus] Stream error: {exc}")
 
 
 # ---------------------------------------------------------------------------
