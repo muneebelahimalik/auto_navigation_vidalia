@@ -48,6 +48,7 @@ def _status_line(state, cell_count: int, hz: float) -> str:
         f"x={p.x:+6.2f} y={p.y:+6.2f} θ={deg:+6.1f}° | "
         f"map={cell_count:,} cells | "
         f"icp={state.last_icp_error:.3f} m | "
+        f"lc={state.loop_closures} | "
         f"{hz:.1f} Hz   "
     )
 
