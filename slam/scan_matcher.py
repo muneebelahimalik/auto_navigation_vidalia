@@ -86,6 +86,25 @@ def downsample(pts: np.ndarray, n: int = 400) -> np.ndarray:
     return voxel_downsample(pts, 0.15)
 
 
+def remove_outliers(pts: np.ndarray, k: int = 8, std_mult: float = 2.0) -> np.ndarray:
+    """
+    Statistical outlier removal: discard points whose mean distance to their
+    k nearest neighbours exceeds (global_mean + std_mult * global_std).
+
+    Removes isolated noise returns (wind, insects, dust) without touching
+    real structure.  O(N²) — fast for N ≤ 600 after voxel downsampling.
+    """
+    if len(pts) <= k + 1:
+        return pts
+    diff = pts[:, None, :] - pts[None, :, :]        # N × N × 2
+    sq = np.einsum("ijk,ijk->ij", diff, diff)         # N × N
+    # k nearest excluding self (self-distance = 0 is always the minimum)
+    knn_sq = np.partition(sq, k + 1, axis=1)[:, 1:k + 1]
+    mean_dists = np.sqrt(knn_sq).mean(axis=1)         # N
+    threshold = mean_dists.mean() + std_mult * mean_dists.std()
+    return pts[mean_dists < threshold]
+
+
 def icp_2d(
     source_local: np.ndarray,
     target_world: np.ndarray,
@@ -93,12 +112,15 @@ def icp_2d(
     max_iter: int = 25,
     tol: float = 1e-4,
     max_correspondence_dist: float = 0.50,
+    trim_ratio: float = 0.75,
 ) -> Tuple[Pose2D, float]:
     """
-    Point-to-point 2D ICP.
+    Trimmed point-to-point 2D ICP.
 
-    Finds the Pose2D that best aligns source_local (sensor frame)
-    with target_world (world frame) by iterating SVD-based registration.
+    Each iteration keeps only the closest trim_ratio fraction of valid
+    correspondences (those within max_correspondence_dist).  Trimming
+    makes the SVD step robust to residual outliers that survive the hard
+    distance gate — particularly useful in vegetated open fields.
 
     Returns (refined_pose, mean_error_metres).
     On failure (too few correspondences) returns (init_pose, inf).
@@ -106,23 +128,29 @@ def icp_2d(
     if len(source_local) < 10 or len(target_world) < 10:
         return init_pose, float("inf")
 
-    # Initialise running transform from init_pose
     R = _R(init_pose.theta)
     t = np.array([init_pose.x, init_pose.y], dtype=np.float64)
-    src = source_local @ R.T + t   # source in world frame (initial estimate)
+    src = source_local @ R.T + t
 
     prev_err = float("inf")
 
     for _ in range(max_iter):
-        # --- nearest-neighbour correspondences (brute force O(NM)) ---
+        # --- nearest-neighbour correspondences ---
         diff = src[:, None, :] - target_world[None, :, :]   # N × M × 2
         sq = np.einsum("ijk,ijk->ij", diff, diff)            # N × M
-        nn_idx = np.argmin(sq, axis=1)                       # N
+        nn_idx = np.argmin(sq, axis=1)
         nn_d = np.sqrt(sq[np.arange(len(src)), nn_idx])
 
-        mask = nn_d < max_correspondence_dist
-        if mask.sum() < 6:
+        # Hard gate: discard obviously wrong matches
+        valid = nn_d < max_correspondence_dist
+        if valid.sum() < 6:
             break
+
+        # Trimmed: keep only the closest trim_ratio of the valid set
+        cutoff = float(np.percentile(nn_d[valid], trim_ratio * 100.0))
+        mask = valid & (nn_d <= cutoff)
+        if mask.sum() < 6:
+            mask = valid   # fall back to all valid if trimming is too aggressive
 
         err = float(np.mean(nn_d[mask]))
         if abs(prev_err - err) < tol:
@@ -137,16 +165,14 @@ def icp_2d(
         H = (s - mu_s).T @ (tgt - mu_t)
         U, _, Vt = np.linalg.svd(H)
         dR = Vt.T @ U.T
-        # Ensure proper rotation (det = +1, not a reflection)
         if np.linalg.det(dR) < 0:
             Vt[-1] *= -1
             dR = Vt.T @ U.T
         dt = mu_t - dR @ mu_s
 
-        # Apply delta transform
         src = src @ dR.T + dt
         t = dR @ t + dt
-        R = dR @ R   # compose: both are standard rotation matrices
+        R = dR @ R
 
     theta = float(math.atan2(R[1, 0], R[0, 0]))
     return Pose2D(float(t[0]), float(t[1]), theta), prev_err

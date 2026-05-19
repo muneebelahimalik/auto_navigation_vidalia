@@ -35,6 +35,7 @@ from slam.scan_matcher import (
     downsample,
     extract_2d_slice,
     icp_2d,
+    remove_outliers,
     sensor_to_world,
     voxel_downsample,
 )
@@ -136,7 +137,10 @@ class SlamEngine:
         if len(pts_local) < 20:
             return
 
-        pts_ds = voxel_downsample(pts_local, 0.15)
+        # Voxel downsample then remove isolated noise returns (wind, insects).
+        # The filtered cloud is used for both ICP and map updates — feeding the
+        # raw full cloud into the map was the main source of scattered dots.
+        pts_ds = remove_outliers(voxel_downsample(pts_local, 0.15))
 
         with self._lock:
             pose_predicted = self._predict_pose(self._pose, self._prev_pose)
@@ -149,14 +153,8 @@ class SlamEngine:
             refined, icp_err = icp_2d(pts_ds, ref, pose_predicted)
             if icp_err < ICP_REJECT_THRESHOLD:
                 pose_est = refined
-            # If ICP failed but prediction moved significantly, trust prediction
-            # over the stale last pose so turns are still tracked
-            # (pose_est already set to pose_predicted above on failure)
 
-        # Transform the full slice to world frame for the map
-        pts_world = sensor_to_world(pts_local, pose_est)
-
-        # World-frame downsampled scan for next reference window
+        # World-frame filtered cloud — used for both map update and reference
         pts_ds_world = sensor_to_world(pts_ds, pose_est)
 
         with self._lock:
@@ -173,7 +171,7 @@ class SlamEngine:
                 self._ref_scans = self._ref_scans[-_REF_WINDOW:]
 
         if self._scan_count % self._map_update_every == 0:
-            self._grid.update_scan(pose_est.x, pose_est.y, pts_world)
+            self._grid.update_scan(pose_est.x, pose_est.y, pts_ds_world)
 
     # ------------------------------------------------------------------
     def get_state(self) -> SlamState:
