@@ -44,6 +44,7 @@ class WheelOdometry:
         self._ds: float = 0.0       # accumulated forward arc (m)
         self._dtheta: float = 0.0   # accumulated heading change (rad)
         self._t_last: Optional[float] = None
+        self._last_speed: float = 0.0  # most recent forward speed (m/s)
         self.available: bool = False  # True after first valid update
 
     # ------------------------------------------------------------------
@@ -66,8 +67,16 @@ class WheelOdometry:
             self._t_last = t
             if not (self._DT_MIN < dt < self._DT_MAX):
                 return
-            self._ds     += speed_x  * dt
-            self._dtheta += ang_rate * dt
+            self._last_speed  = speed_x
+            self._ds         += speed_x  * dt
+            self._dtheta     += ang_rate * dt
+
+    # ------------------------------------------------------------------
+    @property
+    def current_speed(self) -> float:
+        """Most recent forward speed in m/s (thread-safe snapshot)."""
+        with self._lock:
+            return self._last_speed
 
     # ------------------------------------------------------------------
     def get_delta_and_reset(self) -> Tuple[float, float]:

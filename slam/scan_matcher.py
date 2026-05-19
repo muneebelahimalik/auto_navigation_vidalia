@@ -86,6 +86,33 @@ def downsample(pts: np.ndarray, n: int = 400) -> np.ndarray:
     return voxel_downsample(pts, 0.15)
 
 
+def deskew_scan(pts: np.ndarray, fwd_speed: float, scan_period: float = 0.1) -> np.ndarray:
+    """
+    Correct VLP-16 motion distortion caused by robot movement during the scan.
+
+    The VLP-16 sweeps 360° in ~100 ms (scan_period).  At 0.8 m/s the robot
+    moves 8 cm in that window, so the first and last points of one scan are
+    collected 8 cm apart — effectively smearing the point cloud.
+
+    Convention (sensor frame):  X = right, Y = forward.
+    VLP-16 rotates CW from above: azimuth 0 → forward (+Y), 90 → right (+X),
+    180 → backward, 270 → left.  Azimuth from (x, y): atan2(x, y).
+
+    Correction: a point at azimuth α was collected at time
+        t = (α mod 2π) / 2π × scan_period
+    after the scan start.  In that time the robot moved fwd_speed × t forward.
+    Adding that displacement to Y corrects the point back to the scan-start frame.
+    """
+    if len(pts) == 0 or abs(fwd_speed) < 0.02:
+        return pts
+    az = np.arctan2(pts[:, 0], pts[:, 1]) % (2.0 * np.pi)   # [0, 2π)
+    t_frac = az / (2.0 * np.pi)
+    correction = fwd_speed * t_frac * scan_period              # metres
+    result = pts.copy()
+    result[:, 1] += correction
+    return result
+
+
 def remove_outliers(pts: np.ndarray, k: int = 8, std_mult: float = 2.0) -> np.ndarray:
     """
     Statistical outlier removal: discard points whose mean distance to their

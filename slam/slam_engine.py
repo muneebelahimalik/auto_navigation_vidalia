@@ -32,6 +32,7 @@ import numpy as np
 from lidar.lidar_driver import VelodynePoint
 from slam.scan_matcher import (
     Pose2D,
+    deskew_scan,
     downsample,
     extract_2d_slice,
     icp_2d,
@@ -43,13 +44,13 @@ from slam.occupancy_grid import OccupancyGrid
 
 # ---------- ICP / submap parameters -----------------------------------------
 # ICP result is rejected if mean error exceeds this (metres).
-ICP_REJECT_THRESHOLD = 0.20
+ICP_REJECT_THRESHOLD = 0.25
 
 # Number of past scans to keep in the sliding-window submap reference.
-_REF_WINDOW = 5
+_REF_WINDOW = 8
 
 # Target point count for the merged reference scan fed into ICP.
-_REF_MAX_PTS = 800
+_REF_MAX_PTS = 1200
 
 # ---------- Physical motion caps ---------------------------------------------
 # Robot max speed 0.8 m/s; LiDAR worst-case ~1.5 Hz → 0.53 m/scan.
@@ -212,6 +213,7 @@ class SlamEngine:
         self,
         scan: List[VelodynePoint],
         odom_delta: Optional[Tuple[float, float]] = None,
+        fwd_speed: float = 0.0,
     ) -> None:
         """
         Process one full 360° VLP-16 scan.  Thread-safe.
@@ -222,11 +224,15 @@ class SlamEngine:
         odom_delta : optional ``(ds, dtheta)`` from WheelOdometry.get_delta_and_reset().
                      When provided, wheel-odometry is used for the ICP warm
                      start instead of the constant-velocity fallback.
+        fwd_speed  : forward speed in m/s from the most recent encoder reading.
+                     Used to deskew the point cloud for motion distortion caused
+                     by the robot moving during the 100 ms VLP-16 scan window.
         """
         pts_local = extract_2d_slice(scan)
         if len(pts_local) < 20:
             return
 
+        pts_local = deskew_scan(pts_local, fwd_speed)
         pts_ds = remove_outliers(voxel_downsample(pts_local, 0.15))
 
         with self._lock:

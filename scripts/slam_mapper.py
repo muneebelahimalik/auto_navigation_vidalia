@@ -218,7 +218,7 @@ def _start_canbus_thread(config, odom: WheelOdometry) -> Callable[[], None]:
 
 def _status_line(state, cell_count: int, hz: float) -> str:
     p = state.pose
-    deg = math.degrees(p.theta)
+    deg = (math.degrees(p.theta) + 180.0) % 360.0 - 180.0  # wrap to [-180, +180]
     odom_str = f"odom={state.odom_scans}" if state.odom_scans > 0 else "odom=off"
     return (
         f"\rscan={state.scan_count:5d} | "
@@ -295,10 +295,11 @@ async def _run(args: argparse.Namespace, engine_ref: list) -> None:
                           f"Mapping started ({odom_status}).")
                     first = False
 
-                # Grab odometry delta accumulated since last scan
+                # Grab odometry delta and current speed for deskew
+                fwd_speed = odom.current_speed if odom.available else 0.0
                 delta = odom.get_delta_and_reset() if odom.available else None
 
-                engine.process_scan(scan, odom_delta=delta)
+                engine.process_scan(scan, odom_delta=delta, fwd_speed=fwd_speed)
                 scans_since += 1
 
                 now = time.monotonic()
