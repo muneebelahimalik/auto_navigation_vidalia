@@ -44,7 +44,10 @@ from slam.occupancy_grid import OccupancyGrid
 
 # ---------- ICP / submap parameters -----------------------------------------
 # ICP result is rejected if mean error exceeds this (metres).
-ICP_REJECT_THRESHOLD = 0.25
+# Keep tight: in sparse open environments, bad ICP (0.10–0.18 m error) is
+# WORSE than pure wheel-odometry prediction (~0.01 m/scan drift).  Only
+# accept ICP when it's genuinely confident; fall back to odom otherwise.
+ICP_REJECT_THRESHOLD = 0.08
 
 # Number of past scans to keep in the sliding-window submap reference.
 _REF_WINDOW = 8
