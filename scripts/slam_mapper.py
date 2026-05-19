@@ -35,10 +35,11 @@ import asyncio
 import json
 import math
 import sys
+import threading
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional, Tuple
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -166,6 +167,52 @@ async def _canbus_loop(config, odom: WheelOdometry) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Canbus thread launcher
+# ---------------------------------------------------------------------------
+
+def _start_canbus_thread(config, odom: WheelOdometry) -> Callable[[], None]:
+    """
+    Run _canbus_loop in a dedicated daemon thread with its own asyncio event loop.
+
+    The lidar scan loop and the gRPC subscription cannot share an event loop
+    reliably on Python 3.8 ARM64 — gRPC events are never delivered to the
+    canbus task when the lidar async-for is the active awaitable.  Running in
+    a separate thread with its own loop sidesteps the contention entirely.
+
+    Returns a stop() callable that cancels the task and joins the thread.
+    """
+    loop = asyncio.new_event_loop()
+    task_ref: list = [None]
+    started = threading.Event()
+
+    def _thread() -> None:
+        asyncio.set_event_loop(loop)
+
+        async def _main() -> None:
+            task_ref[0] = asyncio.current_task()
+            started.set()
+            await _canbus_loop(config, odom)
+
+        try:
+            loop.run_until_complete(_main())
+        except asyncio.CancelledError:
+            pass
+        finally:
+            loop.close()
+
+    t = threading.Thread(target=_thread, daemon=True, name="canbus")
+    t.start()
+    started.wait(timeout=2.0)   # wait until the task object exists
+
+    def stop() -> None:
+        if task_ref[0] is not None:
+            loop.call_soon_threadsafe(task_ref[0].cancel)
+        t.join(timeout=3.0)
+
+    return stop
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
@@ -212,13 +259,13 @@ async def _run(args: argparse.Namespace, engine_ref: list) -> None:
     engine_ref.append(engine)
 
     odom = WheelOdometry()
-    canbus_task: Optional[asyncio.Task] = None
+    canbus_stop: Optional[Callable[[], None]] = None
 
-    # Try to start canbus odometry in background
+    # Try to start canbus odometry in a background thread (own event loop)
     if not args.no_odom:
         canbus_cfg = _load_canbus_config()
         if canbus_cfg is not None:
-            canbus_task = asyncio.create_task(_canbus_loop(canbus_cfg, odom))
+            canbus_stop = _start_canbus_thread(canbus_cfg, odom)
 
     autosave_interval = args.autosave if not args.no_autosave else None
     t_autosave = time.monotonic()
@@ -243,7 +290,7 @@ async def _run(args: argparse.Namespace, engine_ref: list) -> None:
             first = True
             async for scan in lidar.scan_stream():
                 if first:
-                    odom_status = "with wheel odometry" if canbus_task else "without wheel odometry"
+                    odom_status = "with wheel odometry" if canbus_stop else "without wheel odometry"
                     print(f" First scan received — {len(scan):,} points. "
                           f"Mapping started ({odom_status}).")
                     first = False
@@ -274,12 +321,8 @@ async def _run(args: argparse.Namespace, engine_ref: list) -> None:
                     sys.stdout.write(f"\n[autosave #{autosave_count}] → {adir}\n")
                     t_autosave = now
     finally:
-        if canbus_task is not None:
-            canbus_task.cancel()
-            try:
-                await canbus_task
-            except asyncio.CancelledError:
-                pass
+        if canbus_stop is not None:
+            canbus_stop()
 
 
 # ---------------------------------------------------------------------------
