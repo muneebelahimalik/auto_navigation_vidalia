@@ -42,6 +42,12 @@ from typing import Optional
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+# Auto-add the farm-ng venv site-packages so the script works without
+# needing "source /farm_ng_image/venv/bin/activate" first.
+_FARMNG_SITE = Path("/farm_ng_image/venv/lib/python3.8/site-packages")
+if _FARMNG_SITE.exists() and str(_FARMNG_SITE) not in sys.path:
+    sys.path.insert(0, str(_FARMNG_SITE))
+
 from lidar.lidar_driver import LidarDriver
 from slam.slam_engine import SlamEngine
 from slam.wheel_odometry import WheelOdometry
