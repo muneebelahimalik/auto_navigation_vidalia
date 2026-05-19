@@ -11,29 +11,95 @@ Press Ctrl+C to stop.  The script will immediately save:
     maps/<timestamp>/map.npz   — raw occupancy grid (reloadable)
     maps/<timestamp>/map.png   — rendered PNG (viewable / shareable)
 
+Wheel odometry (optional):
+    If service_config.json is present and the Amiga canbus service is
+    reachable, the script automatically subscribes to AmigaTpdo1 and
+    fuses wheel encoder data with LiDAR ICP.  The status line shows
+    "odom=<N>" counting scans that used encoder warm-start.  If the
+    canbus is unavailable the script falls back to constant-velocity
+    prediction silently.
+
 Optional flags:
     --save-dir  PATH    override output directory
     --autosave  N       also auto-save every N seconds (default 60)
     --no-autosave       disable auto-save
     --icp-points N      ICP subsample count (default 400)
     --map-every  N      update occupancy grid every N scans (default 1)
+    --no-odom           disable wheel odometry even if canbus is available
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import math
 import sys
 import time
 from datetime import datetime
 from pathlib import Path
+from typing import Optional
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from lidar.lidar_driver import LidarDriver
 from slam.slam_engine import SlamEngine
+from slam.wheel_odometry import WheelOdometry
 from slam.map_io import save_map
+
+
+# ---------------------------------------------------------------------------
+# Canbus config loader
+# ---------------------------------------------------------------------------
+
+def _load_canbus_config():
+    """
+    Try to load the canbus EventServiceConfig from service_config.json.
+    Returns the config object or None if unavailable / farm-ng SDK not found.
+    """
+    config_path = Path(__file__).parent.parent / "service_config.json"
+    if not config_path.exists():
+        return None
+    try:
+        from farm_ng.core.event_service_pb2 import EventServiceConfig
+        from google.protobuf.json_format import ParseDict
+        data = json.loads(config_path.read_text())
+        for cfg in data.get("configs", []):
+            if cfg.get("name") == "canbus":
+                return ParseDict(cfg, EventServiceConfig())
+    except Exception:
+        pass
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Canbus subscriber task
+# ---------------------------------------------------------------------------
+
+async def _canbus_loop(config, odom: WheelOdometry) -> None:
+    """
+    Subscribe to AmigaTpdo1 from the canbus service and feed encoder data
+    into WheelOdometry.  Runs as a background asyncio task; exits silently
+    on cancellation or connection failure.
+    """
+    try:
+        from farm_ng.core.event_client import EventClient
+        from farm_ng.canbus.canbus_pb2 import AmigaTpdo1
+        client = EventClient(config)
+        async for _event, message in client.subscribe(
+            config.subscriptions[0], decode=True
+        ):
+            if isinstance(message, AmigaTpdo1):
+                odom.update(
+                    message.meas_speed_x,
+                    message.meas_ang_rate,
+                    time.monotonic(),
+                )
+    except asyncio.CancelledError:
+        pass
+    except Exception:
+        # Canbus unavailable — odometry falls back to constant-velocity
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -43,12 +109,14 @@ from slam.map_io import save_map
 def _status_line(state, cell_count: int, hz: float) -> str:
     p = state.pose
     deg = math.degrees(p.theta)
+    odom_str = f"odom={state.odom_scans}" if state.odom_scans > 0 else "odom=off"
     return (
         f"\rscan={state.scan_count:5d} | "
         f"x={p.x:+6.2f} y={p.y:+6.2f} θ={deg:+6.1f}° | "
         f"map={cell_count:,} cells | "
         f"icp={state.last_icp_error:.3f} m | "
         f"lc={state.loop_closures} | "
+        f"{odom_str} | "
         f"{hz:.1f} Hz   "
     )
 
@@ -73,11 +141,21 @@ def _print_save_result(engine: SlamEngine, out: Path) -> None:
 # Main async loop
 # ---------------------------------------------------------------------------
 
-async def run(args: argparse.Namespace) -> None:
+async def _run(args: argparse.Namespace, engine_ref: list) -> None:
     engine = SlamEngine(
         icp_points=args.icp_points,
         map_update_every=args.map_every,
     )
+    engine_ref.append(engine)
+
+    odom = WheelOdometry()
+    canbus_task: Optional[asyncio.Task] = None
+
+    # Try to start canbus odometry in background
+    if not args.no_odom:
+        canbus_cfg = _load_canbus_config()
+        if canbus_cfg is not None:
+            canbus_task = asyncio.create_task(_canbus_loop(canbus_cfg, odom))
 
     autosave_interval = args.autosave if not args.no_autosave else None
     t_autosave = time.monotonic()
@@ -93,30 +171,52 @@ async def run(args: argparse.Namespace) -> None:
     print("=" * 64)
     print()
 
-    async with LidarDriver() as lidar:
-        async for scan in lidar.scan_stream():
-            engine.process_scan(scan)
-            scans_since += 1
+    try:
+        async with LidarDriver() as lidar:
+            print(" Waiting for LiDAR packets on UDP port 2368 …")
+            print(" (If this hangs, check: ping 192.168.1.201  and "
+                  " sudo tcpdump -i any udp port 2368 -c 5 -q)")
+            print()
+            first = True
+            async for scan in lidar.scan_stream():
+                if first:
+                    odom_status = "with wheel odometry" if canbus_task else "without wheel odometry"
+                    print(f" First scan received — {len(scan):,} points. "
+                          f"Mapping started ({odom_status}).")
+                    first = False
 
-            now = time.monotonic()
-            elapsed = now - t0
-            if elapsed >= 1.0:
-                hz = scans_since / elapsed
-                scans_since = 0
-                t0 = now
+                # Grab odometry delta accumulated since last scan
+                delta = odom.get_delta_and_reset() if odom.available else None
 
-            state = engine.get_state()
-            sys.stdout.write(_status_line(state, engine.cell_count, hz))
-            sys.stdout.flush()
+                engine.process_scan(scan, odom_delta=delta)
+                scans_since += 1
 
-            if autosave_interval and (now - t_autosave) >= autosave_interval:
-                autosave_count += 1
-                ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-                adir = (Path(args.save_dir) if args.save_dir else Path("maps")) \
-                       / f"autosave_{ts}"
-                _do_save(engine, adir)
-                sys.stdout.write(f"\n[autosave #{autosave_count}] → {adir}\n")
-                t_autosave = now
+                now = time.monotonic()
+                elapsed = now - t0
+                if elapsed >= 1.0:
+                    hz = scans_since / elapsed
+                    scans_since = 0
+                    t0 = now
+
+                state = engine.get_state()
+                sys.stdout.write(_status_line(state, engine.cell_count, hz))
+                sys.stdout.flush()
+
+                if autosave_interval and (now - t_autosave) >= autosave_interval:
+                    autosave_count += 1
+                    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    adir = (Path(args.save_dir) if args.save_dir else Path("maps")) \
+                           / f"autosave_{ts}"
+                    _do_save(engine, adir)
+                    sys.stdout.write(f"\n[autosave #{autosave_count}] → {adir}\n")
+                    t_autosave = now
+    finally:
+        if canbus_task is not None:
+            canbus_task.cancel()
+            try:
+                await canbus_task
+            except asyncio.CancelledError:
+                pass
 
 
 # ---------------------------------------------------------------------------
@@ -137,69 +237,17 @@ def main() -> None:
                         help="Points used per ICP iteration (default: 400)")
     parser.add_argument("--map-every",   type=int, default=1,  metavar="N",
                         help="Update occupancy grid every N scans (default: 1)")
+    parser.add_argument("--no-odom",     action="store_true",
+                        help="Disable wheel odometry (use constant-velocity only)")
     args = parser.parse_args()
 
-    engine_ref: list[SlamEngine] = []
-
-    async def _run_and_capture() -> None:
-        e = SlamEngine(
-            icp_points=args.icp_points,
-            map_update_every=args.map_every,
-        )
-        engine_ref.append(e)
-
-        autosave_interval = args.autosave if not args.no_autosave else None
-        t_autosave = time.monotonic()
-        autosave_count = 0
-        t0 = time.monotonic()
-        scans_since = 0
-        hz = 0.0
-
-        print()
-        print("=" * 64)
-        print("  SLAM mapper — drive the robot to build a map")
-        print("  Press Ctrl+C to stop and save the map.")
-        print("=" * 64)
-        print()
-
-        async with LidarDriver() as lidar:
-            print(f" Waiting for LiDAR packets on UDP port 2368 …")
-            print(f" (If this hangs, check: ping 192.168.1.201  and  sudo tcpdump -i any udp port 2368 -c 5 -q)")
-            print()
-            first = True
-            async for scan in lidar.scan_stream():
-                if first:
-                    print(f" First scan received — {len(scan):,} points. Mapping started.")
-                    first = False
-                e.process_scan(scan)
-                scans_since += 1
-
-                now = time.monotonic()
-                elapsed = now - t0
-                if elapsed >= 1.0:
-                    hz = scans_since / elapsed
-                    scans_since = 0
-                    t0 = now
-
-                state = e.get_state()
-                sys.stdout.write(_status_line(state, e.cell_count, hz))
-                sys.stdout.flush()
-
-                if autosave_interval and (now - t_autosave) >= autosave_interval:
-                    autosave_count += 1
-                    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-                    adir = (Path(args.save_dir) if args.save_dir else Path("maps")) \
-                           / f"autosave_{ts}"
-                    _do_save(e, adir)
-                    sys.stdout.write(f"\n[autosave #{autosave_count}] → {adir}\n")
-                    t_autosave = now
+    engine_ref: list = []
 
     try:
-        asyncio.run(_run_and_capture())
+        asyncio.run(_run(args, engine_ref))
     except KeyboardInterrupt:
         pass
 
-    # Save after the event loop exits cleanly
     sys.stdout.write("\n")
     if not engine_ref:
         print("[slam_mapper] No engine started — nothing to save.")

@@ -25,7 +25,7 @@ from __future__ import annotations
 import math
 import threading
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 import numpy as np
 
@@ -58,10 +58,11 @@ _MAX_TRANS_PER_SCAN = 0.70       # metres
 _MAX_ROT_PER_SCAN   = math.radians(50)  # radians (~100°/s at 2 Hz)
 
 # ---------- Loop closure parameters -----------------------------------------
-_LC_EVERY_N_SCANS = 15   # attempt loop closure every N scans
-_LC_MIN_SCANS     = 40   # don't attempt until the map has enough structure
-_LC_RADIUS_M      = 12.0 # radius around current pose to sample map cells
-_LC_ACCEPT_ERR    = 0.13 # accept closure only if ICP error is below this
+_LC_EVERY_N_SCANS = 8    # attempt loop closure every N scans
+_LC_MIN_SCANS     = 25   # don't attempt until the map has enough structure
+_LC_RADIUS_M      = 15.0 # radius around current pose to sample map cells
+_LC_ACCEPT_ERR    = 0.18 # accept closure only if ICP error is below this
+                          # (0.18 m is realistic for sparse agricultural fields)
 
 
 @dataclass
@@ -71,6 +72,7 @@ class SlamState:
     scan_count: int = 0
     last_icp_error: float = 0.0
     loop_closures: int = 0
+    odom_scans: int = 0   # scans where wheel odometry was used as warm start
 
 
 class SlamEngine:
@@ -102,6 +104,7 @@ class SlamEngine:
         self._scan_count = 0
         self._last_icp_err = 0.0
         self._loop_closures = 0
+        self._odom_scans = 0
         self._ref_scans: List[np.ndarray] = []
         self._lock = threading.Lock()
 
@@ -125,6 +128,26 @@ class SlamEngine:
         dy = current.y - prev.y
         dtheta = (current.theta - prev.theta + math.pi) % (2 * math.pi) - math.pi
         return Pose2D(current.x + dx, current.y + dy, current.theta + dtheta)
+
+    # ------------------------------------------------------------------
+    def _predict_pose_odom(
+        self, current: Pose2D, ds: float, dtheta: float
+    ) -> Pose2D:
+        """
+        Wheel-odometry prediction: apply arc (ds, dtheta) to current pose.
+
+        Uses the midpoint heading so the arc is correctly curved rather
+        than approximated as a straight-line step.
+
+        ds     : forward arc distance in metres
+        dtheta : heading change in radians (CCW positive)
+        """
+        mid_theta = current.theta + dtheta / 2.0
+        return Pose2D(
+            current.x + ds * math.cos(mid_theta),
+            current.y + ds * math.sin(mid_theta),
+            current.theta + dtheta,
+        )
 
     # ------------------------------------------------------------------
     def _apply_motion_caps(self, new_pose: Pose2D, ref_pose: Pose2D) -> Pose2D:
@@ -185,8 +208,21 @@ class SlamEngine:
         return None
 
     # ------------------------------------------------------------------
-    def process_scan(self, scan: List[VelodynePoint]) -> None:
-        """Process one full 360° VLP-16 scan.  Thread-safe."""
+    def process_scan(
+        self,
+        scan: List[VelodynePoint],
+        odom_delta: Optional[Tuple[float, float]] = None,
+    ) -> None:
+        """
+        Process one full 360° VLP-16 scan.  Thread-safe.
+
+        Parameters
+        ----------
+        scan       : raw VLP-16 point list from LidarDriver
+        odom_delta : optional ``(ds, dtheta)`` from WheelOdometry.get_delta_and_reset().
+                     When provided, wheel-odometry is used for the ICP warm
+                     start instead of the constant-velocity fallback.
+        """
         pts_local = extract_2d_slice(scan)
         if len(pts_local) < 20:
             return
@@ -194,7 +230,11 @@ class SlamEngine:
         pts_ds = remove_outliers(voxel_downsample(pts_local, 0.15))
 
         with self._lock:
-            pose_predicted = self._predict_pose(self._pose, self._prev_pose)
+            if odom_delta is not None:
+                ds, dtheta = odom_delta
+                pose_predicted = self._predict_pose_odom(self._pose, ds, dtheta)
+            else:
+                pose_predicted = self._predict_pose(self._pose, self._prev_pose)
             ref = self._build_reference()
             scan_count_now = self._scan_count
 
@@ -232,6 +272,8 @@ class SlamEngine:
             self._last_icp_err = icp_err
             if lc_accepted:
                 self._loop_closures += 1
+            if odom_delta is not None:
+                self._odom_scans += 1
             self._ref_scans.append(pts_ds_world)
             if len(self._ref_scans) > _REF_WINDOW:
                 self._ref_scans = self._ref_scans[-_REF_WINDOW:]
@@ -249,6 +291,7 @@ class SlamEngine:
                 scan_count=self._scan_count,
                 last_icp_error=self._last_icp_err,
                 loop_closures=self._loop_closures,
+                odom_scans=self._odom_scans,
             )
 
     def get_map(self) -> np.ndarray:
