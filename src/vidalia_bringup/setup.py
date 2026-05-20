@@ -29,6 +29,7 @@ setup(
             'amiga_ros2_bridge = vidalia_bringup.amiga_ros2_bridge:main',
             'field_coverage_planner = vidalia_bringup.field_coverage_planner:main',
             'autonomous_row_coverage = vidalia_bringup.autonomous_row_coverage:main',
+            'lidar_center_row_follower = vidalia_bringup.lidar_center_row_follower:main',
         ],
     },
 )
