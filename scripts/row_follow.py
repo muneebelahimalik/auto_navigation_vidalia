@@ -258,9 +258,10 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
         crop_h_min=args.crop_min,
         crop_h_max=args.crop_max,
     )
+    tire_h = args.tire_height if args.tire_height is not None else args.obstacle_height
     safety = SafetyMonitor(
         obstacle_height=args.obstacle_height,
-        tire_obstacle_height=args.obstacle_height,
+        tire_obstacle_height=tire_h,
     )
     controller = PurePursuitController(max_linear=args.speed)
     navigator = RowNavigator(
@@ -276,6 +277,8 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
     print(f"  mode    : {'AUTONOMOUS — robot WILL move' if args.auto else 'perception-only (no motion)'}")
     print(f"  rows    : {args.rows}   headland turns: {'on' if args.headland else 'off'}")
     print(f"  speed   : {args.speed:.2f} m/s max   SLAM map: {'on' if args.slam else 'off'}")
+    print(f"  safety  : fwd_h={args.obstacle_height:.2f}m  tire_h={tire_h:.2f}m  "
+          f"self_r={args.self_radius:.2f}m")
     print("  Press Ctrl+C to stop the robot immediately.")
     print("=" * 68)
     print()
@@ -331,7 +334,12 @@ def main() -> None:
                              "robot's own frame (default: 1.5)")
     parser.add_argument("--obstacle-height", type=float, default=0.75, metavar="M",
                         help="Min ground-relative height (m) to count as obstacle "
-                             "(default: 0.75, above LiDAR mount height of 0.699 m)")
+                             "in the FORWARD zone (default: 0.75)")
+    parser.add_argument("--tire-height", type=float, default=None, metavar="M",
+                        help="Min ground-relative height (m) for TIRE-ZONE obstacles "
+                             "(default: same as --obstacle-height). Raise above the "
+                             "adjacent-row canopy height to stop tall crop triggering "
+                             "tire-zone stops (e.g. 0.85 for bolted onions).")
     parser.add_argument("--debug", action="store_true",
                         help="Stream a LiDAR height profile instead of navigating")
     parser.add_argument("--save-dir", default="", metavar="PATH",
