@@ -268,6 +268,7 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
         canbus, detector, safety, controller,
         auto=args.auto, rows=args.rows, headland=args.headland, slam=slam,
         self_radius=args.self_radius,
+        acquire_conf=args.acquire_conf,
     )
     nav_ref.append(navigator)
 
@@ -332,6 +333,10 @@ def main() -> None:
     parser.add_argument("--self-radius", type=float, default=1.5, metavar="M",
                         help="Discard LiDAR returns within this radius — the "
                              "robot's own frame (default: 1.5)")
+    parser.add_argument("--acquire-conf", type=float, default=0.45, metavar="F",
+                        help="Min row-detection confidence (0-1) to leave ACQUIRE "
+                             "(default: 0.45). Lower if the robot gets stuck in ACQUIRE "
+                             "due to partial row coverage or skewed start position.")
     parser.add_argument("--obstacle-height", type=float, default=0.75, metavar="M",
                         help="Min ground-relative height (m) to count as obstacle "
                              "in the FORWARD zone (default: 0.75)")
