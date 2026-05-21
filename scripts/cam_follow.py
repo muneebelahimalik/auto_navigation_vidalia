@@ -155,8 +155,28 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
         asyncio.ensure_future(right_cam.run()),
     ]
 
-    # Wait for first frames before entering the nav loop.
-    await asyncio.sleep(2.0)
+    # Wait for first frames, then verify at least one camera came up.
+    await asyncio.sleep(2.5)
+    left_ok = left_cam.get_latest() is not None
+    right_ok = right_cam.get_latest() is not None
+    if not left_ok and not right_ok:
+        print(
+            "\n[cam_follow] ERROR: no frames received from either camera after 2.5 s.\n"
+            "  Check that the OAK-D devices are physically connected (USB 3.0 required)\n"
+            "  and detected by the OS:\n"
+            "    lsusb | grep -iE 'movidius|luxonis|03e7'\n"
+            "    python3 -c \"import depthai as dai; "
+            "print(dai.Device.getAllAvailableDevices())\"\n"
+            "  Aborting."
+        )
+        for t in cam_tasks:
+            t.cancel()
+        await asyncio.gather(*cam_tasks, return_exceptions=True)
+        return
+    if not left_ok:
+        print("[cam_follow] WARNING: left camera not producing frames — running right-only.")
+    if not right_ok:
+        print("[cam_follow] WARNING: right camera not producing frames — running left-only.")
     print("[cam_follow] cameras ready — following the centre crop row.\n")
 
     try:
