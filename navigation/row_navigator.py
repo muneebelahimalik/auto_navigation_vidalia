@@ -113,7 +113,7 @@ class RowNavigator:
     async def run(self, lidar: LidarDriver) -> None:
         """Consume the LiDAR scan stream and drive the state machine."""
         self._t_prev = time.monotonic()
-        async for scan in lidar.scan_stream():
+        async for pts in lidar.scan_stream_np():
             if self._stop:
                 break
 
@@ -121,21 +121,16 @@ class RowNavigator:
             dt = min(max(now - self._t_prev, 1e-3), 0.5)
             self._t_prev = now
 
-            if scan:
-                pts = np.array([(p.x, p.y, p.z) for p in scan], dtype=np.float64)
-                # Drop the robot's own frame/crossbar: the centre-mounted
-                # LiDAR sees its mounting structure as a dense return at
-                # ~0.5 m.  Without this it permanently trips the safety
-                # zones and the robot never leaves OBSTACLE_WAIT.
+            # Drop the robot's own frame/crossbar: the centre-mounted LiDAR
+            # sees its mounting structure as a dense return at ~0.5 m.
+            # Without this it permanently trips the safety zones and the
+            # robot never leaves OBSTACLE_WAIT.
+            if len(pts):
                 rng = np.hypot(pts[:, 0], pts[:, 1])
                 pts = pts[rng >= self.self_radius]
-            else:
-                pts = np.zeros((0, 3), dtype=np.float64)
 
             est = self.detector.update(pts)
             safety = self.safety.check(pts)
-            if self.slam is not None and scan:
-                self.slam.process_scan(scan)
 
             linear, angular = self._step(est, safety, dt)
             self.cmd = (linear, angular)

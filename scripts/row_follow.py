@@ -98,62 +98,136 @@ def _load_canbus_interface():
 # ---------------------------------------------------------------------------
 
 async def _debug_loop(lidar: LidarDriver, args: argparse.Namespace) -> None:
-    """Stream a per-scan LiDAR height profile to diagnose row detection."""
+    """Stream LiDAR stats and save a bird's-eye-view PNG for diagnosis."""
     import time
 
     import numpy as np
 
     from lidar.obstacle_filter import LIDAR_MOUNT_HEIGHT
 
-    print(f" DEBUG — LiDAR height profile (assumed mount height "
+    print(f" DEBUG — collecting scans (assumed mount height "
           f"{LIDAR_MOUNT_HEIGHT:.3f} m)")
-    print(f" forward strip: y 1.5-7.0 m, |x| <= {args.roi_x:.2f} m, "
-          f"self-filter < {args.self_radius:.2f} m")
-    print(" A healthy run shows steady 'pts' and 'hz' near 10.  The tallest")
-    print(" h-hist bin is the floor — the crop band must sit ABOVE it.\n")
+    print(f" self-filter < {args.self_radius:.2f} m | "
+          f"ROI |x| <= {args.roi_x:.2f} m, y 1.5-7.0 m")
+    print(" A healthy run shows steady 'pts' (~28000) and 'hz' near 10.\n")
 
     h_edges = np.arange(-0.30, 1.05, 0.10)
-    z_edges = np.arange(-1.10, 0.30, 0.05)
+    collected = []
+    target = 25
     t0 = time.monotonic()
     count = 0
     hz = 0.0
-    shown = 0
 
-    async for scan in lidar.scan_stream():
+    async for pts in lidar.scan_stream_np():
         count += 1
         now = time.monotonic()
         if now - t0 >= 1.0:
             hz = count / (now - t0)
             count = 0
             t0 = now
-        if not scan:
-            continue
-        shown += 1
-        if shown % 3 != 0:
+        if len(pts) == 0:
             continue
 
-        pts = np.array([(p.x, p.y, p.z) for p in scan], dtype=np.float64)
         rng = np.hypot(pts[:, 0], pts[:, 1])
         pts = pts[rng >= args.self_radius]
         strip = pts[(pts[:, 1] >= 1.5) & (pts[:, 1] <= 7.0)
                     & (np.abs(pts[:, 0]) <= args.roi_x)]
-        if len(strip) == 0:
-            print(f"pts={len(scan):6d} hz={hz:4.1f} | forward strip EMPTY")
-            continue
-
         h = strip[:, 2] + LIDAR_MOUNT_HEIGHT
-        zh, _ = np.histogram(strip[:, 2], bins=z_edges)
-        floor_z = float(z_edges[int(np.argmax(zh))] + 0.025)
-        hh, _ = np.histogram(h, bins=h_edges)
         band = int(((h >= args.crop_min) & (h <= args.crop_max)).sum())
-
-        bars = " ".join(
-            f"{h_edges[i]:+.2f}:{hh[i]:<4d}" for i in range(len(hh)) if hh[i] > 0
-        )
-        print(f"pts={len(scan):6d} hz={hz:4.1f} strip={len(strip):5d} "
-              f"floor_z={floor_z:+.2f} (mount~{-floor_z:.2f}m) "
+        hh, _ = np.histogram(h, bins=h_edges)
+        bars = " ".join(f"{h_edges[i]:+.2f}:{int(hh[i]):<4d}"
+                        for i in range(len(hh)) if hh[i] > 0)
+        print(f"pts={len(pts):6d} hz={hz:4.1f} strip={len(strip):5d} "
               f"crop[{args.crop_min:.2f}-{args.crop_max:.2f}]={band}")
-        print(f"   h-hist: {bars}")
+        if bars:
+            print(f"   h-hist: {bars}")
+
+        collected.append(pts[(pts[:, 1] >= 0.0) & (pts[:, 1] <= 9.0)
+                              & (np.abs(pts[:, 0]) <= 2.5)])
+        if len(collected) >= target:
+            break
+
+    if not collected:
+        print("\n no scans collected — check the LiDAR connection")
+        return
+    _save_bev(np.vstack(collected), args)
+
+
+def _height_colour(t):
+    """Map normalised height t in [0,1] to an RGB uint8 array (blue -> red)."""
+    import numpy as np
+
+    t = np.clip(np.asarray(t, dtype=np.float64), 0.0, 1.0)
+    stops = np.array([
+        [0.00,  40,  60, 180],
+        [0.25,  40, 180, 200],
+        [0.50,  60, 200,  70],
+        [0.75, 240, 220,  50],
+        [1.00, 220,  50,  40],
+    ])
+    r = np.interp(t, stops[:, 0], stops[:, 1])
+    g = np.interp(t, stops[:, 0], stops[:, 2])
+    b = np.interp(t, stops[:, 0], stops[:, 3])
+    return np.stack([r, g, b], axis=-1).astype(np.uint8)
+
+
+def _save_bev(pts, args: argparse.Namespace) -> None:
+    """Render a top-down view of the forward LiDAR points, coloured by height."""
+    import numpy as np
+
+    from lidar.obstacle_filter import LIDAR_MOUNT_HEIGHT
+    from slam.map_io import _write_png
+
+    res = 0.015
+    x_min, x_max = -2.5, 2.5
+    y_min, y_max = 0.0, 9.0
+    h_lo, h_hi = -0.20, 1.20
+    bar_w = 16
+
+    plot_w = int((x_max - x_min) / res)
+    H = int((y_max - y_min) / res)
+    W = plot_w + bar_w
+    img = np.full((H, W, 3), 245, dtype=np.uint8)
+
+    # faint 1 m grid
+    for xx in np.arange(x_min + 1.0, x_max, 1.0):
+        img[:, int((xx - x_min) / res)] = (215, 215, 215)
+    for yy in np.arange(y_min + 1.0, y_max, 1.0):
+        img[int((y_max - yy) / res), :plot_w] = (215, 215, 215)
+
+    # points, coloured by height above ground
+    keep = ((pts[:, 0] >= x_min) & (pts[:, 0] < x_max)
+            & (pts[:, 1] >= y_min) & (pts[:, 1] < y_max))
+    p = pts[keep]
+    h = p[:, 2] + LIDAR_MOUNT_HEIGHT
+    rgb = _height_colour((h - h_lo) / (h_hi - h_lo))
+    col = np.clip(((p[:, 0] - x_min) / res).astype(int), 0, plot_w - 1)
+    row = np.clip(((y_max - p[:, 1]) / res).astype(int), 0, H - 1)
+    for dr in (0, 1):
+        for dc in (0, 1):
+            img[np.clip(row + dr, 0, H - 1),
+                np.clip(col + dc, 0, plot_w - 1)] = rgb
+
+    # row-detection ROI box and robot centreline
+    c0 = int((-args.roi_x - x_min) / res)
+    c1 = int((args.roi_x - x_min) / res)
+    r0 = int((y_max - 7.0) / res)
+    r1 = int((y_max - 1.5) / res)
+    img[r0:r1, c0] = (0, 0, 0)
+    img[r0:r1, c1] = (0, 0, 0)
+    img[r0, c0:c1] = (0, 0, 0)
+    img[r1, c0:c1] = (0, 0, 0)
+    img[:, int((0.0 - x_min) / res)] = (120, 120, 120)
+
+    # colour-scale bar (top = high, bottom = low)
+    img[:, plot_w:] = _height_colour(np.linspace(1.0, 0.0, H))[:, None, :]
+
+    out = Path("row_debug_bev.png")
+    _write_png(out, img)
+    print(f"\n Saved bird's-eye view -> {out.resolve()}  ({W}x{H} px)")
+    print(f" Colour = height above ground: blue {h_lo:+.1f} m -> red {h_hi:+.1f} m.")
+    print(" Robot is at bottom-centre looking up the image (+y = forward).")
+    print(" Send me row_debug_bev.png and I can set the crop band precisely.")
 
 
 # ---------------------------------------------------------------------------
@@ -175,8 +249,9 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
 
     slam = None
     if args.slam:
-        from slam.slam_engine import SlamEngine
-        slam = SlamEngine()
+        print(" [row_follow] --slam is unavailable with the fast perception "
+              "path;\n              build a map separately with "
+              "scripts/slam_mapper.py.")
 
     detector = RowDetector(
         roi_x_half=args.roi_x,
