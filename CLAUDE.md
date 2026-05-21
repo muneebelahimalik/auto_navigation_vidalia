@@ -454,6 +454,89 @@ python3 scripts/row_follow.py --auto --tire-height 0.85 --save-dir /tmp/scans
 
 ---
 
+### Camera-Only Row Following (no LiDAR)
+
+Entry point: `scripts/cam_follow.py`
+
+Uses only the two OAK-D cameras — no Velodyne LiDAR required.
+
+```
+OAK-D left + right (depthai, async)
+        ↓  camera/oak_driver.py         — RGB + depth frames
+        ↓  camera/row_detector_visual.py — HSV green → lateral offset + PCA heading
+        ↓  camera/depth_obstacle.py      — depth centre-strip → obstacle blocked/clear
+        ↓
+   navigation/row_navigator_cam.py  — CamRowNavigator (same state machine)
+        ↓  navigation/row_controller.py  — pure-pursuit (unchanged)
+        ↓  canbus/canbus_interface.py
+Amiga wheels
+```
+
+**Key differences from LiDAR mode:**
+
+| Aspect | LiDAR mode | Camera-only mode |
+|---|---|---|
+| Row detection | PCA on 3-D point cloud | HSV green centroid + PCA on 2-D pixel mask |
+| Heading estimate | LiDAR PCA (accurate) | Image-space PCA with FOV correction (approx.) |
+| Obstacle safety | 3-zone monitor (fwd + 2 tires) | Depth centre-strip both cameras only |
+| Tire-track monitoring | Yes | No |
+| Row-end detection | `row_end_confidence` from point density | `green_fraction` drops < threshold |
+| Confidence range | 0–1 (typical 0.70+ in good row) | 0–0.50 (lower, camera-based) |
+| Default max speed | 0.30 m/s | **0.20 m/s** (lower for safety) |
+| Lighting sensitivity | None | Degrades in harsh sun/shadow |
+
+**Run commands:**
+```bash
+# Perception-only (no motion) — verify green detection:
+python3 scripts/cam_follow.py
+
+# Autonomous:
+python3 scripts/cam_follow.py --auto
+
+# Multi-row with headland turns:
+python3 scripts/cam_follow.py --auto --rows 4 --headland
+```
+
+**cam_follow.py CLI flags:**
+
+| Flag | Default | Description |
+|---|---|---|
+| `--auto` | off | Enable motion |
+| `--rows N` | 1 | Number of rows |
+| `--headland` | off | Open-loop headland turns |
+| `--speed M` | **0.20** | Max speed m/s |
+| `--cam-left-id S` | "" | Left OAK-D MXID (empty=auto) |
+| `--cam-right-id S` | "" | Right OAK-D MXID (empty=auto) |
+| `--cam-x M` | 0.915 | Camera lateral offset (m) |
+| `--cam-stop-dist M` | 1.2 | Depth stop distance (m) |
+| `--acquire-conf F` | **0.20** | Min confidence for ACQUIRE exit |
+| `--acquire-green F` | **0.08** | Min green fraction for ACQUIRE exit |
+| `--fps N` | 10 | Camera capture rate |
+
+**ACQUIRE logic (camera-only):**
+Both conditions must hold for `acquire_frames=8` consecutive polls:
+- `confidence ≥ acquire_conf (0.20)`
+- `green_fraction ≥ acquire_green (0.08)` — at least 8% of the centre strip is green
+
+**Row-end logic (camera-only):**
+`green_fraction < row_end_green (0.04)` for `row_end_frames=10` consecutive polls
+(robot has driven past the last plant → green disappears)
+
+**Heading estimation from image PCA:**
+```
+# Green pixel coords: (col, row) in image
+PCA → principal component (dx_px, dy_px)
+# Orient toward top of image (forward direction)
+if dy_px > 0: flip sign
+slope_px = dx_px / (-dy_px)           # px-right per px-forward
+# Scale by FOV geometry
+slope_world = slope_px × tan(hfov/2)/w × w / (tan(vfov/2)/h × h)
+heading_rad  = atan(slope_world)
+```
+OAK-D defaults: hfov=73°, vfov=54°, 640×400 → scale factor ≈ 0.91
+
+---
+
 ### OAK-D Camera Integration
 
 Two OAK-D cameras are mounted on left and right sides of the Amiga (at ±0.915 m from centreline).

@@ -135,10 +135,12 @@ class RowNavigator:
         cam_w_norm = cam_w / total_w
 
         fused_offset = lidar_w * lidar_est.lateral_offset + cam_w_norm * vis_est.lateral_offset
+        fused_heading = (lidar_w * lidar_est.heading_error
+                         + cam_w_norm * vis_est.heading_error)
         fused_conf = min(1.0, lidar_conf + vis_conf * 0.3)
 
         return RowEstimate(
-            heading_error=lidar_est.heading_error,
+            heading_error=fused_heading,
             lateral_offset=fused_offset,
             confidence=fused_conf,
             row_end_confidence=lidar_est.row_end_confidence,
