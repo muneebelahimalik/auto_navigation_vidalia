@@ -70,7 +70,7 @@ class RowNavigator:
         row_end_conf: float = 0.70,
         row_end_frames: int = 5,
         row_end_min_dist: float = 2.0,
-        obstacle_clear_secs: float = 3.0,
+        obstacle_clear_secs: float = 1.5,
         buffer_dist: float = 1.5,
         bed_shift: float = 1.5,
         headland_speed: float = 0.15,

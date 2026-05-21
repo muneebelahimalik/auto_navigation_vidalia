@@ -258,7 +258,10 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
         crop_h_min=args.crop_min,
         crop_h_max=args.crop_max,
     )
-    safety = SafetyMonitor()
+    safety = SafetyMonitor(
+        obstacle_height=args.obstacle_height,
+        tire_obstacle_height=args.obstacle_height,
+    )
     controller = PurePursuitController(max_linear=args.speed)
     navigator = RowNavigator(
         canbus, detector, safety, controller,
@@ -326,6 +329,9 @@ def main() -> None:
     parser.add_argument("--self-radius", type=float, default=1.0, metavar="M",
                         help="Discard LiDAR returns within this radius — the "
                              "robot's own frame (default: 1.0)")
+    parser.add_argument("--obstacle-height", type=float, default=0.65, metavar="M",
+                        help="Min ground-relative height (m) to count as obstacle "
+                             "(default: 0.65, above onion-crop tops)")
     parser.add_argument("--debug", action="store_true",
                         help="Stream a LiDAR height profile instead of navigating")
     parser.add_argument("--save-dir", default="", metavar="PATH",
