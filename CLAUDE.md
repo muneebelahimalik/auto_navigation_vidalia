@@ -21,6 +21,8 @@ Two parallel stacks are maintained:
   filesystem; anything installed outside `~/` (including `/opt/ros/`) is wiped on reboot.
 - The farm-ng Python SDK (OS 2.0 / Barley) is pre-installed at `/farm_ng_image/venv/`.
 - All code, configs, and installs must live under `~/` (NVMe, persistent).
+- depthai installed: **2.22.0.0** (not 2.23+)
+- opencv-python installed: **4.7.0.68**
 
 **System — Development PC**:
 - OS: Ubuntu 22.04.5 LTS (Jammy Jellyfish)
@@ -28,6 +30,8 @@ Two parallel stacks are maintained:
 - SSH access: `ssh farm-ng-user-laserweeding@100.66.121.56` (Tailscale)
 
 **Ultimate goal**: fully autonomous laser-based weed control in onion fields.
+
+---
 
 ## Build & Run Commands
 
@@ -264,3 +268,283 @@ Amiga brain (Tailscale: camphor-clone.tail0be07.ts.net)
 10. **`behavior_server`** -- spin / back-up / wait recoveries
 11. **`bt_navigator`** -- NavigateToPose and FollowWaypoints BT actions
 12. **`waypoint_follower`** -- executes ordered waypoint lists (field row traversal)
+
+---
+
+## Row-Follow Stack (Native Python — Primary Field Operation)
+
+This is the actively developed stack for autonomous onion-row following.
+Entry point: `scripts/row_follow.py`
+
+### Data Flow
+
+```
+Velodyne VLP-16 (UDP :2368, 10 Hz)
+        ↓  lidar/lidar_driver.py       — raw UDP → numpy Nx3 point array
+        ↓  lidar/obstacle_filter.py    — self-filter (planar range < self_radius)
+        ↓
+   ┌────┴──────────────────────────┐
+   │  navigation/row_perception.py  │  — PCA row detection → RowEstimate (lateral_offset, heading, conf)
+   │  navigation/row_safety.py      │  — obstacle zone check → SafetyStatus
+   └────┬──────────────────────────┘
+        │
+   OAK-D cameras (optional, async)
+        ↓  camera/oak_driver.py        — depthai pipeline, RGB + depth frames
+        ↓  camera/depth_obstacle.py    — depth centre-strip → DepthObstacleStatus (blind-zone fill)
+        ↓  camera/row_detector_visual.py — HSV green centroid → VisualRowEstimate (lateral supplement)
+        │
+        ↓  navigation/row_navigator.py  — state machine + LiDAR/camera fusion
+        ↓  navigation/row_controller.py — pure-pursuit → (linear_vel, angular_vel)
+        ↓  canbus/canbus_interface.py   — Twist2d via request_reply("/twist")
+Amiga wheels
+```
+
+### Key Files
+
+| File | Purpose |
+|---|---|
+| `scripts/row_follow.py` | CLI entry point; parses all flags, wires tasks, runs asyncio loop |
+| `navigation/row_navigator.py` | State machine: ACQUIRE → FOLLOW → ROW_END / OBSTACLE_WAIT |
+| `navigation/row_perception.py` | PCA-based row detector; EMA-smoothed RowEstimate |
+| `navigation/row_safety.py` | Three-zone obstacle monitor (forward + left/right tire tracks) |
+| `navigation/row_controller.py` | Pure-pursuit speed/steering controller |
+| `lidar/lidar_driver.py` | Async UDP LiDAR driver; vectorised numpy scan parser |
+| `lidar/obstacle_filter.py` | Self-filter + ground filter; defines `LIDAR_MOUNT_HEIGHT` |
+| `camera/oak_driver.py` | Async OAK-D driver (depthai 2.22.x compatible) |
+| `camera/depth_obstacle.py` | Depth-frame centre-strip obstacle detector |
+| `camera/row_detector_visual.py` | HSV green-centroid lateral offset estimator |
+
+---
+
+### Sensor Frame Convention
+
+- **X** = right, **Y** = forward, **Z** = up (LiDAR sensor frame)
+- Ground-relative height: `h = z + LIDAR_MOUNT_HEIGHT`
+- `LIDAR_MOUNT_HEIGHT = 0.699 m` (defined in `lidar/obstacle_filter.py`)
+- Crop geometry: onion canopy h ≈ 0.10–0.60 m; adjacent row canopy h ≈ 0.70–0.85 m
+
+---
+
+### Tuned Parameters (current working values for onion field)
+
+#### Self-filter (`lidar/obstacle_filter.py` / `--self-radius`)
+| Parameter | Value | Rationale |
+|---|---|---|
+| `self_radius` | **1.5 m** | Robot frame inner cage seen at ~0.72 m planar range; 1.5 m clears all body returns without cutting into crop ROI (which starts at y=1.5 m) |
+
+#### Row Perception (`navigation/row_perception.py`)
+| Parameter | Value | Rationale |
+|---|---|---|
+| Crop height band | h ∈ [0.05, 0.60] m | Onion plants; excludes ground and above-canopy clutter |
+| ROI depth | y ∈ [1.5, 7.0] m | Starts past self-filter; ends where row geometry becomes unreliable |
+| ROI half-width | \|x\| ≤ 0.80 m | Captures crop row ± shoulder without pulling in adjacent rows |
+| PCA linearity threshold | > 0.20 | Below this the cluster is not line-like; confidence forced to 0 |
+| Density normaliser | n / 130 | 130 points = full confidence at typical VLP-16 density |
+| Confidence formula | `min(1, n/130) × max(0, min(1, (linearity−0.20)/0.55))` | |
+| EMA alpha | 0.35 | Smooths per-frame jitter without adding excessive lag |
+
+#### State Machine (`navigation/row_navigator.py`)
+| Parameter | Value | Rationale |
+|---|---|---|
+| `acquire_conf` | **0.45** | Lowered from 0.55 — robot 0.75 m off-centre reduces linearity enough that 0.55 was never reached |
+| Acquire consecutive frames | 5 | Must see ≥ 5 frames ≥ acquire_conf before entering FOLLOW |
+| `obstacle_clear_secs` | **1.5 s** | Consecutive clear time required to leave OBSTACLE_WAIT |
+| Min confidence for control | 0.35 | Below this the controller outputs zero velocity |
+
+#### Safety Monitor (`navigation/row_safety.py`)
+| Parameter | Value | Rationale |
+|---|---|---|
+| `forward_dist` | 2.5 m | Stopping horizon ahead |
+| `forward_half_width` | 0.95 m | Robot body width + margin |
+| `obstacle_height` (forward) | **0.75 m** | Above LIDAR_MOUNT_HEIGHT (0.699 m); onion plants (h≤0.60) pass through; humans/posts stop the robot |
+| `tire_obstacle_height` | **0.85 m** (field default) | Raised above adjacent crop canopy (h≈0.80–0.84 m) to eliminate L-TIRE false positives from neighbouring rows |
+| `tire_track` | 0.915 m | Half-track width of Amiga |
+| `tire_half_width` | 0.25 m | ± corridor around each wheel centreline |
+| `tire_dist` | 2.5 m | Same stopping horizon as forward zone |
+| `near` | 0.20 m | Ignore returns closer than this (sensor artefacts at beam origin) |
+| `forward_min_points` | 4 | Minimum LiDAR returns to trigger forward stop |
+| `tire_min_points` | 4 | Minimum LiDAR returns to trigger tire-track stop |
+
+#### Pure-Pursuit Controller (`navigation/row_controller.py`)
+| Parameter | Value | Rationale |
+|---|---|---|
+| `lookahead` | 2.0 m | Look-ahead distance for pure pursuit |
+| `max_linear` | 0.30 m/s | Conservative field speed |
+| `min_linear` | 0.08 m/s | Minimum creep speed when turning hard |
+| `min_confidence` | 0.35 | Zero output below this |
+| Speed formula | `conf × max(0.25, 1.0 − \|θ\|/0.60) × max_linear` | Slows for both low confidence and large heading error |
+
+---
+
+### Recommended Run Commands
+
+**Perception-only debug (no canbus, no movement):**
+```bash
+python3 scripts/row_follow.py --debug
+```
+
+**Autonomous with tuned onion-field settings (no cameras):**
+```bash
+python3 scripts/row_follow.py --auto --tire-height 0.85
+```
+
+**Autonomous with OAK-D cameras enabled:**
+```bash
+python3 scripts/row_follow.py --auto --tire-height 0.85 --camera
+```
+
+**With specific camera device IDs:**
+```bash
+python3 scripts/row_follow.py --auto --tire-height 0.85 --camera \
+    --cam-left-id <MXID_LEFT> --cam-right-id <MXID_RIGHT>
+```
+
+**Save debug point-cloud frames:**
+```bash
+python3 scripts/row_follow.py --auto --tire-height 0.85 --save-dir /tmp/scans
+```
+
+### Full CLI Flag Reference (`scripts/row_follow.py`)
+
+| Flag | Default | Description |
+|---|---|---|
+| `--auto` | off | Enable canbus and send velocity commands to wheels |
+| `--rows N` | — | Stop after N rows completed |
+| `--headland D` | — | Headland turn distance in metres |
+| `--slam` | off | Enable SLAM odometry integration |
+| `--speed S` | 0.30 | Override max linear speed (m/s) |
+| `--roi-x W` | 0.80 | Row detection ROI half-width (m) |
+| `--crop-min H` | 0.05 | Minimum crop height in LiDAR frame (m) |
+| `--crop-max H` | 0.60 | Maximum crop height in LiDAR frame (m) |
+| `--self-radius R` | **1.5** | Self-filter radius — discard returns closer than R (m) |
+| `--acquire-conf C` | **0.45** | Confidence threshold to enter FOLLOW from ACQUIRE |
+| `--obstacle-height H` | **0.75** | Forward zone obstacle height threshold (m) |
+| `--tire-height H` | (= obstacle-height) | Tire zone height threshold; set **0.85** for onion fields |
+| `--camera` | off | Enable OAK-D stereo cameras |
+| `--cam-left-id ID` | "" | depthai MXID for left camera (empty = auto-select) |
+| `--cam-right-id ID` | "" | depthai MXID for right camera |
+| `--cam-x X` | 0.915 | Camera lateral offset from centreline (m) |
+| `--cam-stop-dist D` | 1.2 | Camera depth stop distance (m) |
+| `--debug` | off | Print verbose per-frame perception output |
+| `--save-dir DIR` | — | Save raw point-cloud numpy arrays to DIR |
+| `--no-validate` | off | Skip LiDAR startup validation |
+
+---
+
+### State Machine
+
+```
+         ┌──────────────────┐
+    boot  │     ACQUIRE      │  confidence ≥ acquire_conf (0.45)
+  ───────>│  5 consecutive   │─────────────────────────────────────>┐
+          │  frames needed   │                                       │
+          └──────────────────┘                                       │
+                   ↑ obstacle clears (1.5 s consecutive)            ↓
+                   │                                        ┌──────────────┐
+          ┌──────────────────┐   obstacle detected          │    FOLLOW    │
+          │  OBSTACLE_WAIT   │<─────────────────────────────│  pure-pursuit│
+          └──────────────────┘                              │  cmd sent    │
+                                                            └──────┬───────┘
+                                                                   │ row end
+                                                                   ↓
+                                                            ┌──────────────┐
+                                                            │   ROW_END    │
+                                                            └──────────────┘
+```
+
+---
+
+### OAK-D Camera Integration
+
+Two OAK-D cameras are mounted on left and right sides of the Amiga (at ±0.915 m from centreline).
+
+**Purpose:**
+- **Depth obstacle detection** (`camera/depth_obstacle.py`): fills the LiDAR blind zone (< 1.5 m in front), stops robot if obstacle within `cam_stop_dist` (default 1.2 m)
+- **Visual row confirmation** (`camera/row_detector_visual.py`): HSV green-centroid detection supplements LiDAR lateral offset estimate
+
+**Fusion in `navigation/row_navigator.py`:**
+- Camera lateral estimate blended at up to 50% of LiDAR weight
+- Fused confidence: `min(1.0, lidar_conf + vis_conf × 0.3)`
+- Camera depth block sets `safety.cam_blocked = True` → same OBSTACLE_WAIT as LiDAR block
+
+**depthai 2.22.0 pipeline notes** (`camera/oak_driver.py`):
+- ColorCamera: use `THE_1080_P` + `setPreviewSize(640, 400)` — `THE_400_P` does not exist for ColorCamera in 2.22.x
+- MonoCamera: use `THE_720_P` — `THE_400_P` does not exist for MonoCamera in 2.22.x
+- Link `cam_rgb.preview` (not `cam_rgb.video`) to XLinkOut for RGB output
+- Stereo: `setOutputSize(640, 400)` works in 2.22.x
+
+---
+
+### Known Issues and Resolutions
+
+| Symptom | Root Cause | Fix Applied |
+|---|---|---|
+| Permanent `OBSTACLE_WAIT` — `FWD@0.7m` | Robot frame returns passing self-filter at 0.72 m | Raised `self_radius` 1.0 → **1.5 m** |
+| Permanent `OBSTACLE_WAIT` — `FWD@1.2m` | `rng >= self_radius` (inclusive) let boundary returns through | Raising self_radius further to 1.5 m resolves it |
+| Permanent `OBSTACLE_WAIT` — `FWD@2.2m, n=482` | `obstacle_height=0.45 m` was below LIDAR_MOUNT_HEIGHT; entire field was an "obstacle" | Raised `obstacle_height` 0.45 → **0.75 m** |
+| `L-TIRE(n=47)` false positive | Adjacent crop row canopy at h≈0.80–0.84 m triggering tire zone | Added `--tire-height` flag; set to **0.85 m** for onion fields |
+| Stuck in ACQUIRE (conf ≤ 0.52) | Robot 0.75 m off-centre reduces PCA linearity → confidence below old threshold 0.55 | Lowered `acquire_conf` 0.55 → **0.45** |
+| `[oak_driver] THE_400_P AttributeError` | depthai 2.22.0 doesn't have `THE_400_P` for ColorCamera or MonoCamera | Fixed pipeline: `THE_1080_P` + preview for RGB; `THE_720_P` for mono |
+| ACQUIRE/FOLLOW/OBSTACLE_WAIT oscillation | Real environmental obstacle at ~2.2–2.5 m intermittently entering forward zone | Not a code bug; resolves in actual clear onion rows |
+| `\r` terminal shows only "clear" during oscillation | Terminal carriage-return overwrites intermediate blocked frames | Use `--debug` to see every frame; transitions always print on `\n` |
+
+---
+
+### LiDAR Self-Filter Logic
+
+The scan parser in `lidar/obstacle_filter.py` discards any return whose **planar range** (distance in the XY plane, ignoring height) is less than `self_radius`. This is critical because:
+
+- The Amiga robot frame generates LiDAR returns at ~0.72 m planar range
+- The crop ROI starts at y = 1.5 m, so `self_radius = 1.5 m` does not cut into crop detection
+- The safety monitor's `near = 0.20 m` provides a second guard for sensor artefacts at the beam origin
+
+The `validate_lidar_startup()` function in `obstacle_filter.py` intentionally uses the **raw scan** (without self-filter) for startup diagnostics only.
+
+---
+
+### Confidence Scoring Detail
+
+Row confidence is computed in `navigation/row_perception.py`:
+
+```
+density      = min(1.0, n_crop_points / 130)
+linearity    = 1 - (second_eigenvalue / first_eigenvalue)   # PCA ratio
+linear_factor = max(0.0, min(1.0, (linearity - 0.20) / 0.55))
+raw_conf     = density * linear_factor
+smoothed_conf = ema_alpha * raw_conf + (1 - ema_alpha) * prev_conf   # alpha=0.35
+```
+
+- `linearity < 0.20` → confidence = 0 (cluster is not line-shaped)
+- `linearity = 0.75` → linear_factor = 1.0 (fully linear)
+- `n = 130` at `linearity = 0.75` → confidence = 1.0
+- In practice, well-centred onion rows give conf ≈ 0.70–0.85 in FOLLOW
+
+---
+
+### Camera Depth Obstacle Detection Detail
+
+`camera/depth_obstacle.py` examines a centre strip of the depth frame:
+
+```
+row_half = img_height * 0.40 / 2   # 40% of frame height
+col_half = img_width  * 0.25 / 2   # 25% of frame width
+strip    = depth[mid_row ± row_half, mid_col ± col_half]
+```
+
+A pixel is "close" if `min_dist_m (0.30) ≤ depth < stop_dist_m (1.2)`.
+Blocked if `n_close ≥ min_pixels (50)`.
+
+---
+
+### Visual Row Detection Detail
+
+`camera/row_detector_visual.py` finds the green-crop centroid in each OAK-D RGB frame:
+
+1. Crop image: middle third horizontally, lower two-thirds vertically
+2. Convert BGR → HSV; mask h∈[35,85], s≥40, v≥40
+3. If green fraction < 8% of strip area → not valid
+4. Centroid pixel → lateral offset via `m_per_px = 2 × depth × tan(hfov/2) / width`
+5. EMA-smooth result (alpha=0.30); decay confidence × 0.5 when no green found
+
+Confidence contribution: 0.20 (one side) or up to 0.50 (both sides similar fraction).
+Camera lateral estimate is capped at 50% of LiDAR weight in fusion.
