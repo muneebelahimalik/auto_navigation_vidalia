@@ -31,7 +31,7 @@ import numpy as np
 from canbus.canbus_interface import CanbusInterface
 from lidar.lidar_driver import LidarDriver
 from navigation.row_controller import PurePursuitController
-from navigation.row_perception import RowDetector
+from navigation.row_perception import RowDetector, RowEstimate
 from navigation.row_safety import SafetyMonitor
 
 
@@ -75,6 +75,11 @@ class RowNavigator:
         bed_shift: float = 1.5,
         headland_speed: float = 0.15,
         headland_turn_rate: float = 0.30,
+        left_cam=None,
+        right_cam=None,
+        vis_detector=None,
+        depth_left=None,
+        depth_right=None,
     ) -> None:
         self.canbus = canbus
         self.detector = detector
@@ -85,6 +90,11 @@ class RowNavigator:
         self.headland = headland
         self.slam = slam
         self.self_radius = self_radius
+        self.left_cam = left_cam
+        self.right_cam = right_cam
+        self.vis_detector = vis_detector
+        self.depth_left = depth_left
+        self.depth_right = depth_right
 
         self.acquire_conf = acquire_conf
         self.acquire_frames = acquire_frames
@@ -110,6 +120,33 @@ class RowNavigator:
         self._t_prev = time.monotonic()
 
     # ------------------------------------------------------------------
+    def _fuse_estimates(self, lidar_est: RowEstimate, vis_est) -> RowEstimate:
+        """Weighted blend of LiDAR and visual estimates; camera capped at 50% of LiDAR weight."""
+        lidar_conf = lidar_est.confidence
+        vis_conf = vis_est.confidence if vis_est is not None else 0.0
+
+        if vis_conf <= 0.0 or lidar_conf <= 0.0:
+            return lidar_est
+
+        # Camera weight capped at half the LiDAR weight.
+        cam_w = min(vis_conf, lidar_conf * 0.5)
+        total_w = lidar_conf + cam_w
+        lidar_w = lidar_conf / total_w
+        cam_w_norm = cam_w / total_w
+
+        fused_offset = lidar_w * lidar_est.lateral_offset + cam_w_norm * vis_est.lateral_offset
+        fused_conf = min(1.0, lidar_conf + vis_conf * 0.3)
+
+        return RowEstimate(
+            heading_error=lidar_est.heading_error,
+            lateral_offset=fused_offset,
+            confidence=fused_conf,
+            row_end_confidence=lidar_est.row_end_confidence,
+            n_points=lidar_est.n_points,
+            valid=lidar_est.valid,
+        )
+
+    # ------------------------------------------------------------------
     async def run(self, lidar: LidarDriver) -> None:
         """Consume the LiDAR scan stream and drive the state machine."""
         self._t_prev = time.monotonic()
@@ -131,6 +168,32 @@ class RowNavigator:
 
             est = self.detector.update(pts)
             safety = self.safety.check(pts)
+
+            if self.vis_detector is not None:
+                frame_l = self.left_cam.get_latest() if self.left_cam is not None else None
+                frame_r = self.right_cam.get_latest() if self.right_cam is not None else None
+                rgb_l = frame_l.rgb if frame_l is not None else None
+                dep_l = frame_l.depth if frame_l is not None else None
+                rgb_r = frame_r.rgb if frame_r is not None else None
+                dep_r = frame_r.depth if frame_r is not None else None
+                vis_est = self.vis_detector.update(rgb_l, dep_l, rgb_r, dep_r)
+                est = self._fuse_estimates(est, vis_est)
+
+                if self.depth_left is not None:
+                    ds_l = self.depth_left.check(dep_l, "left")
+                    if ds_l.blocked:
+                        safety.cam_blocked = True
+                        safety.cam_reason = ds_l.reason()
+
+                if self.depth_right is not None:
+                    ds_r = self.depth_right.check(dep_r, "right")
+                    if ds_r.blocked:
+                        safety.cam_blocked = True
+                        reason_r = ds_r.reason()
+                        if safety.cam_reason:
+                            safety.cam_reason = safety.cam_reason + "," + reason_r
+                        else:
+                            safety.cam_reason = reason_r
 
             linear, angular = self._step(est, safety, dt)
             self.cmd = (linear, angular)
@@ -273,7 +336,8 @@ class RowNavigator:
 
     # ------------------------------------------------------------------
     def _print_status(self, est, safety, linear: float, angular: float) -> None:
-        mode = "AUTO" if self.auto else "PERC"
+        cam_active = self.vis_detector is not None
+        mode = ("AUTO" if self.auto else "PERC") + ("+CAM" if cam_active else "")
         deg = math.degrees(est.heading_error)
         line = (
             f"\r[{mode}] {self.state:11s} | "

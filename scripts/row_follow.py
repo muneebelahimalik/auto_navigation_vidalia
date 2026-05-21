@@ -253,6 +253,24 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
               "path;\n              build a map separately with "
               "scripts/slam_mapper.py.")
 
+    left_cam = None
+    right_cam = None
+    vis_detector = None
+    depth_left = None
+    depth_right = None
+    if args.camera:
+        from camera.oak_driver import OakDriver
+        from camera.depth_obstacle import DepthObstacleDetector
+        from camera.row_detector_visual import VisualRowDetector
+        left_cam = OakDriver(side="left", device_id=args.cam_left_id)
+        right_cam = OakDriver(side="right", device_id=args.cam_right_id)
+        vis_detector = VisualRowDetector(
+            cam_x_left=-args.cam_x,
+            cam_x_right=args.cam_x,
+        )
+        depth_left = DepthObstacleDetector(stop_dist_m=args.cam_stop_dist)
+        depth_right = DepthObstacleDetector(stop_dist_m=args.cam_stop_dist)
+
     detector = RowDetector(
         roi_x_half=args.roi_x,
         crop_h_min=args.crop_min,
@@ -269,6 +287,11 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
         auto=args.auto, rows=args.rows, headland=args.headland, slam=slam,
         self_radius=args.self_radius,
         acquire_conf=args.acquire_conf,
+        left_cam=left_cam,
+        right_cam=right_cam,
+        vis_detector=vis_detector,
+        depth_left=depth_left,
+        depth_right=depth_right,
     )
     nav_ref.append(navigator)
 
@@ -280,6 +303,7 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
     print(f"  speed   : {args.speed:.2f} m/s max   SLAM map: {'on' if args.slam else 'off'}")
     print(f"  safety  : fwd_h={args.obstacle_height:.2f}m  tire_h={tire_h:.2f}m  "
           f"self_r={args.self_radius:.2f}m")
+    print(f"  cameras : {'OAK-D left+right enabled  stop=' + str(args.cam_stop_dist) + 'm' if args.camera else 'disabled'}")
     print("  Press Ctrl+C to stop the robot immediately.")
     print("=" * 68)
     print()
@@ -303,7 +327,18 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
                     navigator.auto = False
 
         print(" Following the centre crop row — watch the status line.\n")
-        await navigator.run(lidar)
+
+        cam_tasks = []
+        if args.camera:
+            cam_tasks.append(asyncio.ensure_future(left_cam.run()))
+            cam_tasks.append(asyncio.ensure_future(right_cam.run()))
+        try:
+            await navigator.run(lidar)
+        finally:
+            for t in cam_tasks:
+                t.cancel()
+            if cam_tasks:
+                await asyncio.gather(*cam_tasks, return_exceptions=True)
 
 
 # ---------------------------------------------------------------------------
@@ -351,6 +386,16 @@ def main() -> None:
                         help="Map output directory (with --slam)")
     parser.add_argument("--no-validate", action="store_true",
                         help="Skip the LiDAR startup health check")
+    parser.add_argument("--camera", action="store_true",
+                        help="Enable OAK-D camera integration")
+    parser.add_argument("--cam-left-id", type=str, default="", metavar="SERIAL",
+                        help="Left OAK-D device serial (empty=auto)")
+    parser.add_argument("--cam-right-id", type=str, default="", metavar="SERIAL",
+                        help="Right OAK-D device serial (empty=auto)")
+    parser.add_argument("--cam-x", type=float, default=0.915, metavar="M",
+                        help="Camera lateral offset from centreline (default: 0.915)")
+    parser.add_argument("--cam-stop-dist", type=float, default=1.2, metavar="M",
+                        help="Camera depth obstacle threshold (default: 1.2)")
     args = parser.parse_args()
 
     nav_ref: list = []

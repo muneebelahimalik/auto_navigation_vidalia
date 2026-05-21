@@ -17,3 +17,7 @@ protobuf>=3.20,<=5.27.5
 # farm-ng OS 2.0 SDK
 farm-ng-core>=2.0.0
 farm-ng-amiga>=2.0.0
+
+# OAK-D camera integration (optional — only needed with --camera flag)
+depthai>=2.23.0
+opencv-python>=4.5.0
