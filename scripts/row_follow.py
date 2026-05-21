@@ -329,9 +329,9 @@ def main() -> None:
     parser.add_argument("--self-radius", type=float, default=1.2, metavar="M",
                         help="Discard LiDAR returns within this radius — the "
                              "robot's own frame (default: 1.2)")
-    parser.add_argument("--obstacle-height", type=float, default=0.65, metavar="M",
+    parser.add_argument("--obstacle-height", type=float, default=0.75, metavar="M",
                         help="Min ground-relative height (m) to count as obstacle "
-                             "(default: 0.65, above onion-crop tops)")
+                             "(default: 0.75, above LiDAR mount height of 0.699 m)")
     parser.add_argument("--debug", action="store_true",
                         help="Stream a LiDAR height profile instead of navigating")
     parser.add_argument("--save-dir", default="", metavar="PATH",
