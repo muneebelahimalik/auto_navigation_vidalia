@@ -46,11 +46,11 @@ class SafetyStatus:
     def reason(self) -> str:
         parts = []
         if self.forward_blocked:
-            parts.append(f"FWD@{self.nearest_forward:.1f}m")
+            parts.append(f"FWD@{self.nearest_forward:.1f}m(n={self.fwd_points})")
         if self.left_tire_blocked:
-            parts.append("LEFT-TIRE")
+            parts.append(f"L-TIRE(n={self.left_points})")
         if self.right_tire_blocked:
-            parts.append("RIGHT-TIRE")
+            parts.append(f"R-TIRE(n={self.right_points})")
         return ",".join(parts) if parts else "clear"
 
 

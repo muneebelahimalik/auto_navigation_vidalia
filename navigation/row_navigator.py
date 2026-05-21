@@ -64,7 +64,7 @@ class RowNavigator:
         rows: int = 1,
         headland: bool = False,
         slam=None,
-        self_radius: float = 1.2,
+        self_radius: float = 1.5,
         acquire_conf: float = 0.55,
         acquire_frames: int = 5,
         row_end_conf: float = 0.70,
