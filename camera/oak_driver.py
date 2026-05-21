@@ -84,19 +84,20 @@ class OakDriver:
         pipeline = dai.Pipeline()
 
         cam_rgb = pipeline.create(dai.node.ColorCamera)
-        cam_rgb.setResolution(dai.ColorCameraProperties.SensorResolution.THE_400_P)
+        cam_rgb.setResolution(dai.ColorCameraProperties.SensorResolution.THE_1080_P)
+        cam_rgb.setPreviewSize(640, 400)
         cam_rgb.setInterleaved(False)
         cam_rgb.setFps(self.fps)
         cam_rgb.setBoardSocket(dai.CameraBoardSocket.RGB)
 
         mono_left = pipeline.create(dai.node.MonoCamera)
         mono_left.setBoardSocket(dai.CameraBoardSocket.LEFT)
-        mono_left.setResolution(dai.MonoCameraProperties.SensorResolution.THE_400_P)
+        mono_left.setResolution(dai.MonoCameraProperties.SensorResolution.THE_720_P)
         mono_left.setFps(self.fps)
 
         mono_right = pipeline.create(dai.node.MonoCamera)
         mono_right.setBoardSocket(dai.CameraBoardSocket.RIGHT)
-        mono_right.setResolution(dai.MonoCameraProperties.SensorResolution.THE_400_P)
+        mono_right.setResolution(dai.MonoCameraProperties.SensorResolution.THE_720_P)
         mono_right.setFps(self.fps)
 
         stereo = pipeline.create(dai.node.StereoDepth)
@@ -107,7 +108,7 @@ class OakDriver:
 
         xout_rgb = pipeline.create(dai.node.XLinkOut)
         xout_rgb.setStreamName("rgb")
-        cam_rgb.video.link(xout_rgb.input)
+        cam_rgb.preview.link(xout_rgb.input)
 
         xout_depth = pipeline.create(dai.node.XLinkOut)
         xout_depth.setStreamName("depth")
