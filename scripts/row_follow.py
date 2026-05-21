@@ -110,7 +110,11 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
         from slam.slam_engine import SlamEngine
         slam = SlamEngine()
 
-    detector = RowDetector()
+    detector = RowDetector(
+        roi_x_half=args.roi_x,
+        crop_h_min=args.crop_min,
+        crop_h_max=args.crop_max,
+    )
     safety = SafetyMonitor()
     controller = PurePursuitController(max_linear=args.speed)
     navigator = RowNavigator(
@@ -169,6 +173,12 @@ def main() -> None:
                         help="Build an occupancy-grid map in the background")
     parser.add_argument("--speed", type=float, default=0.30, metavar="M",
                         help="Max forward speed in m/s (default: 0.30)")
+    parser.add_argument("--roi-x", type=float, default=0.80, metavar="M",
+                        help="Half-width of the centre-row search band (default: 0.80)")
+    parser.add_argument("--crop-min", type=float, default=0.05, metavar="M",
+                        help="Min crop height above ground to keep (default: 0.05)")
+    parser.add_argument("--crop-max", type=float, default=0.60, metavar="M",
+                        help="Max crop height above ground to keep (default: 0.60)")
     parser.add_argument("--save-dir", default="", metavar="PATH",
                         help="Map output directory (with --slam)")
     parser.add_argument("--no-validate", action="store_true",
