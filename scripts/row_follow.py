@@ -326,9 +326,9 @@ def main() -> None:
                         help="Min crop height above ground to keep (default: 0.05)")
     parser.add_argument("--crop-max", type=float, default=0.60, metavar="M",
                         help="Max crop height above ground to keep (default: 0.60)")
-    parser.add_argument("--self-radius", type=float, default=1.0, metavar="M",
+    parser.add_argument("--self-radius", type=float, default=1.2, metavar="M",
                         help="Discard LiDAR returns within this radius — the "
-                             "robot's own frame (default: 1.0)")
+                             "robot's own frame (default: 1.2)")
     parser.add_argument("--obstacle-height", type=float, default=0.65, metavar="M",
                         help="Min ground-relative height (m) to count as obstacle "
                              "(default: 0.65, above onion-crop tops)")
