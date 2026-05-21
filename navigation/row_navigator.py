@@ -64,6 +64,7 @@ class RowNavigator:
         rows: int = 1,
         headland: bool = False,
         slam=None,
+        self_radius: float = 1.0,
         acquire_conf: float = 0.55,
         acquire_frames: int = 5,
         row_end_conf: float = 0.70,
@@ -83,6 +84,7 @@ class RowNavigator:
         self.rows = max(1, rows)
         self.headland = headland
         self.slam = slam
+        self.self_radius = self_radius
 
         self.acquire_conf = acquire_conf
         self.acquire_frames = acquire_frames
@@ -121,6 +123,12 @@ class RowNavigator:
 
             if scan:
                 pts = np.array([(p.x, p.y, p.z) for p in scan], dtype=np.float64)
+                # Drop the robot's own frame/crossbar: the centre-mounted
+                # LiDAR sees its mounting structure as a dense return at
+                # ~0.5 m.  Without this it permanently trips the safety
+                # zones and the robot never leaves OBSTACLE_WAIT.
+                rng = np.hypot(pts[:, 0], pts[:, 1])
+                pts = pts[rng >= self.self_radius]
             else:
                 pts = np.zeros((0, 3), dtype=np.float64)
 

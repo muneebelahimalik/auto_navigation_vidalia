@@ -156,6 +156,15 @@ class LidarDriver:
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+        # Large receive buffer: the VLP-16 streams ~0.9 MB/s and the
+        # consumer processes scans synchronously, so packets must be
+        # buffered by the kernel during each processing burst.  Without
+        # this the default buffer overflows and scans arrive fragmented
+        # (missing azimuth sectors, wildly varying point counts).
+        try:
+            self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 16 * 1024 * 1024)
+        except OSError:
+            pass
         self._sock.setblocking(False)
         self._sock.bind(("", self._port))
         return self
