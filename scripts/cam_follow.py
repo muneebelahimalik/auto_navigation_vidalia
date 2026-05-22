@@ -219,8 +219,17 @@ def main() -> None:
 
     nav_ref: list = []
     try:
-        asyncio.run(_run(args, nav_ref))
-    except KeyboardInterrupt:
+        loop = asyncio.new_event_loop()
+        # Suppress gRPC background-thread callback noise on loop close.
+        loop.set_exception_handler(lambda _loop, ctx: None)
+        asyncio.set_event_loop(loop)
+        try:
+            loop.run_until_complete(_run(args, nav_ref))
+        except KeyboardInterrupt:
+            pass
+        finally:
+            loop.close()
+    except Exception:
         pass
 
     print("\n[cam_follow] stopping robot …")
