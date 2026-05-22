@@ -180,30 +180,29 @@ class DepthEdgeRowDetector:
         return line_conf, heading
 
     def _lateral_from_depth(self, depth: Optional[np.ndarray], cam_x: float):
-        """Return (depth_contrast, lateral_offset_m)."""
+        """Return (depth_contrast, lateral_offset_m). Returns (0.0, 0.0) when no valid gap."""
         if depth is None:
-            return 0.0, cam_x
+            return 0.0, 0.0
 
         h, w = depth.shape[:2] if depth.ndim == 2 else (depth.shape[0], depth.shape[1])
         band_top = h // 3
         band_bottom = band_top + int(h * self.depth_band_frac)
         band = depth[band_top:band_bottom, :].astype(np.float32) / 1000.0
-
-        # Mask out invalid depth readings.
         band[(band < 0.3) | (band > 8.0)] = np.nan
 
-        col_means = np.nanmean(band, axis=0)
+        with np.errstate(all="ignore"):
+            col_means = np.nanmean(band, axis=0)
+
+        if np.all(np.isnan(col_means)):
+            return 0.0, 0.0
 
         global_mean = float(np.nanmean(col_means))
         if np.isnan(global_mean):
-            return 0.0, cam_x
+            return 0.0, 0.0
 
-        nan_mask = np.isnan(col_means)
-        col_means[nan_mask] = global_mean
+        col_means[np.isnan(col_means)] = global_mean
 
-        # GaussianBlur requires a 2-D array even for 1-D horizontal smoothing.
         col_row = col_means.reshape(1, -1).astype(np.float32)
-        # kernel size must be odd
         k = self.depth_gap_smooth if self.depth_gap_smooth % 2 == 1 else self.depth_gap_smooth + 1
         col_smooth = cv2.GaussianBlur(col_row, (k, 1), 0).reshape(-1)
 
@@ -213,7 +212,26 @@ class DepthEdgeRowDetector:
         depth_contrast = (gap_depth - mean_smooth) / (mean_smooth + 1e-6)
 
         if depth_contrast <= self.min_depth_contrast:
-            return depth_contrast, cam_x
+            return 0.0, 0.0
+
+        # Require the gap to be a LOCAL maximum with shallower flanks on both sides.
+        # In open environments (no crop rows) argmax lands at an image edge because
+        # the most distant wall is just "further right/left" — no shallow plant walls
+        # exist to bound the gap.  Without both flanks, depth lateral is unreliable.
+        half_margin = max(w // 8, 10)
+        left_flank = col_smooth[:max(0, gap_col - half_margin)]
+        right_flank = col_smooth[min(w, gap_col + half_margin):]
+
+        if len(left_flank) < 5 or len(right_flank) < 5:
+            return 0.0, 0.0
+
+        left_med = float(np.median(left_flank))
+        right_med = float(np.median(right_flank))
+        left_ok = (gap_depth - left_med) / (left_med + 1e-6) >= self.min_depth_contrast
+        right_ok = (gap_depth - right_med) / (right_med + 1e-6) >= self.min_depth_contrast
+
+        if not (left_ok and right_ok):
+            return 0.0, 0.0
 
         m_per_px = 2.0 * gap_depth * math.tan(self.cam_hfov_rad / 2.0) / w
         lateral = cam_x + (gap_col - w / 2.0) * m_per_px
