@@ -115,8 +115,10 @@ class DepthEdgeRowDetector:
         if depth_contrast > self.min_depth_contrast:
             depth_conf = min(1.0, depth_contrast / 0.25)
 
-        valid = line_conf > 0.0 or depth_conf > 0.0
-        if not valid:
+        # Depth must confirm a row gap before the side is considered valid.
+        # Hough lines without depth confirmation pick up ambient structural
+        # edges (wall corners, machinery) that bias heading in open environments.
+        if depth_conf == 0.0:
             return 0.0, 0.0, 0.0, False
 
         # Cap single-camera contribution at 0.50 per spec.
@@ -190,10 +192,13 @@ class DepthEdgeRowDetector:
         band = depth[band_top:band_bottom, :].astype(np.float32) / 1000.0
         band[(band < 0.3) | (band > 8.0)] = np.nan
 
-        with np.errstate(all="ignore"):
-            col_means = np.nanmean(band, axis=0)
+        # Compute per-column mean depth; skip all-NaN columns without warning.
+        valid_cols = ~np.all(np.isnan(band), axis=0)
+        col_means = np.full(w, np.nan, dtype=np.float32)
+        if valid_cols.any():
+            col_means[valid_cols] = np.nanmean(band[:, valid_cols], axis=0)
 
-        if np.all(np.isnan(col_means)):
+        if not valid_cols.any():
             return 0.0, 0.0
 
         global_mean = float(np.nanmean(col_means))
