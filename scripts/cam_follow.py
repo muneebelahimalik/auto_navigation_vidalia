@@ -217,25 +217,33 @@ def main() -> None:
                         help="OAK-D capture frame rate (default: 10)")
     args = parser.parse_args()
 
+    import logging
+    # Silence the asyncio ERROR logs from gRPC's background polling thread
+    # trying to post to the event loop after it closes.
+    logging.getLogger("asyncio").setLevel(logging.CRITICAL)
+
     nav_ref: list = []
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
     try:
-        loop = asyncio.new_event_loop()
-        # Suppress gRPC background-thread callback noise on loop close.
-        loop.set_exception_handler(lambda _loop, ctx: None)
-        asyncio.set_event_loop(loop)
-        try:
-            loop.run_until_complete(_run(args, nav_ref))
-        except KeyboardInterrupt:
-            pass
-        finally:
-            loop.close()
-    except Exception:
-        pass
+        loop.run_until_complete(_run(args, nav_ref))
+    except KeyboardInterrupt:
+        # Cancel all pending tasks and let them finish cleanly before
+        # closing the loop — prevents "Exception ignored in coroutine" errors.
+        pending = asyncio.all_tasks(loop)
+        for t in pending:
+            t.cancel()
+        if pending:
+            loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+    finally:
+        loop.close()
 
     print("\n[cam_follow] stopping robot …")
     if nav_ref:
         try:
-            asyncio.run(nav_ref[0].stop())
+            loop2 = asyncio.new_event_loop()
+            loop2.run_until_complete(nav_ref[0].stop())
+            loop2.close()
         except Exception:
             pass
     print("[cam_follow] done.")
