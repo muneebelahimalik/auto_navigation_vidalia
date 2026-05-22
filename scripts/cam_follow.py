@@ -30,8 +30,8 @@ Key flags:
     --rows N          number of rows (default: 1)
     --headland        open-loop headland turns between rows
     --speed M         max forward speed m/s (default: 0.20)
-    --cam-left-id S   left OAK-D device serial (empty = auto-detect)
-    --cam-right-id S  right OAK-D device serial (empty = auto-detect)
+    --cam-left-id S   left OAK-D farm-ng service name (default: oak0)
+    --cam-right-id S  right OAK-D farm-ng service name (default: oak1)
     --cam-x M         camera lateral offset from centreline (default: 0.915)
     --cam-stop-dist M depth obstacle stop distance (default: 1.2)
     --acquire-conf F  min confidence to leave ACQUIRE (default: 0.20)
@@ -201,10 +201,10 @@ def main() -> None:
     parser.add_argument("--speed", type=float, default=0.20, metavar="M",
                         help="Max forward speed m/s (default: 0.20 — "
                              "lower than LiDAR mode, camera perception has more latency)")
-    parser.add_argument("--cam-left-id", type=str, default="", metavar="SERIAL",
-                        help="Left OAK-D device serial/MXID (empty = auto-detect)")
-    parser.add_argument("--cam-right-id", type=str, default="", metavar="SERIAL",
-                        help="Right OAK-D device serial/MXID (empty = auto-detect)")
+    parser.add_argument("--cam-left-id", type=str, default="", metavar="SERVICE",
+                        help="Left OAK-D farm-ng service name, e.g. oak0 (empty = oak0)")
+    parser.add_argument("--cam-right-id", type=str, default="", metavar="SERVICE",
+                        help="Right OAK-D farm-ng service name, e.g. oak1 (empty = oak1)")
     parser.add_argument("--cam-x", type=float, default=0.915, metavar="M",
                         help="Camera lateral offset from robot centreline (default: 0.915)")
     parser.add_argument("--cam-stop-dist", type=float, default=1.2, metavar="M",

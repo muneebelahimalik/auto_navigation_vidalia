@@ -8,110 +8,149 @@ from typing import Optional
 import numpy as np
 
 try:
-    import depthai as dai
-    _DEPTHAI_OK = True
+    import cv2
+    _CV2_OK = True
 except ImportError:
-    _DEPTHAI_OK = False
-    print("[oak_driver] depthai not installed — OAK-D cameras disabled")
+    _CV2_OK = False
+    print("[oak_driver] opencv not installed — image decoding disabled")
+
+try:
+    from farm_ng.core.event_client import EventClient
+    from farm_ng.core.event_service_pb2 import EventServiceConfig, SubscribeRequest
+    from farm_ng.core.uri_pb2 import Uri
+    _FARMNG_OK = True
+except ImportError:
+    _FARMNG_OK = False
+    print("[oak_driver] farm-ng SDK not installed — OAK-D cameras disabled")
+
+# amiga_service gRPC endpoint that hosts all oak sub-services.
+_OAK_HOST = "localhost"
+_OAK_PORT = 50010
+
+# OAK-D approximate stereo calibration at 640 px width.
+# Used to convert uint8 disparity → uint16 depth in millimetres.
+# depth_mm = BASELINE_MM * FOCAL_PX / disparity_px
+_BASELINE_MM = 75.0
+_FOCAL_PX = 452.0
 
 
 @dataclass
 class CameraFrame:
     """One captured frame pair from an OAK-D device."""
     rgb: np.ndarray    # HxWx3 BGR uint8
-    depth: np.ndarray  # HxW uint16 mm
+    depth: np.ndarray  # HxW uint16 mm (converted from disparity)
     side: str
     timestamp: float
 
 
+def _decode_image(image_data: bytes) -> Optional[np.ndarray]:
+    """Decode farm-ng image_data bytes to a numpy array via cv2."""
+    if not image_data:
+        return None
+    buf = np.frombuffer(image_data, dtype=np.uint8)
+    return cv2.imdecode(buf, cv2.IMREAD_UNCHANGED)
+
+
+def _disp_to_depth_mm(disp: np.ndarray) -> np.ndarray:
+    """Convert disparity (uint8 px) to depth (uint16 mm) using OAK-D calibration."""
+    d = disp.astype(np.float32)
+    if d.ndim == 3:
+        d = d[..., 0]  # take first channel if accidentally decoded as 3-ch
+    with np.errstate(divide="ignore", invalid="ignore"):
+        depth = np.where(d > 0, (_BASELINE_MM * _FOCAL_PX) / d, 0.0)
+    return np.clip(depth, 0, 65535).astype(np.uint16)
+
+
 class OakDriver:
-    """Async driver for one OAK-D camera (left or right side)."""
+    """Async driver for one OAK-D camera via farm-ng amiga_service EventClient.
+
+    Subscribes to /rgb and /disparity streams from amiga_service (port 50010).
+    The device_id parameter selects the oak sub-service (e.g. 'oak0', 'oak1').
+    Empty device_id defaults to 'oak0' for the left camera, 'oak1' for the right.
+    """
 
     def __init__(self, side: str, device_id: str = "", fps: int = 10) -> None:
         self.side = side
-        self.device_id = device_id
+        self.service_name = device_id if device_id else ("oak0" if side == "left" else "oak1")
         self.fps = fps
         self._latest: Optional[CameraFrame] = None
         self._running = False
+        self._rgb: Optional[np.ndarray] = None
+        self._depth: Optional[np.ndarray] = None
+        self._rgb_ts: float = 0.0
+        self._depth_ts: float = 0.0
 
     def get_latest(self) -> Optional[CameraFrame]:
         return self._latest
 
     async def run(self) -> None:
-        if not _DEPTHAI_OK:
+        if not _FARMNG_OK or not _CV2_OK:
             return
-
-        loop = asyncio.get_event_loop()
-        try:
-            device = await loop.run_in_executor(None, self._open_device)
-        except Exception as exc:
-            print(f"[oak_driver:{self.side}] failed to open device: {exc}")
-            return
-
         self._running = True
         try:
-            rgb_q = device.getOutputQueue("rgb", maxSize=1, blocking=False)
-            depth_q = device.getOutputQueue("depth", maxSize=1, blocking=False)
-            while self._running:
-                rgb_msg = rgb_q.tryGet()
-                depth_msg = depth_q.tryGet()
-                if rgb_msg is not None and depth_msg is not None:
-                    rgb = rgb_msg.getCvFrame()
-                    depth = depth_msg.getFrame()
-                    self._latest = CameraFrame(
-                        rgb=rgb,
-                        depth=depth,
-                        side=self.side,
-                        timestamp=time.monotonic(),
-                    )
-                await asyncio.sleep(0.02)
+            await asyncio.gather(
+                self._subscribe_rgb(),
+                self._subscribe_disparity(),
+            )
         except asyncio.CancelledError:
-            pass
-        finally:
-            device.close()
+            self._running = False
 
     async def stop(self) -> None:
         self._running = False
 
-    def _open_device(self):
-        pipeline = self._build_pipeline()
-        if self.device_id:
-            device_info = dai.DeviceInfo(self.device_id)
-            return dai.Device(pipeline, device_info)
-        return dai.Device(pipeline)
+    def _client(self) -> "EventClient":
+        cfg = EventServiceConfig(name="oak", host=_OAK_HOST, port=_OAK_PORT)
+        return EventClient(cfg)
 
-    def _build_pipeline(self):
-        pipeline = dai.Pipeline()
+    async def _subscribe_rgb(self) -> None:
+        req = SubscribeRequest(
+            uri=Uri(path="/rgb", query=f"service_name={self.service_name}"),
+            every_n=1,
+        )
+        try:
+            async for _event, msg in self._client().subscribe(req, decode=True):
+                if not self._running:
+                    break
+                img = _decode_image(msg.image_data)
+                if img is not None:
+                    self._rgb = img
+                    self._rgb_ts = time.monotonic()
+                    self._merge()
+        except asyncio.CancelledError:
+            pass
+        except Exception as exc:
+            if self._running:
+                print(f"\n[oak_driver:{self.side}] RGB stream error: {exc}")
 
-        cam_rgb = pipeline.create(dai.node.ColorCamera)
-        cam_rgb.setResolution(dai.ColorCameraProperties.SensorResolution.THE_1080_P)
-        cam_rgb.setPreviewSize(640, 400)
-        cam_rgb.setInterleaved(False)
-        cam_rgb.setFps(self.fps)
-        cam_rgb.setBoardSocket(dai.CameraBoardSocket.RGB)
+    async def _subscribe_disparity(self) -> None:
+        req = SubscribeRequest(
+            uri=Uri(path="/disparity", query=f"service_name={self.service_name}"),
+            every_n=1,
+        )
+        try:
+            async for _event, msg in self._client().subscribe(req, decode=True):
+                if not self._running:
+                    break
+                img = _decode_image(msg.image_data)
+                if img is not None:
+                    self._depth = _disp_to_depth_mm(img)
+                    self._depth_ts = time.monotonic()
+                    self._merge()
+        except asyncio.CancelledError:
+            pass
+        except Exception as exc:
+            if self._running:
+                print(f"\n[oak_driver:{self.side}] disparity stream error: {exc}")
 
-        mono_left = pipeline.create(dai.node.MonoCamera)
-        mono_left.setBoardSocket(dai.CameraBoardSocket.LEFT)
-        mono_left.setResolution(dai.MonoCameraProperties.SensorResolution.THE_720_P)
-        mono_left.setFps(self.fps)
-
-        mono_right = pipeline.create(dai.node.MonoCamera)
-        mono_right.setBoardSocket(dai.CameraBoardSocket.RIGHT)
-        mono_right.setResolution(dai.MonoCameraProperties.SensorResolution.THE_720_P)
-        mono_right.setFps(self.fps)
-
-        stereo = pipeline.create(dai.node.StereoDepth)
-        stereo.setDefaultProfilePreset(dai.node.StereoDepth.PresetMode.HIGH_DENSITY)
-        stereo.setOutputSize(640, 400)
-        mono_left.out.link(stereo.left)
-        mono_right.out.link(stereo.right)
-
-        xout_rgb = pipeline.create(dai.node.XLinkOut)
-        xout_rgb.setStreamName("rgb")
-        cam_rgb.preview.link(xout_rgb.input)
-
-        xout_depth = pipeline.create(dai.node.XLinkOut)
-        xout_depth.setStreamName("depth")
-        stereo.depth.link(xout_depth.input)
-
-        return pipeline
+    def _merge(self) -> None:
+        """Publish a CameraFrame when both RGB and depth are available and recent."""
+        if self._rgb is None or self._depth is None:
+            return
+        if abs(self._rgb_ts - self._depth_ts) > 2.0:
+            return
+        self._latest = CameraFrame(
+            rgb=self._rgb,
+            depth=self._depth,
+            side=self.side,
+            timestamp=time.monotonic(),
+        )

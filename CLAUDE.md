@@ -289,7 +289,7 @@ Velodyne VLP-16 (UDP :2368, 10 Hz)
    └────┬──────────────────────────┘
         │
    OAK-D cameras (optional, async)
-        ↓  camera/oak_driver.py        — depthai pipeline, RGB + depth frames
+        ↓  camera/oak_driver.py        — EventClient→localhost:50010, RGB + depth frames
         ↓  camera/depth_obstacle.py    — depth centre-strip → DepthObstacleStatus (blind-zone fill)
         ↓  camera/row_detector_visual.py — HSV green centroid → VisualRowEstimate (lateral supplement)
         │
@@ -310,7 +310,7 @@ Amiga wheels
 | `navigation/row_controller.py` | Pure-pursuit speed/steering controller |
 | `lidar/lidar_driver.py` | Async UDP LiDAR driver; vectorised numpy scan parser |
 | `lidar/obstacle_filter.py` | Self-filter + ground filter; defines `LIDAR_MOUNT_HEIGHT` |
-| `camera/oak_driver.py` | Async OAK-D driver (depthai 2.22.x compatible) |
+| `camera/oak_driver.py` | Async OAK-D driver via farm-ng EventClient (localhost:50010, service_name=oak0) |
 | `camera/depth_obstacle.py` | Depth-frame centre-strip obstacle detector |
 | `camera/row_detector_visual.py` | HSV green-centroid lateral offset estimator |
 
@@ -421,8 +421,8 @@ python3 scripts/row_follow.py --auto --tire-height 0.85 --save-dir /tmp/scans
 | `--obstacle-height H` | **0.75** | Forward zone obstacle height threshold (m) |
 | `--tire-height H` | (= obstacle-height) | Tire zone height threshold; set **0.85** for onion fields |
 | `--camera` | off | Enable OAK-D stereo cameras |
-| `--cam-left-id ID` | "" | depthai MXID for left camera (empty = auto-select) |
-| `--cam-right-id ID` | "" | depthai MXID for right camera |
+| `--cam-left-id ID` | "" | farm-ng service name for left camera (default: oak0) |
+| `--cam-right-id ID` | "" | farm-ng service name for right camera (default: oak1) |
 | `--cam-x X` | 0.915 | Camera lateral offset from centreline (m) |
 | `--cam-stop-dist D` | 1.2 | Camera depth stop distance (m) |
 | `--debug` | off | Print verbose per-frame perception output |
@@ -461,7 +461,7 @@ Entry point: `scripts/cam_follow.py`
 Uses only the two OAK-D cameras — no Velodyne LiDAR required.
 
 ```
-OAK-D left + right (depthai, async)
+OAK-D left + right (farm-ng EventClient → localhost:50010, service_name=oak0/oak1)
         ↓  camera/oak_driver.py         — RGB + depth frames
         ↓  camera/row_detector_visual.py — HSV green → lateral offset + PCA heading
         ↓  camera/depth_obstacle.py      — depth centre-strip → obstacle blocked/clear
@@ -505,8 +505,8 @@ python3 scripts/cam_follow.py --auto --rows 4 --headland
 | `--rows N` | 1 | Number of rows |
 | `--headland` | off | Open-loop headland turns |
 | `--speed M` | **0.20** | Max speed m/s |
-| `--cam-left-id S` | "" | Left OAK-D MXID (empty=auto) |
-| `--cam-right-id S` | "" | Right OAK-D MXID (empty=auto) |
+| `--cam-left-id S` | "" | Left OAK-D farm-ng service name (default: oak0) |
+| `--cam-right-id S` | "" | Right OAK-D farm-ng service name (default: oak1) |
 | `--cam-x M` | 0.915 | Camera lateral offset (m) |
 | `--cam-stop-dist M` | 1.2 | Depth stop distance (m) |
 | `--acquire-conf F` | **0.20** | Min confidence for ACQUIRE exit |
@@ -550,11 +550,51 @@ Two OAK-D cameras are mounted on left and right sides of the Amiga (at ±0.915 m
 - Fused confidence: `min(1.0, lidar_conf + vis_conf × 0.3)`
 - Camera depth block sets `safety.cam_blocked = True` → same OBSTACLE_WAIT as LiDAR block
 
-**depthai 2.22.0 pipeline notes** (`camera/oak_driver.py`):
-- ColorCamera: use `THE_1080_P` + `setPreviewSize(640, 400)` — `THE_400_P` does not exist for ColorCamera in 2.22.x
-- MonoCamera: use `THE_720_P` — `THE_400_P` does not exist for MonoCamera in 2.22.x
-- Link `cam_rgb.preview` (not `cam_rgb.video`) to XLinkOut for RGB output
-- Stereo: `setOutputSize(640, 400)` works in 2.22.x
+**Hardware connectivity — PoE switch (CRITICAL):**
+
+OAK-D cameras are **not USB devices** on the brain. They are connected via a **PoE switch** and
+managed exclusively by the `amiga_service` C++ binary. `depthai` direct device access fails with
+`X_LINK_DEVICE_NOT_FOUND` because `amiga_service` holds exclusive camera handles.
+
+| Item | Value |
+|---|---|
+| Camera service host | `localhost` |
+| Camera service port | **50010** |
+| Sub-service for camera 1 | `oak0` (only one currently connected) |
+| Sub-service for camera 2 | `oak1` (times out — hardware not connected) |
+| Subscription pattern | `SubscribeRequest(uri=Uri(path='/rgb', query='service_name=oak0'))` |
+| Image stream paths | `/rgb`, `/disparity`, `/left`, `/right`, `/imu` |
+| Frame proto type | `OakFrame` — fields: `meta`, `image_data` (bytes) |
+| Image encoding | JPEG bytes — decode with `cv2.imdecode(np.frombuffer(msg.image_data, dtype="uint8"), cv2.IMREAD_UNCHANGED)` |
+| Disparity encoding | JPEG uint8 → convert to depth_mm: `depth_mm = BASELINE_MM * FOCAL_PX / disparity_px` |
+| OAK-D calibration | baseline ≈ 75 mm, focal ≈ 452 px at 640 px width |
+
+`camera/oak_driver.py` has been rewritten to use `EventClient` (farm-ng gRPC) instead of `depthai`.
+The `device_id` / `--cam-left-id` / `--cam-right-id` CLI arguments now specify the farm-ng
+sub-service name (e.g. `oak0`, `oak1`), not a depthai MXID serial.
+
+**Diagnosing camera connectivity:**
+```bash
+# Confirm amiga_service is running and port 50010 is open:
+ps aux | grep amiga_service
+ss -tlnp | grep 50010
+
+# Quick Python subscription test (run in farm-ng venv):
+python3 -c "
+import asyncio, sys
+sys.path.insert(0, '/farm_ng_image/venv/lib/python3.8/site-packages')
+from farm_ng.core.event_client import EventClient
+from farm_ng.core.event_service_pb2 import EventServiceConfig, SubscribeRequest
+from farm_ng.core.uri_pb2 import Uri
+async def test():
+    cfg = EventServiceConfig(name='oak', host='localhost', port=50010)
+    req = SubscribeRequest(uri=Uri(path='/rgb', query='service_name=oak0'), every_n=1)
+    async for event, msg in EventClient(cfg).subscribe(req, decode=True):
+        print('OK — got frame, image_data bytes:', len(msg.image_data))
+        break
+asyncio.run(test())
+"
+```
 
 ---
 
@@ -567,7 +607,8 @@ Two OAK-D cameras are mounted on left and right sides of the Amiga (at ±0.915 m
 | Permanent `OBSTACLE_WAIT` — `FWD@2.2m, n=482` | `obstacle_height=0.45 m` was below LIDAR_MOUNT_HEIGHT; entire field was an "obstacle" | Raised `obstacle_height` 0.45 → **0.75 m** |
 | `L-TIRE(n=47)` false positive | Adjacent crop row canopy at h≈0.80–0.84 m triggering tire zone | Added `--tire-height` flag; set to **0.85 m** for onion fields |
 | Stuck in ACQUIRE (conf ≤ 0.52) | Robot 0.75 m off-centre reduces PCA linearity → confidence below old threshold 0.55 | Lowered `acquire_conf` 0.55 → **0.45** |
-| `[oak_driver] THE_400_P AttributeError` | depthai 2.22.0 doesn't have `THE_400_P` for ColorCamera or MonoCamera | Fixed pipeline: `THE_1080_P` + preview for RGB; `THE_720_P` for mono |
+| `[oak_driver] X_LINK_DEVICE_NOT_FOUND` | Cameras connected via PoE switch — `amiga_service` owns exclusive depthai handles; direct depthai access is impossible | Rewrote `oak_driver.py` to use `EventClient` → localhost:50010 with `service_name=oak0` |
+| `[oak_driver] THE_400_P AttributeError` | depthai 2.22.0 doesn't have `THE_400_P` (legacy note — driver no longer uses depthai) | N/A — depthai pipeline removed |
 | ACQUIRE/FOLLOW/OBSTACLE_WAIT oscillation | Real environmental obstacle at ~2.2–2.5 m intermittently entering forward zone | Not a code bug; resolves in actual clear onion rows |
 | `\r` terminal shows only "clear" during oscillation | Terminal carriage-return overwrites intermediate blocked frames | Use `--debug` to see every frame; transitions always print on `\n` |
 
