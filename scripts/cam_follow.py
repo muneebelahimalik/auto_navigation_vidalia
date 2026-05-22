@@ -36,6 +36,7 @@ Key flags:
     --cam-stop-dist M depth obstacle stop distance (default: 1.2)
     --acquire-conf F  min confidence to leave ACQUIRE (default: 0.20)
     --fps N           camera capture rate (default: 10)
+    --detector MODE   row detection: hsv (default) or depth-edge (colour-independent)
 """
 
 from __future__ import annotations
@@ -54,6 +55,7 @@ if _FARMNG_SITE.exists() and str(_FARMNG_SITE) not in sys.path:
 
 from camera.depth_obstacle import DepthObstacleDetector
 from camera.oak_driver import OakDriver
+from camera.row_detector_depth_edge import DepthEdgeRowDetector
 from camera.row_detector_visual import VisualRowDetector
 from navigation.row_controller import PurePursuitController
 from navigation.row_navigator_cam import CamRowNavigator
@@ -94,14 +96,20 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
     left_cam = OakDriver(side="left", device_id=args.cam_left_id, fps=args.fps)
     right_cam = OakDriver(side="right", device_id=args.cam_right_id, fps=args.fps)
 
-    vis_detector = VisualRowDetector(
-        cam_x_left=-args.cam_x,
-        cam_x_right=args.cam_x,
-        green_h_lo=args.hsv_h_lo,
-        green_h_hi=args.hsv_h_hi,
-        green_s_lo=args.hsv_s_lo,
-        green_v_lo=args.hsv_v_lo,
-    )
+    if args.detector == "depth-edge":
+        vis_detector = DepthEdgeRowDetector(
+            cam_x_left=-args.cam_x,
+            cam_x_right=args.cam_x,
+        )
+    else:
+        vis_detector = VisualRowDetector(
+            cam_x_left=-args.cam_x,
+            cam_x_right=args.cam_x,
+            green_h_lo=args.hsv_h_lo,
+            green_h_hi=args.hsv_h_hi,
+            green_s_lo=args.hsv_s_lo,
+            green_v_lo=args.hsv_v_lo,
+        )
     depth_left = DepthObstacleDetector(stop_dist_m=args.cam_stop_dist)
     depth_right = DepthObstacleDetector(stop_dist_m=args.cam_stop_dist)
 
@@ -131,14 +139,16 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
     print()
     print("=" * 68)
     print("  Camera-only onion-row follower  (no LiDAR)")
-    print(f"  mode    : {'AUTONOMOUS — robot WILL move' if args.auto else 'perception-only (no motion)'}")
-    print(f"  rows    : {args.rows}   headland turns: {'on' if args.headland else 'off'}")
-    print(f"  speed   : {args.speed:.2f} m/s max")
-    print(f"  cameras : left={args.cam_left_id or 'auto'}  right={args.cam_right_id or 'auto'}")
-    print(f"  cam fps : {args.fps}   lateral offset: ±{args.cam_x:.3f} m")
-    print(f"  stop    : depth obstacle at {args.cam_stop_dist:.1f} m")
-    print(f"  acquire : conf ≥ {args.acquire_conf:.2f}  green ≥ {args.acquire_green:.3f}")
-    print(f"  HSV     : h=[{args.hsv_h_lo},{args.hsv_h_hi}] s≥{args.hsv_s_lo} v≥{args.hsv_v_lo}")
+    print(f"  mode     : {'AUTONOMOUS — robot WILL move' if args.auto else 'perception-only (no motion)'}")
+    print(f"  detector : {args.detector}")
+    print(f"  rows     : {args.rows}   headland turns: {'on' if args.headland else 'off'}")
+    print(f"  speed    : {args.speed:.2f} m/s max")
+    print(f"  cameras  : left={args.cam_left_id or 'auto'}  right={args.cam_right_id or 'auto'}")
+    print(f"  cam fps  : {args.fps}   lateral offset: ±{args.cam_x:.3f} m")
+    print(f"  stop     : depth obstacle at {args.cam_stop_dist:.1f} m")
+    print(f"  acquire  : conf ≥ {args.acquire_conf:.2f}  green ≥ {args.acquire_green:.3f}")
+    if args.detector == "hsv":
+        print(f"  HSV      : h=[{args.hsv_h_lo},{args.hsv_h_hi}] s≥{args.hsv_s_lo} v≥{args.hsv_v_lo}")
     print("  Press Ctrl+C to stop the robot immediately.")
     print("=" * 68)
     print()
@@ -220,6 +230,10 @@ def main() -> None:
                         help="Min green fraction to leave ACQUIRE (default: 0.08)")
     parser.add_argument("--fps", type=int, default=10, metavar="N",
                         help="OAK-D capture frame rate (default: 10)")
+    parser.add_argument("--detector", choices=["hsv", "depth-edge"], default="hsv",
+                        help="Row detection algorithm: 'hsv' = HSV green-centroid (default), "
+                             "'depth-edge' = Canny/Hough heading + stereo-depth gap lateral "
+                             "(colour-independent, works in any lighting)")
     parser.add_argument("--hsv-h-lo", type=int, default=35, metavar="H",
                         help="HSV hue lower bound 0-180 (default: 35 = green; "
                              "use ~10 for brown/cardboard, ~100 for blue)")
