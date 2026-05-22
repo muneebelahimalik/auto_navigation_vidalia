@@ -29,6 +29,7 @@ class DepthObstacleDetector:
         min_dist_m: float = 0.30,
         fwd_band_frac: float = 0.40,
         fwd_half_frac: float = 0.25,
+        col_centre_frac: float = 0.5,
         min_pixels: int = 50,
         img_height: int = 400,
         img_width: int = 640,
@@ -38,12 +39,19 @@ class DepthObstacleDetector:
         self.min_pixels = min_pixels
 
         # Precompute the centre-strip slice indices.
+        # col_centre_frac shifts the horizontal centre of the strip:
+        #   0.5 = image centre (default, valid for forward-facing cameras)
+        #   0.80 = inner edge for left side-camera (robot path at ~col 480)
+        #   0.20 = inner edge for right side-camera (robot path at ~col 160)
         row_half = int(img_height * fwd_band_frac / 2)
         col_half = int(img_width * fwd_half_frac / 2)
         r_mid = img_height // 2
-        c_mid = img_width // 2
+        c_mid = int(img_width * col_centre_frac)
         self._row_sl = slice(r_mid - row_half, r_mid + row_half)
-        self._col_sl = slice(c_mid - col_half, c_mid + col_half)
+        self._col_sl = slice(
+            max(0, c_mid - col_half),
+            min(img_width, c_mid + col_half),
+        )
 
     def check(self, depth: Optional[np.ndarray], side: str) -> DepthObstacleStatus:
         """Return obstacle status for one depth frame (uint16 mm)."""

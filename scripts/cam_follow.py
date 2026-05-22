@@ -33,7 +33,7 @@ Key flags:
     --cam-left-id S   left OAK-D farm-ng service name (default: oak0)
     --cam-right-id S  right OAK-D farm-ng service name (default: oak1)
     --cam-x M         camera lateral offset from centreline (default: 0.915)
-    --cam-stop-dist M depth obstacle stop distance (default: 1.2)
+    --cam-stop-dist M depth obstacle stop distance (default: 2.5)
     --acquire-conf F  min confidence to leave ACQUIRE (default: 0.20)
     --fps N           camera capture rate (default: 10)
     --detector MODE   row detection: hsv (default) or depth-edge (colour-independent)
@@ -110,8 +110,17 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
             green_s_lo=args.hsv_s_lo,
             green_v_lo=args.hsv_v_lo,
         )
-    depth_left = DepthObstacleDetector(stop_dist_m=args.cam_stop_dist)
-    depth_right = DepthObstacleDetector(stop_dist_m=args.cam_stop_dist)
+    # Left camera is at -cam_x (left of robot). It looks forward, so the robot's
+    # forward centreline path appears at the INNER (right) edge of its image, col~480.
+    # Right camera is at +cam_x, so the path appears at the LEFT edge, col~160.
+    depth_left = DepthObstacleDetector(
+        stop_dist_m=args.cam_stop_dist,
+        col_centre_frac=0.80,
+    )
+    depth_right = DepthObstacleDetector(
+        stop_dist_m=args.cam_stop_dist,
+        col_centre_frac=0.20,
+    )
 
     # Camera-only confidence range is lower than LiDAR, so min_confidence is tuned down.
     controller = PurePursuitController(
@@ -222,8 +231,8 @@ def main() -> None:
                         help="Right OAK-D farm-ng service name, e.g. oak1 (empty = oak1)")
     parser.add_argument("--cam-x", type=float, default=0.915, metavar="M",
                         help="Camera lateral offset from robot centreline (default: 0.915)")
-    parser.add_argument("--cam-stop-dist", type=float, default=1.2, metavar="M",
-                        help="Depth obstacle stop distance in metres (default: 1.2)")
+    parser.add_argument("--cam-stop-dist", type=float, default=2.5, metavar="M",
+                        help="Depth obstacle stop distance in metres (default: 2.5)")
     parser.add_argument("--acquire-conf", type=float, default=0.20, metavar="F",
                         help="Min visual confidence to leave ACQUIRE (default: 0.20)")
     parser.add_argument("--acquire-green", type=float, default=0.08, metavar="F",

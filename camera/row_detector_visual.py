@@ -149,17 +149,22 @@ class VisualRowDetector:
             coords = np.stack([xs, ys], axis=1)
             centered = coords - coords.mean(axis=0)
             cov = (centered.T @ centered) / max(len(centered) - 1, 1)
-            _, vecs = np.linalg.eigh(cov)
+            vals, vecs = np.linalg.eigh(cov)
             pc = vecs[:, -1]           # (dx_px, dy_px) — principal direction
             if pc[1] > 0:              # ensure PC points toward top of image (forward)
                 pc = -pc
-            # Pixel slope: columns-right per row-forward (row toward smaller index)
-            slope_px = pc[0] / max(-pc[1], 0.1)
-            # Convert pixel slope to world heading via FOV scale factors
-            h_rad_per_px = 2.0 * math.tan(self.cam_hfov_rad / 2.0) / w
-            v_rad_per_px = 2.0 * math.tan(self.cam_vfov_rad / 2.0) / h
-            slope_world = slope_px * h_rad_per_px / v_rad_per_px
-            heading = math.atan(slope_world)
+            # Only use PCA heading when the green region is elongated.
+            # A round blob (row-end or isolated leaf) has nearly equal eigenvalues
+            # and the principal direction is arbitrary — it flips ±90° between frames.
+            linearity = (vals[-1] - vals[0]) / (vals[-1] + 1e-6) if vals[-1] > 1e-6 else 0.0
+            if linearity >= 0.30:
+                # Pixel slope: columns-right per row-forward (row toward smaller index)
+                slope_px = pc[0] / max(-pc[1], 0.1)
+                # Convert pixel slope to world heading via FOV scale factors
+                h_rad_per_px = 2.0 * math.tan(self.cam_hfov_rad / 2.0) / w
+                v_rad_per_px = 2.0 * math.tan(self.cam_vfov_rad / 2.0) / h
+                slope_world = slope_px * h_rad_per_px / v_rad_per_px
+                heading = math.atan(slope_world)
 
         return frac, lateral, heading, True
 
