@@ -566,7 +566,8 @@ managed exclusively by the `amiga_service` C++ binary. `depthai` direct device a
 | Image stream paths | `/rgb`, `/disparity`, `/left`, `/right`, `/imu` |
 | Frame proto type | `OakFrame` — fields: `meta`, `image_data` (bytes) |
 | Image encoding | JPEG bytes — decode with `cv2.imdecode(np.frombuffer(msg.image_data, dtype="uint8"), cv2.IMREAD_UNCHANGED)` |
-| Disparity encoding | JPEG uint8 → convert to depth_mm: `depth_mm = BASELINE_MM * FOCAL_PX / disparity_px` |
+| RGB frame size | ~277 KB JPEG → HxWx3 BGR uint8 |
+| Disparity encoding | Grayscale JPEG uint8 (~7 KB) → convert to depth_mm: `depth_mm = BASELINE_MM * FOCAL_PX / disparity_px` |
 | OAK-D calibration | baseline ≈ 75 mm, focal ≈ 452 px at 640 px width |
 
 `camera/oak_driver.py` has been rewritten to use `EventClient` (farm-ng gRPC) instead of `depthai`.
