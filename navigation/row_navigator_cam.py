@@ -77,7 +77,7 @@ class CamRowNavigator:
         headland: bool = False,
         acquire_conf: float = 0.20,
         acquire_green: float = 0.08,
-        acquire_frames: int = 8,
+        acquire_frames: int = 5,
         row_end_green: float = 0.04,
         row_end_frames: int = 10,
         row_end_min_dist: float = 2.0,

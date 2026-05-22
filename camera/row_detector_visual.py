@@ -84,11 +84,13 @@ class VisualRowDetector:
             lateral = (offset_l + offset_r) * 0.5
             heading = (heading_l + heading_r) * 0.5
         elif valid_l:
-            confidence = 0.20
+            # 0.25 not 0.20: EMA (alpha=0.30) converges to 0.25 > acquire_conf(0.20)
+            # so the threshold can actually be crossed in finite frames.
+            confidence = 0.25
             lateral = offset_l
             heading = heading_l
         else:
-            confidence = 0.20
+            confidence = 0.25
             lateral = offset_r
             heading = heading_r
 
