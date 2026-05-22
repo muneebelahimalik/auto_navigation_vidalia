@@ -97,6 +97,10 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
     vis_detector = VisualRowDetector(
         cam_x_left=-args.cam_x,
         cam_x_right=args.cam_x,
+        green_h_lo=args.hsv_h_lo,
+        green_h_hi=args.hsv_h_hi,
+        green_s_lo=args.hsv_s_lo,
+        green_v_lo=args.hsv_v_lo,
     )
     depth_left = DepthObstacleDetector(stop_dist_m=args.cam_stop_dist)
     depth_right = DepthObstacleDetector(stop_dist_m=args.cam_stop_dist)
@@ -134,6 +138,7 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
     print(f"  cam fps : {args.fps}   lateral offset: ±{args.cam_x:.3f} m")
     print(f"  stop    : depth obstacle at {args.cam_stop_dist:.1f} m")
     print(f"  acquire : conf ≥ {args.acquire_conf:.2f}  green ≥ {args.acquire_green:.3f}")
+    print(f"  HSV     : h=[{args.hsv_h_lo},{args.hsv_h_hi}] s≥{args.hsv_s_lo} v≥{args.hsv_v_lo}")
     print("  Press Ctrl+C to stop the robot immediately.")
     print("=" * 68)
     print()
@@ -215,6 +220,16 @@ def main() -> None:
                         help="Min green fraction to leave ACQUIRE (default: 0.08)")
     parser.add_argument("--fps", type=int, default=10, metavar="N",
                         help="OAK-D capture frame rate (default: 10)")
+    parser.add_argument("--hsv-h-lo", type=int, default=35, metavar="H",
+                        help="HSV hue lower bound 0-180 (default: 35 = green; "
+                             "use ~10 for brown/cardboard, ~100 for blue)")
+    parser.add_argument("--hsv-h-hi", type=int, default=85, metavar="H",
+                        help="HSV hue upper bound 0-180 (default: 85)")
+    parser.add_argument("--hsv-s-lo", type=int, default=40, metavar="S",
+                        help="HSV saturation lower bound 0-255 (default: 40; "
+                             "lower to ~25 for pale/cardboard colours)")
+    parser.add_argument("--hsv-v-lo", type=int, default=40, metavar="V",
+                        help="HSV value lower bound 0-255 (default: 40)")
     args = parser.parse_args()
 
     import logging
