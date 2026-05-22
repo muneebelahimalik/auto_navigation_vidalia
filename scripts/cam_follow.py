@@ -223,19 +223,28 @@ def main() -> None:
     logging.getLogger("asyncio").setLevel(logging.CRITICAL)
 
     nav_ref: list = []
+    import signal
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     try:
         loop.run_until_complete(_run(args, nav_ref))
     except KeyboardInterrupt:
-        # Cancel all pending tasks and let them finish cleanly before
-        # closing the loop — prevents "Exception ignored in coroutine" errors.
+        # Ignore further SIGINT during cleanup so a double Ctrl+C doesn't
+        # raise KeyboardInterrupt inside cv2.imdecode (a blocking C call)
+        # and bypass the CancelledError handlers.
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
         pending = asyncio.all_tasks(loop)
         for t in pending:
             t.cancel()
         if pending:
-            loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+            try:
+                loop.run_until_complete(
+                    asyncio.gather(*pending, return_exceptions=True)
+                )
+            except Exception:
+                pass
     finally:
+        signal.signal(signal.SIGINT, signal.SIG_DFL)
         loop.close()
 
     print("\n[cam_follow] stopping robot …")
