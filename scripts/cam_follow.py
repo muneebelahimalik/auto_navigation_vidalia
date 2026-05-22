@@ -270,7 +270,7 @@ def main() -> None:
                 loop.run_until_complete(
                     asyncio.gather(*pending, return_exceptions=True)
                 )
-            except Exception:
+            except BaseException:
                 pass
     finally:
         signal.signal(signal.SIGINT, signal.SIG_DFL)
