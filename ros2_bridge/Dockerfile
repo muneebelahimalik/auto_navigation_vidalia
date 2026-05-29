@@ -24,6 +24,14 @@ RUN apt-get update \
     python3-numpy \
     && rm -rf /var/lib/apt/lists/*
 
+# Locate the ROS2 setup.bash — path differs between dustynv image variants:
+#   foxy-ros-base  : apt-installed  → /opt/ros/foxy/setup.bash
+#   foxy-desktop   : colcon-built   → may be under /opt/ros/foxy/install/ or a ws
+# Save the found path so entrypoint.sh can source it without re-searching.
+RUN found=$(find /opt/ros /ros2_ws /ros_ws -name "setup.bash" 2>/dev/null | head -1) \
+    && echo "ROS2 setup.bash: ${found:-NOT FOUND}" \
+    && printf '%s\n' "$found" > /ros_setup_path.txt
+
 WORKDIR /workspace
 SHELL ["/bin/bash", "-c"]
 

@@ -13,9 +13,36 @@
 
 set -eo pipefail
 
-# ROS setup scripts reference optional env vars (e.g. AMENT_TRACE_SETUP_FILES)
-# that are not always exported; -u (unbound variable) would abort the script.
-source /opt/ros/foxy/setup.bash
+# Source ROS2 setup — path differs between dustynv image variants.
+# Dockerfile saves the found path to /ros_setup_path.txt at build time.
+ROS_SETUP=""
+if [ -s /ros_setup_path.txt ]; then
+    ROS_SETUP=$(cat /ros_setup_path.txt)
+fi
+
+# Fallback: check common paths directly
+if [ -z "$ROS_SETUP" ] || [ ! -f "$ROS_SETUP" ]; then
+    for candidate in \
+        /opt/ros/foxy/setup.bash \
+        /opt/ros/foxy/install/setup.bash \
+        /ros2_ws/install/setup.bash \
+        /ros_ws/install/setup.bash \
+        /opt/ros2_ws/install/setup.bash; do
+        if [ -f "$candidate" ]; then
+            ROS_SETUP="$candidate"
+            break
+        fi
+    done
+fi
+
+if [ -n "$ROS_SETUP" ] && [ -f "$ROS_SETUP" ]; then
+    echo "[ROS] Sourcing $ROS_SETUP"
+    source "$ROS_SETUP"
+else
+    echo "[ERROR] ROS2 setup.bash not found. Listing candidates:"
+    find / -name "setup.bash" -maxdepth 12 2>/dev/null | grep -i ros | head -10 || true
+    exit 1
+fi
 
 export DISPLAY=:99
 # Software rendering — RViz2 in Xvfb has no GPU, must use llvmpipe/Mesa.
