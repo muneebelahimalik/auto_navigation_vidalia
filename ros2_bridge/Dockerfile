@@ -1,6 +1,8 @@
 FROM osrf/ros:foxy-ros-base
 
-# Install only what the bridge node needs — no full desktop (runs headless on Amiga)
+# Install bridge node deps + Foxglove WebSocket bridge for browser visualisation.
+# ros-foxy-foxglove-bridge exposes all ROS2 topics over WebSocket on port 8765.
+# Open https://app.foxglove.dev in any browser — zero install on any other device.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-pip \
     python3-numpy \
@@ -10,11 +12,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ros-foxy-sensor-msgs \
     ros-foxy-geometry-msgs \
     ros-foxy-std-msgs \
+    ros-foxy-foxglove-bridge \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /workspace
 SHELL ["/bin/bash", "-c"]
 
 COPY vidalia_node.py /workspace/vidalia_node.py
+COPY entrypoint.sh  /workspace/entrypoint.sh
+RUN chmod +x /workspace/entrypoint.sh
 
-CMD source /opt/ros/foxy/setup.bash && python3 /workspace/vidalia_node.py
+EXPOSE 8765
+
+ENTRYPOINT ["/workspace/entrypoint.sh"]
