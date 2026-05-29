@@ -171,17 +171,19 @@ class VidaliaBridgeNode(Node):
     def __init__(self) -> None:
         super().__init__("vidalia_bridge")
 
-        # QoS: reliable for latched topics, best-effort for high-frequency data
-        best_effort_qos = QoSProfile(
-            reliability=ReliabilityPolicy.BEST_EFFORT,
+        # RELIABLE QoS matches RViz2's default subscription policy.
+        # BEST_EFFORT on the publisher causes RELIABILITY_QOS_POLICY mismatch
+        # warnings and RViz2 receives nothing.
+        reliable_qos = QoSProfile(
+            reliability=ReliabilityPolicy.RELIABLE,
             history=HistoryPolicy.KEEP_LAST,
-            depth=1,
+            depth=10,
         )
 
-        self._pc_pub     = self.create_publisher(PointCloud2, "/velodyne_points", best_effort_qos)
-        self._row_pub    = self.create_publisher(MarkerArray, "/row_viz",          10)
-        self._safety_pub = self.create_publisher(MarkerArray, "/safety_viz",       10)
-        self._vel_pub    = self.create_publisher(Twist,       "/cmd_vel",          10)
+        self._pc_pub     = self.create_publisher(PointCloud2, "/velodyne_points", reliable_qos)
+        self._row_pub    = self.create_publisher(MarkerArray, "/row_viz",          reliable_qos)
+        self._safety_pub = self.create_publisher(MarkerArray, "/safety_viz",       reliable_qos)
+        self._vel_pub    = self.create_publisher(Twist,       "/cmd_vel",          reliable_qos)
 
         self._tf_static  = StaticTransformBroadcaster(self)
         self._publish_tf_static()

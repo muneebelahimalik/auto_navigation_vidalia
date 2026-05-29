@@ -5,7 +5,7 @@
 #   1. Xvfb        — virtual framebuffer display :99
 #   2. vidalia_node.py  — reads /dev/shm/, publishes ROS2 topics
 #   3. RViz2       — reads all topics, renders 3-D view on :99
-#   4. x11vnc      — serves display :99 as VNC on port 5900
+#   4. x11vnc      — serves display :99 as VNC on port 5910
 #   5. websockify  — wraps VNC in WebSocket; noVNC serves browser UI on 6080
 #
 # Access from laptop (VS Code SSH auto-forwards port 6080):
@@ -20,7 +20,6 @@ if [ -s /ros_setup_path.txt ]; then
     ROS_SETUP=$(cat /ros_setup_path.txt)
 fi
 
-# Fallback: check common paths directly
 if [ -z "$ROS_SETUP" ] || [ ! -f "$ROS_SETUP" ]; then
     for candidate in \
         /opt/ros/foxy/setup.bash \
@@ -48,10 +47,19 @@ export DISPLAY=:99
 # Software rendering — RViz2 in Xvfb has no GPU, must use llvmpipe/Mesa.
 export LIBGL_ALWAYS_SOFTWARE=1
 
+# Use port 5910 for VNC — with --net=host the container shares the host's
+# ports, and 5900 (the VNC default) is often already occupied on the Amiga.
+VNC_PORT=5910
+
 echo "[1/5] Starting virtual display (Xvfb :99, 1920x1080x24)..."
 Xvfb :99 -screen 0 1920x1080x24 -nolisten tcp &
 XVFB_PID=$!
-sleep 1
+
+# Wait for Xvfb to be fully ready before x11vnc tries to connect (up to 10 s).
+for i in $(seq 1 20); do
+    DISPLAY=:99 xdpyinfo >/dev/null 2>&1 && break
+    sleep 0.5
+done
 
 echo "[2/5] Starting vidalia_node (reads /dev/shm/, publishes ROS2 topics)..."
 python3 /workspace/vidalia_node.py &
@@ -63,13 +71,14 @@ rviz2 -d /workspace/vidalia.rviz &
 RVIZ_PID=$!
 sleep 2
 
-echo "[4/5] Starting VNC server (x11vnc :99 → port 5900)..."
-x11vnc -display :99 -forever -nopw -rfbport 5900 -quiet &
+echo "[4/5] Starting VNC server (x11vnc :99 → port $VNC_PORT)..."
+x11vnc -display :99 -forever -nopw -rfbport $VNC_PORT \
+       -noxdamage -noxrecord -quiet &
 VNC_PID=$!
 sleep 1
 
 echo "[5/5] Starting noVNC web server on port 6080..."
-websockify --web=/usr/share/novnc/ --wrap-mode=ignore 6080 localhost:5900 &
+websockify --web=/usr/share/novnc/ --wrap-mode=ignore 6080 localhost:$VNC_PORT &
 NOVNC_PID=$!
 
 echo ""
