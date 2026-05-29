@@ -76,12 +76,14 @@ x11vnc -display :99 -forever -nopw -rfbport $VNC_PORT \
        -noxdamage -noxrecord &
 VNC_PID=$!
 
-# Wait until x11vnc is actually accepting TCP connections (up to 15 s).
+# Wait until x11vnc is accepting TCP connections (up to 15 s).
+# Uses bash /dev/tcp — no nc/netcat dependency.
+VNC_READY=0
 for i in $(seq 1 30); do
-    nc -z localhost $VNC_PORT 2>/dev/null && break
+    (echo >/dev/tcp/localhost/$VNC_PORT) 2>/dev/null && { VNC_READY=1; break; }
     sleep 0.5
 done
-if ! nc -z localhost $VNC_PORT 2>/dev/null; then
+if [ $VNC_READY -eq 0 ]; then
     echo "[ERROR] x11vnc failed to bind to port $VNC_PORT after 15 s — exiting."
     exit 1
 fi
