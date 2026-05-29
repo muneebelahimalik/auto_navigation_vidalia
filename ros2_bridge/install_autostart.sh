@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # install_autostart.sh — Install a persistent systemd user service so the
-# ROS2 Foxy bridge starts automatically on every Amiga reboot.
+# ROS2 Foxy + RViz2 bridge starts automatically on every Amiga reboot.
 #
 # Uses a SYSTEMD USER SERVICE (no sudo needed).  The service file lives
 # under ~/.config/systemd/user/ which is on the NVMe and persists across
@@ -21,7 +21,7 @@ install_service() {
 
     cat > "$SERVICE_FILE" <<EOF
 [Unit]
-Description=Vidalia ROS2 Foxy bridge + Foxglove WebSocket (port 8765)
+Description=Vidalia ROS2 Foxy bridge + RViz2 via noVNC (port 6080)
 After=network.target docker.service
 Requires=docker.service
 
@@ -60,7 +60,8 @@ EOF
     echo "    journalctl --user -u vidalia-ros2-bridge -f"
     echo ""
     echo "  After next reboot, bridge starts automatically."
-    echo "  Foxglove: https://app.foxglove.dev → ws://100.66.121.56:8765"
+    echo "  RViz2 via browser: http://localhost:6080/vnc.html (VS Code SSH port forward)"
+    echo "  Or via Tailscale : http://100.66.121.56:6080/vnc.html"
 }
 
 remove_service() {

@@ -1,45 +1,38 @@
-# L4T-optimised ROS2 Foxy base for Jetson Xavier NX — L4T R35.2.1 / Jetpack 5.1
-# Matches the farm-ng Amiga Brain kernel (linux-tegra 5.10.104, aarch64).
-# /var/lib/docker lives on NVMe → image persists across reboots.
-FROM dustynv/ros:foxy-ros-base-l4t-r35.2.1
+# L4T-optimised ROS2 Foxy DESKTOP for Jetson Xavier NX — L4T R35.2.1 / Jetpack 5.1
+# The "desktop" variant includes RViz2, rqt, and all visualisation plugins pre-built.
+# Image is ~13 GB — pulled once, stored in /var/lib/docker on NVMe (persists every reboot).
+FROM dustynv/ros:foxy-desktop-l4t-r35.2.1
 
-# The Open Robotics ROS 2 signing key baked into this image has expired.
-# The image uses signed-by=/usr/share/keyrings/ros-archive-keyring.gpg (not the
-# legacy apt-key keyring), so overwrite that file with the refreshed key.
-# Also remove ros2-latest.list if created by a previous failed build — the real
-# source list is ros2.list and having both causes duplicate-repo warnings.
+# Fix expired Open Robotics ROS 2 signing key (EXPKEYSIG F42ED6FBAB17C654).
+# Overwrite the signed-by keyring used by this image's sources.list entry.
 RUN rm -f /usr/share/keyrings/ros-archive-keyring.gpg \
           /etc/apt/sources.list.d/ros2-latest.list \
     && curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
        | gpg --dearmor -o /usr/share/keyrings/ros-archive-keyring.gpg
 
-# Install bridge node deps + Rosbridge WebSocket server for Foxglove visualisation.
-# ros-foxy-rosbridge-suite provides the "Rosbridge WebSocket" endpoint on port 8765.
-# (ros-foxy-foxglove-bridge is not published for focal/arm64; rosbridge is equivalent
-#  and connects to Foxglove Studio via Open connection → Rosbridge WebSocket.)
-# --allow-unauthenticated is a fallback if the refreshed key above still fails.
+# Install virtual-display stack for browser-based RViz2 access.
+# x11vnc serves the Xvfb virtual display; noVNC + websockify expose it on port 6080.
+# python3-numpy is the only Python dep not guaranteed in the desktop base.
 RUN apt-get update \
     -o Acquire::AllowInsecureRepositories=true \
     && apt-get install -y --no-install-recommends \
        --allow-unauthenticated \
-    python3-pip \
+    xvfb \
+    x11vnc \
+    novnc \
+    websockify \
     python3-numpy \
-    ros-foxy-tf2-ros \
-    ros-foxy-tf2-geometry-msgs \
-    ros-foxy-visualization-msgs \
-    ros-foxy-sensor-msgs \
-    ros-foxy-geometry-msgs \
-    ros-foxy-std-msgs \
-    ros-foxy-rosbridge-suite \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /workspace
 SHELL ["/bin/bash", "-c"]
 
-COPY vidalia_node.py /workspace/vidalia_node.py
-COPY entrypoint.sh  /workspace/entrypoint.sh
+COPY vidalia_node.py   /workspace/vidalia_node.py
+COPY rviz/vidalia.rviz /workspace/vidalia.rviz
+COPY entrypoint.sh     /workspace/entrypoint.sh
 RUN chmod +x /workspace/entrypoint.sh
 
-EXPOSE 8765
+# noVNC web interface (browser-based VNC client)
+EXPOSE 6080
 
 ENTRYPOINT ["/workspace/entrypoint.sh"]
