@@ -3,6 +3,11 @@
 # /var/lib/docker lives on NVMe → image persists across reboots.
 FROM dustynv/ros:foxy-ros-base-l4t-r35.2.1
 
+# The Open Robotics ROS 2 apt signing key (F42ED6FBAB17C654) expires and must be
+# refreshed before apt-get update — without this the build fails with EXPKEYSIG.
+RUN curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
+    | apt-key add -
+
 # Install bridge node deps + Foxglove WebSocket bridge for browser visualisation.
 # ros-foxy-foxglove-bridge exposes all ROS2 topics over WebSocket on port 8765.
 # Open https://app.foxglove.dev in any browser — zero install on any other device.
