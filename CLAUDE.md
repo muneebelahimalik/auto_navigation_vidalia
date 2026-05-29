@@ -7,30 +7,66 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Autonomous navigation workspace for the farm-ng Amiga robot using a Velodyne VLP-16 LiDAR
 and two OAK-D stereo cameras. Goal: fully autonomous laser-based weed control in onion fields.
 
-Two parallel stacks are maintained:
+Three parallel stacks are maintained:
 
 | Stack | Entry point | When to use |
 |---|---|---|
-| **Native Python** (recommended on brain) | `scripts/row_follow.py` | Amiga brain (camphor-clone) — ROS 2 not installed |
-| **Camera-only** (LiDAR-free backup) | `scripts/cam_follow.py` | When LiDAR unavailable or for lightweight deployment |
-| **ROS 2 Foxy** (dev PC / future) | `ros2 launch vidalia_bringup …` | Development PC with ROS 2 Foxy installed |
+| **Native Python — LiDAR** (recommended on brain) | `scripts/row_follow.py` | Amiga brain — primary stack, ROS 2 not required |
+| **Native Python — Camera-only** | `scripts/cam_follow.py` | When LiDAR unavailable or for lightweight deployment |
+| **ROS 2 Foxy Docker** (visualization) | `bash ros2_bridge/start.sh` | Live topic visualization via Foxglove browser UI |
 
-**System — Amiga brain (camphor-clone)**:
-- OS: Ubuntu 20.04.6 LTS (Focal Fossa), ARM64
-- Python: 3.8.10
-- **ROS 2 Foxy is NOT installed** on the brain. The base image uses an overlay
-  filesystem; anything installed outside `~/` (including `/opt/ros/`) is wiped on reboot.
-- The farm-ng Python SDK (OS 2.0 / Barley) is pre-installed at `/farm_ng_image/venv/`.
-- All code, configs, and installs must live under `~/` (NVMe, persistent).
-- depthai installed: **2.22.0.0** (not 2.23+)
-- opencv-python installed: **4.7.0.68**
+---
 
-**System — Development PC**:
-- OS: Ubuntu 22.04.5 LTS (Jammy Jellyfish)
-- ROS 2 not yet installed (install Humble for RViz/bag recording if needed).
-- SSH access: `ssh farm-ng-user-laserweeding@100.66.121.56` (Tailscale)
+## System — Amiga Brain (camphor-clone)
 
-**Ultimate goal**: fully autonomous laser-based weed control in onion fields.
+Full hardware and software configuration. Every architectural decision follows from these facts.
+
+| Property | Value |
+|---|---|
+| **SoC** | NVIDIA Jetson Xavier NX |
+| **OS** | Ubuntu 20.04.6 LTS (Focal Fossa) |
+| **Architecture** | aarch64 (ARM64) |
+| **Kernel** | Linux 5.10.104-tegra (L4T R35.2.1 — Jetson Linux) |
+| **JetPack** | 5.1 |
+| **Python** | 3.8.10 (system) |
+| **Home directory** | `/mnt/managed_home/farm-ng-user-laserweeding/` (symlinked as `~/`) |
+| **NVMe** | `/dev/nvme0n1p1` mounted at `/mnt` — 234 GB, **persistent across reboots** |
+| **Shared memory** | `/dev/shm` — tmpfs, 7.3 GB, shared via Docker volume |
+| **Docker storage** | `/var/lib/docker` on NVMe — **persists across reboots** |
+| **farm-ng venv** | `/farm_ng_image/venv/` — pre-installed, persistent |
+| **depthai version** | **2.22.0.0** — do NOT upgrade to 2.23+ |
+| **opencv-python** | **4.7.0.68** |
+| **Tailscale IP** | `100.66.121.56` |
+
+### Overlay Filesystem — Critical Architecture Constraint
+
+The Amiga OS root `/` is an **overlay filesystem**. On every reboot, the system reverts to the
+base image. **Only paths on the NVMe (`~/`, `/var/lib/docker`) survive reboots.**
+
+| Path | Persistent? | Notes |
+|---|---|---|
+| `~/` = `/mnt/managed_home/farm-ng-user-laserweeding/` | **YES** | All code must live here |
+| `/var/lib/docker` | **YES** | Docker images cached here — built once, reused forever |
+| `~/.config/systemd/user/` | **YES** | Systemd user services persist here |
+| `/opt/ros/` | **NO** | Wiped on every reboot — cannot install ROS natively |
+| `/usr/local/`, `/etc/` | **NO** | Wiped on every reboot — no system-level installs |
+| `/farm_ng_image/venv/` | **YES** | Pre-installed at build time; do not re-install |
+| `/dev/shm` | NO (tmpfs) | RAM-backed, fast IPC; cleared on reboot but available at runtime |
+
+**Consequence for ROS 2:** ROS 2 Foxy runs inside a Docker container. The image
+`dustynv/ros:foxy-ros-base-l4t-r35.2.1` is pulled/built once and stored in `/var/lib/docker`.
+It is available on every reboot without reinstallation.
+
+**Consequence for Python deps:** Always install via `pip` inside the farm-ng venv
+(`/farm_ng_image/venv/`) or the project's own virtualenv, both of which live under `~/`.
+
+### System — Development PC
+
+| Property | Value |
+|---|---|
+| **OS** | Ubuntu 22.04.5 LTS (Jammy Jellyfish) |
+| **SSH access** | `ssh farm-ng-user-laserweeding@100.66.121.56` (Tailscale) |
+| **ROS 2** | Not installed — install Humble if RViz/bag recording needed on PC |
 
 ---
 
@@ -58,6 +94,9 @@ python3 scripts/row_follow.py --auto --tire-height 0.85
 # Autonomous with OAK-D cameras:
 python3 scripts/row_follow.py --auto --tire-height 0.85 --camera
 
+# Autonomous with ROS 2 visualization bridge output:
+python3 scripts/row_follow.py --auto --tire-height 0.85 --ros2-bridge
+
 # Debug mode — stream height histogram, save bird's-eye PNG:
 python3 scripts/row_follow.py --debug
 ```
@@ -79,6 +118,24 @@ python3 scripts/cam_follow.py --auto --hsv-h-lo 10 --hsv-h-hi 25 --hsv-s-lo 25
 
 # Multi-row with headland turns:
 python3 scripts/cam_follow.py --auto --rows 4 --headland
+```
+
+### ROS 2 Visualization Bridge (Docker — on the Amiga Brain)
+
+```bash
+# Terminal 1: run navigation with bridge output:
+python3 scripts/row_follow.py --auto --tire-height 0.85 --ros2-bridge
+
+# Terminal 2: build and start the ROS 2 Foxy container:
+bash ros2_bridge/start.sh
+# First run: ~10–20 min (pulls ~4–6 GB L4T image)
+# Subsequent runs: ~5 seconds (uses cached image)
+
+# Install autostart service (runs on every reboot):
+bash ros2_bridge/install_autostart.sh
+
+# Visualize in any browser — no install on laptop/tablet:
+# https://app.foxglove.dev → Open connection → Rosbridge WebSocket → ws://100.66.121.56:8765
 ```
 
 ### ROS 2 Foxy (dev PC only — NOT on the brain)
@@ -118,6 +175,8 @@ Velodyne VLP-16 (192.168.1.201 UDP :2368, 10 Hz)
    navigation/row_controller.py    pure-pursuit → (linear_vel, angular_vel)
    canbus/canbus_interface.py      Twist2d via request_reply("/twist")
    Amiga wheels
+
+   (optional) /dev/shm/vidalia_pts.bin + vidalia_status.json  ──► Docker ROS 2 bridge
 ```
 
 ### Camera-Only Stack
@@ -134,6 +193,21 @@ OAK-D left + right (farm-ng EventClient → localhost:50010, service_name=oak0/o
    navigation/row_controller.py       pure-pursuit (unchanged)
    canbus/canbus_interface.py
    Amiga wheels
+```
+
+### ROS 2 Visualization Bridge (Docker)
+
+```
+row_follow.py --ros2-bridge
+   │  writes /dev/shm/vidalia_pts.bin      (int32 n + float32 xyz)
+   │  writes /dev/shm/vidalia_status.json  (state, velocities, obstacle flags)
+   ▼
+Docker container (dustynv/ros:foxy-ros-base-l4t-r35.2.1, --runtime nvidia)
+   │  vidalia_node.py   reads /dev/shm/ at 12 Hz
+   │    publishes: /velodyne_points, /tf_static, /row_viz, /safety_viz, /cmd_vel
+   │  foxglove_bridge   WebSocket on port 8765
+   ▼
+https://app.foxglove.dev → ws://100.66.121.56:8765  (any browser, zero install)
 ```
 
 **farm-ng OS 2.0 API pattern (DO NOT use deprecated OS 1.0 classes):**
@@ -160,7 +234,7 @@ async for event, message in EventClient(config).subscribe(config.subscriptions[0
 |---|---|
 | `scripts/row_follow.py` | CLI entry point; parses flags, wires tasks, asyncio loop |
 | `scripts/cam_follow.py` | Camera-only entry point |
-| `navigation/row_navigator.py` | State machine: ACQUIRE → FOLLOW → ROW_END / OBSTACLE_WAIT |
+| `navigation/row_navigator.py` | State machine: ACQUIRE → FOLLOW → ROW_END / OBSTACLE_WAIT; `/dev/shm` bridge writer |
 | `navigation/row_navigator_cam.py` | Camera-only state machine |
 | `navigation/row_perception.py` | PCA-based LiDAR row detector; EMA-smoothed RowEstimate |
 | `navigation/row_safety.py` | Three-zone obstacle monitor (forward + left/right tire tracks) |
@@ -171,6 +245,10 @@ async for event, message in EventClient(config).subscribe(config.subscriptions[0
 | `camera/depth_obstacle.py` | Depth-frame inner-edge obstacle detector (`col_centre_frac`) |
 | `camera/row_detector_visual.py` | HSV green-centroid + linearity-gated PCA heading |
 | `camera/row_detector_depth_edge.py` | Colour-independent Canny/Hough + depth-gap lateral detector |
+| `ros2_bridge/Dockerfile` | L4T-optimised ROS2 Foxy image: `dustynv/ros:foxy-ros-base-l4t-r35.2.1` |
+| `ros2_bridge/vidalia_node.py` | ROS2 Python node: reads `/dev/shm/`, publishes 5 topics at 12 Hz |
+| `ros2_bridge/start.sh` | Build + run container with `--runtime nvidia` + `/dev/shm` bind mount |
+| `ros2_bridge/install_autostart.sh` | Installs `~/.config/systemd/user/vidalia-ros2-bridge.service` |
 
 ---
 
@@ -229,6 +307,7 @@ Applied in `row_navigator.py` after self-filtering, before `detector.update()` a
 | Acquire consecutive frames | 5 | Must see ≥ 5 frames ≥ acquire_conf before entering FOLLOW |
 | `obstacle_clear_secs` | **1.5 s** | Consecutive clear time required to leave OBSTACLE_WAIT |
 | Min confidence for control | 0.35 | Below this the controller outputs zero velocity |
+| `cam_block_frames` | **3** | Consecutive camera-blocked frames required before OBSTACLE_WAIT; prevents false positives from intermittent depth noise (at 40% hit rate, getting 3 in a row is rare) |
 
 #### Safety Monitor (`navigation/row_safety.py`)
 | Parameter | Value | Rationale |
@@ -277,6 +356,8 @@ Applied in `row_navigator.py` after self-filtering, before `detector.update()` a
 | `--cam-right-id S` | "" | Right camera farm-ng service name (default: oak1) |
 | `--cam-x M` | 0.915 | Camera lateral offset from centreline m |
 | `--cam-stop-dist M` | **2.5** | Camera depth obstacle stop distance m |
+| `--cam-block-frames N` | **3** | Consecutive camera-blocked frames required to trigger OBSTACLE_WAIT |
+| `--ros2-bridge` | off | Write scan + nav status to `/dev/shm/` at each scan for the Docker ROS 2 bridge |
 | `--debug` | off | Stream LiDAR height histogram + save bird's-eye PNG |
 | `--save-dir DIR` | — | Save raw point-cloud numpy arrays to DIR |
 | `--no-validate` | off | Skip LiDAR startup health check |
@@ -294,6 +375,7 @@ Applied in `row_navigator.py` after self-filtering, before `detector.update()` a
 | `--cam-right-id S` | "" | Right OAK-D farm-ng service name (default: oak1) |
 | `--cam-x M` | 0.915 | Camera lateral offset from centreline m |
 | `--cam-stop-dist M` | **2.5** | Depth obstacle stop distance m |
+| `--cam-block-frames N` | **3** | Consecutive camera-blocked frames required to trigger OBSTACLE_WAIT |
 | `--acquire-conf F` | **0.20** | Min visual confidence to leave ACQUIRE |
 | `--acquire-green F` | **0.08** | Min green fraction (≥8% of strip) to leave ACQUIRE |
 | `--fps N` | 10 | OAK-D capture frame rate |
@@ -312,7 +394,7 @@ Applied in `row_navigator.py` after self-filtering, before `detector.update()` a
   ───────>│  5 consecutive   │────────────────────────────────────►┐
           │  frames needed   │                                      │
           └──────────────────┘                                      │
-                   ▲ obstacle clears (1.5 s)                       ▼
+                   ▲ obstacle clears (1.5 s consecutive)           ▼
                    │                                       ┌──────────────┐
           ┌──────────────────┐   obstacle detected         │    FOLLOW    │
           │  OBSTACLE_WAIT   │◄────────────────────────────│  pure-pursuit│
@@ -344,7 +426,7 @@ name (e.g. `oak0`, `oak1`), not a depthai MXID serial.
 | Camera service host | `localhost` |
 | Camera service port | **50010** |
 | Sub-service for camera 1 | `oak0` (one camera currently connected) |
-| Sub-service for camera 2 | `oak1` (times out — hardware not connected) |
+| Sub-service for camera 2 | `oak1` (times out — hardware not connected; logs one-time warning) |
 | Subscription pattern | `SubscribeRequest(uri=Uri(path='/rgb', query='service_name=oak0'))` |
 | Image stream paths | `/rgb`, `/disparity`, `/left`, `/right`, `/imu` |
 | Frame proto type | `OakFrame` — fields: `meta`, `image_data` (bytes) |
@@ -352,6 +434,15 @@ name (e.g. `oak0`, `oak1`), not a depthai MXID serial.
 | RGB frame size | ~277 KB JPEG → HxWx3 BGR uint8 |
 | Disparity encoding | Grayscale JPEG uint8 (~7 KB) → `depth_mm = BASELINE_MM × FOCAL_PX / disparity_px` |
 | OAK-D calibration | baseline ≈ 75 mm, focal ≈ 452 px @ 640 px width |
+
+#### oak1 Warning Suppression
+
+`oak1` is not physically connected. The farm-ng EventClient retries the gRPC subscription
+every ~0.5 s and logs a WARNING each time. Fix applied in `camera/oak_driver.py`:
+
+- `logging.getLogger("oak/client").setLevel(logging.ERROR)` in `OakDriver.run()`
+- `_is_not_found()` detects `NOT_FOUND` / `"no matching topics"` in exception message
+- On first NOT_FOUND: print one-time `"[oak_driver:right] service 'oak1' not available"` then `return` (stop retrying)
 
 #### Depth Obstacle Strip Geometry
 
@@ -367,6 +458,13 @@ At `col_centre_frac=0.5` (image centre), the robot centreline would only become 
 ≥5.7 m — useless for obstacle detection. The inner-edge strips cover **1.66–5 m forward**.
 
 This fills the LiDAR blind zone (< 1.5 m, removed by self-filter) with meaningful obstacle data.
+
+#### Camera Block Debounce
+
+A single-frame camera-blocked event is NOT treated as an obstacle. The `cam_block_frames`
+counter (default **3**) requires N consecutive blocked frames before `cam_blocked = True`.
+At a ~40% intermittent hit rate, 3 consecutive blocked frames is rare, which allows the
+`obstacle_clear_secs = 1.5 s` timer to complete and the robot to keep moving.
 
 #### Diagnosing Camera Connectivity
 
@@ -391,6 +489,89 @@ async def test():
 asyncio.run(test())
 "
 ```
+
+---
+
+### `/dev/shm` IPC Bridge
+
+`row_follow.py --ros2-bridge` calls `_write_bridge()` in `row_navigator.py` on every LiDAR scan:
+
+| File | Content | Format |
+|---|---|---|
+| `/dev/shm/vidalia_pts.bin` | Current scan point cloud | `int32` n + `float32[n×3]` xyz |
+| `/dev/shm/vidalia_status.json` | Nav state + velocities + safety flags | JSON (see below) |
+
+Both files are written atomically (temp file + `os.rename`) to prevent partial reads.
+
+```python
+status = {
+    "state": self.state,               # "ACQUIRE" / "FOLLOW" / "OBSTACLE_WAIT" / "ROW_END"
+    "heading_error": float,            # radians
+    "lateral_offset": float,           # metres (positive = right)
+    "confidence": float,               # 0–1
+    "row_end_confidence": float,
+    "n_points": int,
+    "linear_vel": float,               # m/s commanded
+    "angular_vel": float,              # rad/s commanded
+    "forward_blocked": bool,
+    "left_tire_blocked": bool,
+    "right_tire_blocked": bool,
+    "cam_blocked": bool,
+    "nearest_forward": float,          # metres (99.0 = no obstacle)
+    "rows_done": int,
+    "row_dist": float,                 # metres travelled in current row
+    "ts": float,                       # monotonic timestamp
+}
+```
+
+**Why not UDP port-sharing?** Linux `SO_REUSEPORT` with unicast UDP **load-balances** packets
+between sockets (does NOT duplicate). Each process would receive only ~half the scans.
+`/dev/shm` file IPC was chosen instead — atomic, zero-copy, and accessible from Docker via
+`-v /dev/shm:/dev/shm`.
+
+---
+
+### ROS 2 Docker Bridge Details
+
+#### Base Image Choice
+
+| Image | Why |
+|---|---|
+| `dustynv/ros:foxy-ros-base-l4t-r35.2.1` | Built for Jetson Xavier NX, L4T R35.2.1, Jetpack 5.1; matches exact kernel on Amiga Brain; same approach as farm-ng's own amiga-ros-bridge |
+| ~~`osrf/ros:foxy-ros-base`~~ | Generic ARM64; incompatible with Tegra kernel, CUDA libraries, NVIDIA container runtime |
+
+#### Docker Run Flags
+
+| Flag | Purpose |
+|---|---|
+| `--runtime nvidia` | Activates Jetson NVIDIA container runtime — mounts L4T GPU libraries |
+| `--net=host` | Container shares host network namespace — ROS DDS discovery works transparently |
+| `-v /dev/shm:/dev/shm` | Shares tmpfs RAM disk between navigation process and container |
+| `-p 8765:8765` | Exposes Foxglove WebSocket port to Tailscale network |
+| `-e ROS_DOMAIN_ID=42` | Isolates ROS 2 DDS domain from any other ROS instances on the network |
+
+#### Persistent Autostart
+
+`install_autostart.sh` creates `~/.config/systemd/user/vidalia-ros2-bridge.service`.
+This path lives on the NVMe and survives reboots. The service starts automatically when
+the user logs in (after `loginctl enable-linger` — run once if needed).
+
+```bash
+systemctl --user status  vidalia-ros2-bridge
+systemctl --user stop    vidalia-ros2-bridge
+systemctl --user restart vidalia-ros2-bridge
+journalctl --user -u vidalia-ros2-bridge -f
+```
+
+#### ROS 2 Topics Published by `vidalia_node.py`
+
+| Topic | Type | Notes |
+|---|---|---|
+| `/velodyne_points` | `sensor_msgs/PointCloud2` | xyz + intensity (height-relative); frame `velodyne` |
+| `/tf_static` | TF | `base_link → velodyne`: x=0.959 m, z=0.699 m, pitch=−15° (tilt corrected) |
+| `/row_viz` | `visualization_msgs/MarkerArray` | Arrow = row direction; green line = lateral offset |
+| `/safety_viz` | `visualization_msgs/MarkerArray` | Wireframe boxes: forward zone + tire zones; green = clear, red = blocked |
+| `/cmd_vel` | `geometry_msgs/Twist` | Current commanded velocity (linear.x, angular.z) |
 
 ---
 
@@ -512,10 +693,11 @@ OAK-D defaults: hfov=73°, vfov=54°, 640×400 → scale factor ≈ 0.91.
 | Permanent `OBSTACLE_WAIT — FWD@2.2m, n=482` | `obstacle_height=0.45 m` below LIDAR_MOUNT_HEIGHT; entire field was "obstacle" | Raised `obstacle_height` 0.45 → **0.75 m** |
 | `L-TIRE(n=47)` false positive | Adjacent crop row canopy at h≈0.80–0.84 m triggering tire zone | Added `--tire-height`; set to **0.85 m** for onion fields |
 | Stuck in ACQUIRE (conf ≤ 0.52) | Robot 0.75 m off-centre → reduced PCA linearity → conf below threshold | Lowered `acquire_conf` 0.55 → **0.45** |
+| `CAM-LEFT@1.8m` persistent OBSTACLE_WAIT | Single camera-blocked frame immediately set `cam_blocked = True` | Added `cam_block_frames=3`; requires 3 consecutive blocked frames |
+| `WARNING:oak/client: no matching topics` flood | EventClient retries gRPC subscription every ~0.5 s; logs each attempt | Log level → ERROR + one-time "offline" message + return on NOT_FOUND (stop retrying) |
 | ACQUIRE forever with 15° tilted mount | `h = z_sensor + height` wrong; crop appears at h=0.83 m (above crop band) | Added `tilt_correct_pts()` in `obstacle_filter.py`; wired via `--lidar-tilt` |
 | OBSTACLE_WAIT immediately with 15° tilt | Ground returns appear at h=0.80 m → above obstacle threshold with uncorrected height | Same tilt correction fix |
 | `[oak_driver] X_LINK_DEVICE_NOT_FOUND` | Cameras on PoE switch — `amiga_service` holds exclusive depthai handles | Rewrote `oak_driver.py` to use `EventClient` → localhost:50010 |
-| `[oak_driver] THE_400_P AttributeError` | depthai 2.22.0 doesn't have `THE_400_P` (legacy note — no longer uses depthai) | N/A — depthai pipeline removed |
 | Obstacle not detected by cameras (`safe=clear`) | Depth strip at image centre; robot centreline appears at col ~480/~160 from side cameras | Added `col_centre_frac=0.80/0.20` to shift strips to inner camera edges |
 | Heading chaos ±70° at row end | PCA on round green blob → arbitrary principal direction → flips ±90° between frames | Added eigenvalue `linearity ≥ 0.30` check in `row_detector_visual.py` |
 | `depth-edge` robot turns right (open room) | `argmax(col_smooth)` found far wall; no right flank for gap validation | Added local-maximum flank validation in `_lateral_from_depth` |
