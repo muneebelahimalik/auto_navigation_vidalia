@@ -272,8 +272,14 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
             cam_x_left=-args.cam_x,
             cam_x_right=args.cam_x,
         )
-        depth_left = DepthObstacleDetector(stop_dist_m=args.cam_stop_dist)
-        depth_right = DepthObstacleDetector(stop_dist_m=args.cam_stop_dist)
+        depth_left = DepthObstacleDetector(
+            stop_dist_m=args.cam_stop_dist,
+            col_centre_frac=0.80,
+        )
+        depth_right = DepthObstacleDetector(
+            stop_dist_m=args.cam_stop_dist,
+            col_centre_frac=0.20,
+        )
 
     detector = RowDetector(
         roi_x_half=args.roi_x,
@@ -403,8 +409,8 @@ def main() -> None:
                         help="Right OAK-D device serial (empty=auto)")
     parser.add_argument("--cam-x", type=float, default=0.915, metavar="M",
                         help="Camera lateral offset from centreline (default: 0.915)")
-    parser.add_argument("--cam-stop-dist", type=float, default=1.2, metavar="M",
-                        help="Camera depth obstacle threshold (default: 1.2)")
+    parser.add_argument("--cam-stop-dist", type=float, default=2.5, metavar="M",
+                        help="Camera depth obstacle stop distance in metres (default: 2.5)")
     args = parser.parse_args()
 
     nav_ref: list = []
