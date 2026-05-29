@@ -4,20 +4,20 @@
 FROM dustynv/ros:foxy-ros-base-l4t-r35.2.1
 
 # The Open Robotics ROS 2 signing key baked into this image has expired.
-# This image uses signed-by= (not the legacy apt-key keyring), so we must
-# overwrite /usr/share/keyrings/ros-archive-keyring.gpg with the current key
-# and rebuild the sources.list entry to guarantee it points to that file.
+# The image uses signed-by=/usr/share/keyrings/ros-archive-keyring.gpg (not the
+# legacy apt-key keyring), so overwrite that file with the refreshed key.
+# Also remove ros2-latest.list if created by a previous failed build — the real
+# source list is ros2.list and having both causes duplicate-repo warnings.
 RUN rm -f /usr/share/keyrings/ros-archive-keyring.gpg \
+          /etc/apt/sources.list.d/ros2-latest.list \
     && curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
-       | gpg --dearmor -o /usr/share/keyrings/ros-archive-keyring.gpg \
-    && printf 'deb [arch=arm64 signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/ros2/ubuntu focal main\n' \
-       > /etc/apt/sources.list.d/ros2-latest.list
+       | gpg --dearmor -o /usr/share/keyrings/ros-archive-keyring.gpg
 
-# Install bridge node deps + Foxglove WebSocket bridge for browser visualisation.
-# ros-foxy-foxglove-bridge exposes all ROS2 topics over WebSocket on port 8765.
-# Open https://app.foxglove.dev in any browser — zero install on any other device.
-# --allow-unauthenticated is a belt-and-suspenders fallback in case the key at
-# the URL above has also since expired by the time you build.
+# Install bridge node deps + Rosbridge WebSocket server for Foxglove visualisation.
+# ros-foxy-rosbridge-suite provides the "Rosbridge WebSocket" endpoint on port 8765.
+# (ros-foxy-foxglove-bridge is not published for focal/arm64; rosbridge is equivalent
+#  and connects to Foxglove Studio via Open connection → Rosbridge WebSocket.)
+# --allow-unauthenticated is a fallback if the refreshed key above still fails.
 RUN apt-get update \
     -o Acquire::AllowInsecureRepositories=true \
     && apt-get install -y --no-install-recommends \
@@ -30,7 +30,7 @@ RUN apt-get update \
     ros-foxy-sensor-msgs \
     ros-foxy-geometry-msgs \
     ros-foxy-std-msgs \
-    ros-foxy-foxglove-bridge \
+    ros-foxy-rosbridge-suite \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /workspace
