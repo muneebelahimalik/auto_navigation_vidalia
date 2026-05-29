@@ -30,6 +30,7 @@ import numpy as np
 
 from canbus.canbus_interface import CanbusInterface
 from lidar.lidar_driver import LidarDriver
+from lidar.obstacle_filter import tilt_correct_pts
 from navigation.row_controller import PurePursuitController
 from navigation.row_perception import RowDetector, RowEstimate
 from navigation.row_safety import SafetyMonitor
@@ -80,6 +81,7 @@ class RowNavigator:
         vis_detector=None,
         depth_left=None,
         depth_right=None,
+        tilt_rad: float = 0.0,
     ) -> None:
         self.canbus = canbus
         self.detector = detector
@@ -95,6 +97,7 @@ class RowNavigator:
         self.vis_detector = vis_detector
         self.depth_left = depth_left
         self.depth_right = depth_right
+        self.tilt_rad = tilt_rad
 
         self.acquire_conf = acquire_conf
         self.acquire_frames = acquire_frames
@@ -167,6 +170,8 @@ class RowNavigator:
             if len(pts):
                 rng = np.hypot(pts[:, 0], pts[:, 1])
                 pts = pts[rng >= self.self_radius]
+                if self.tilt_rad != 0.0:
+                    pts = tilt_correct_pts(pts, self.tilt_rad)
 
             est = self.detector.update(pts)
             safety = self.safety.check(pts)

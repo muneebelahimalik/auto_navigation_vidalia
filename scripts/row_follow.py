@@ -54,7 +54,7 @@ if _FARMNG_SITE.exists() and str(_FARMNG_SITE) not in sys.path:
     sys.path.insert(0, str(_FARMNG_SITE))
 
 from lidar.lidar_driver import LidarDriver
-from lidar.obstacle_filter import validate_lidar_startup
+from lidar.obstacle_filter import validate_lidar_startup, tilt_correct_pts
 from navigation.row_controller import PurePursuitController
 from navigation.row_navigator import RowNavigator
 from navigation.row_perception import RowDetector
@@ -99,14 +99,15 @@ def _load_canbus_interface():
 
 async def _debug_loop(lidar: LidarDriver, args: argparse.Namespace) -> None:
     """Stream LiDAR stats and save a bird's-eye-view PNG for diagnosis."""
+    import math
     import time
 
     import numpy as np
 
     from lidar.obstacle_filter import LIDAR_MOUNT_HEIGHT
 
-    print(f" DEBUG — collecting scans (assumed mount height "
-          f"{LIDAR_MOUNT_HEIGHT:.3f} m)")
+    print(f" DEBUG — collecting scans (mount height {LIDAR_MOUNT_HEIGHT:.3f} m, "
+          f"tilt {args.lidar_tilt:.1f}° forward)")
     print(f" self-filter < {args.self_radius:.2f} m | "
           f"ROI |x| <= {args.roi_x:.2f} m, y 1.5-7.0 m")
     print(" A healthy run shows steady 'pts' (~28000) and 'hz' near 10.\n")
@@ -118,6 +119,7 @@ async def _debug_loop(lidar: LidarDriver, args: argparse.Namespace) -> None:
     count = 0
     hz = 0.0
 
+    tilt_rad = math.radians(args.lidar_tilt)
     async for pts in lidar.scan_stream_np():
         count += 1
         now = time.monotonic()
@@ -130,6 +132,8 @@ async def _debug_loop(lidar: LidarDriver, args: argparse.Namespace) -> None:
 
         rng = np.hypot(pts[:, 0], pts[:, 1])
         pts = pts[rng >= args.self_radius]
+        if tilt_rad != 0.0:
+            pts = tilt_correct_pts(pts, tilt_rad)
         strip = pts[(pts[:, 1] >= 1.5) & (pts[:, 1] <= 7.0)
                     & (np.abs(pts[:, 0]) <= args.roi_x)]
         h = strip[:, 2] + LIDAR_MOUNT_HEIGHT
@@ -282,6 +286,7 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
         tire_obstacle_height=tire_h,
     )
     controller = PurePursuitController(max_linear=args.speed)
+    import math as _math
     navigator = RowNavigator(
         canbus, detector, safety, controller,
         auto=args.auto, rows=args.rows, headland=args.headland, slam=slam,
@@ -292,6 +297,7 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
         vis_detector=vis_detector,
         depth_left=depth_left,
         depth_right=depth_right,
+        tilt_rad=_math.radians(args.lidar_tilt),
     )
     nav_ref.append(navigator)
 
@@ -302,7 +308,7 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
     print(f"  rows    : {args.rows}   headland turns: {'on' if args.headland else 'off'}")
     print(f"  speed   : {args.speed:.2f} m/s max   SLAM map: {'on' if args.slam else 'off'}")
     print(f"  safety  : fwd_h={args.obstacle_height:.2f}m  tire_h={tire_h:.2f}m  "
-          f"self_r={args.self_radius:.2f}m")
+          f"self_r={args.self_radius:.2f}m  tilt={args.lidar_tilt:.1f}°")
     print(f"  cameras : {'OAK-D left+right enabled  stop=' + str(args.cam_stop_dist) + 'm' if args.camera else 'disabled'}")
     print("  Press Ctrl+C to stop the robot immediately.")
     print("=" * 68)
@@ -380,6 +386,9 @@ def main() -> None:
                              "(default: same as --obstacle-height). Raise above the "
                              "adjacent-row canopy height to stop tall crop triggering "
                              "tire-zone stops (e.g. 0.85 for bolted onions).")
+    parser.add_argument("--lidar-tilt", type=float, default=15.0, metavar="DEG",
+                        help="Forward (nose-down) tilt of the LiDAR mount in degrees "
+                             "(default: 15.0). Set 0 for a flat mount.")
     parser.add_argument("--debug", action="store_true",
                         help="Stream a LiDAR height profile instead of navigating")
     parser.add_argument("--save-dir", default="", metavar="PATH",

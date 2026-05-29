@@ -32,12 +32,37 @@ from __future__ import annotations
 import math
 from typing import Dict, List
 
+import numpy as np
+
 from lidar.lidar_driver import LidarDriver, VelodynePoint
 
 # ---------------------------------------------------------------------------
 # Mount geometry — must match URDF and tf_static_base_to_velodyne.launch.py
 # ---------------------------------------------------------------------------
 LIDAR_MOUNT_HEIGHT = 0.699   # metres (z component base_link → velodyne; 27.5 in)
+
+
+def tilt_correct_pts(pts: np.ndarray, tilt_rad: float) -> np.ndarray:
+    """Rotate an Nx3 point array from a forward-tilted sensor frame to the world frame.
+
+    When the VLP-16 is mounted with its nose tilted DOWN by tilt_rad radians the
+    raw sensor Y/Z axes are no longer horizontal/vertical.  This function applies
+    the inverse rotation so that height h = z_corrected + LIDAR_MOUNT_HEIGHT is the
+    true ground-relative height, and y_corrected is the true horizontal forward distance.
+
+    Rotation (X unchanged; Y-Z rotated by -tilt_rad around X):
+        y_w =  y_s * cos(tilt) + z_s * sin(tilt)
+        z_w = -y_s * sin(tilt) + z_s * cos(tilt)
+    """
+    if tilt_rad == 0.0:
+        return pts
+    cos_t = math.cos(tilt_rad)
+    sin_t = math.sin(tilt_rad)
+    out = pts.copy()
+    out[:, 1] = pts[:, 1] * cos_t + pts[:, 2] * sin_t
+    out[:, 2] = -pts[:, 1] * sin_t + pts[:, 2] * cos_t
+    return out
+
 
 # ---------------------------------------------------------------------------
 # Obstacle filter thresholds
