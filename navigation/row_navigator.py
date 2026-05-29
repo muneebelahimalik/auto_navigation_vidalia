@@ -22,7 +22,10 @@ to validate detection before letting the robot move.
 
 from __future__ import annotations
 
+import json
 import math
+import os
+import struct
 import time
 from typing import Optional
 
@@ -83,6 +86,7 @@ class RowNavigator:
         depth_right=None,
         tilt_rad: float = 0.0,
         cam_block_frames: int = 3,
+        ros2_bridge: bool = False,
     ) -> None:
         self.canbus = canbus
         self.detector = detector
@@ -100,6 +104,7 @@ class RowNavigator:
         self.depth_right = depth_right
         self.tilt_rad = tilt_rad
         self.cam_block_frames = cam_block_frames
+        self.ros2_bridge = ros2_bridge
 
         self.acquire_conf = acquire_conf
         self.acquire_frames = acquire_frames
@@ -219,6 +224,8 @@ class RowNavigator:
             self.cmd = (linear, angular)
             await self._drive(linear, angular)
             self._print_status(est, safety, linear, angular)
+            if self.ros2_bridge:
+                self._write_bridge(pts, est, safety, linear, angular)
 
             if self.state == _S.DONE:
                 break
@@ -355,6 +362,45 @@ class RowNavigator:
                 pass
 
     # ------------------------------------------------------------------
+    def _write_bridge(self, pts: np.ndarray, est, safety, linear: float, angular: float) -> None:
+        """Write scan + nav status to /dev/shm/ for the ROS2 bridge container."""
+        try:
+            # --- point cloud (Nx3 float32) ---
+            pts_f32 = pts.astype(np.float32)
+            n = len(pts_f32)
+            raw = struct.pack("<i", n) + pts_f32.tobytes()
+            tmp = "/dev/shm/vidalia_pts_tmp.bin"
+            with open(tmp, "wb") as f:
+                f.write(raw)
+            os.rename(tmp, "/dev/shm/vidalia_pts.bin")
+
+            # --- navigation status (JSON) ---
+            status = {
+                "state":              self.state,
+                "heading_error":      float(est.heading_error),
+                "lateral_offset":     float(est.lateral_offset),
+                "confidence":         float(est.confidence),
+                "row_end_confidence": float(est.row_end_confidence),
+                "n_points":           int(est.n_points),
+                "linear_vel":         float(linear),
+                "angular_vel":        float(angular),
+                "forward_blocked":    bool(safety.forward_blocked),
+                "left_tire_blocked":  bool(safety.left_tire_blocked),
+                "right_tire_blocked": bool(safety.right_tire_blocked),
+                "cam_blocked":        bool(safety.cam_blocked),
+                "nearest_forward":    float(safety.nearest_forward)
+                                      if safety.nearest_forward < 99.0 else 99.0,
+                "rows_done":          int(self._rows_done),
+                "row_dist":           float(self._row_dist),
+                "ts":                 time.monotonic(),
+            }
+            tmp2 = "/dev/shm/vidalia_status_tmp.json"
+            with open(tmp2, "w") as f:
+                json.dump(status, f)
+            os.rename(tmp2, "/dev/shm/vidalia_status.json")
+        except OSError:
+            pass  # /dev/shm not available or full — bridge is optional
+
     def _print_status(self, est, safety, linear: float, angular: float) -> None:
         cam_active = self.vis_detector is not None
         mode = ("AUTO" if self.auto else "PERC") + ("+CAM" if cam_active else "")

@@ -305,6 +305,7 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
         depth_right=depth_right,
         tilt_rad=_math.radians(args.lidar_tilt),
         cam_block_frames=args.cam_block_frames,
+        ros2_bridge=args.ros2_bridge,
     )
     nav_ref.append(navigator)
 
@@ -317,6 +318,9 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
     print(f"  safety  : fwd_h={args.obstacle_height:.2f}m  tire_h={tire_h:.2f}m  "
           f"self_r={args.self_radius:.2f}m  tilt={args.lidar_tilt:.1f}°")
     print(f"  cameras : {'OAK-D left+right enabled  stop=' + str(args.cam_stop_dist) + 'm' if args.camera else 'disabled'}")
+    if args.ros2_bridge:
+        print("  ros2    : bridge ON — writing to /dev/shm/vidalia_pts.bin + vidalia_status.json")
+        print("            start Docker bridge:  bash ros2_bridge/start.sh")
     print("  Press Ctrl+C to stop the robot immediately.")
     print("=" * 68)
     print()
@@ -416,6 +420,10 @@ def main() -> None:
                         help="Consecutive camera-blocked frames required to trigger "
                              "OBSTACLE_WAIT (default: 3). Raise to reduce false positives "
                              "from depth noise or sparse crop returns.")
+    parser.add_argument("--ros2-bridge", action="store_true",
+                        help="Write scan data and nav status to /dev/shm/ every scan so the "
+                             "Docker ROS2 bridge (ros2_bridge/start.sh) can publish live "
+                             "topics for RViz2 visualization.")
     args = parser.parse_args()
 
     nav_ref: list = []
