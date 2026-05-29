@@ -262,9 +262,13 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
     vis_detector = None
     depth_left = None
     depth_right = None
+    depth_pts_left = None
+    depth_pts_right = None
+    ekf = None
+    odometry = None
     if args.camera:
+        import math as _math2
         from camera.oak_driver import OakDriver
-        from camera.depth_obstacle import DepthObstacleDetector
         from camera.row_detector_visual import VisualRowDetector
         left_cam = OakDriver(side="left", device_id=args.cam_left_id)
         right_cam = OakDriver(side="right", device_id=args.cam_right_id)
@@ -272,14 +276,45 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
             cam_x_left=-args.cam_x,
             cam_x_right=args.cam_x,
         )
-        depth_left = DepthObstacleDetector(
-            stop_dist_m=args.cam_stop_dist,
-            col_centre_frac=0.80,
-        )
-        depth_right = DepthObstacleDetector(
-            stop_dist_m=args.cam_stop_dist,
-            col_centre_frac=0.20,
-        )
+
+        if args.cam_depth_3d:
+            # Full 3-D depth fusion: project camera depth images to LiDAR-convention
+            # point clouds and merge with LiDAR before SafetyMonitor.check().
+            # Replaces the legacy 1-D strip DepthObstacleDetector.
+            from camera.depth_to_points import DepthToPoints
+            cam_yaw_rad = _math2.radians(args.cam_yaw_deg)
+            cam_pitch_rad = _math2.radians(args.cam_pitch_deg)
+            depth_pts_left = DepthToPoints(
+                cam_x=-args.cam_x,
+                cam_y_fwd=args.cam_y_fwd,
+                cam_z=args.cam_height,
+                cam_yaw=-cam_yaw_rad,   # left cam: negative yaw (points right/inward)
+                cam_pitch=cam_pitch_rad,
+                y_max=args.cam_stop_dist + 0.5,
+            )
+            depth_pts_right = DepthToPoints(
+                cam_x=+args.cam_x,
+                cam_y_fwd=args.cam_y_fwd,
+                cam_z=args.cam_height,
+                cam_yaw=+cam_yaw_rad,   # right cam: positive yaw (points left/inward)
+                cam_pitch=cam_pitch_rad,
+                y_max=args.cam_stop_dist + 0.5,
+            )
+        else:
+            # Legacy 1-D depth strip obstacle detection.
+            from camera.depth_obstacle import DepthObstacleDetector
+            depth_left = DepthObstacleDetector(
+                stop_dist_m=args.cam_stop_dist,
+                col_centre_frac=0.80,
+            )
+            depth_right = DepthObstacleDetector(
+                stop_dist_m=args.cam_stop_dist,
+                col_centre_frac=0.20,
+            )
+
+    if args.ekf:
+        from navigation.ekf_estimator import RowEKF
+        ekf = RowEKF()
 
     detector = RowDetector(
         roi_x_half=args.roi_x,
@@ -303,6 +338,10 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
         vis_detector=vis_detector,
         depth_left=depth_left,
         depth_right=depth_right,
+        depth_pts_left=depth_pts_left,
+        depth_pts_right=depth_pts_right,
+        ekf=ekf,
+        odometry=odometry,
         tilt_rad=_math.radians(args.lidar_tilt),
         cam_block_frames=args.cam_block_frames,
         ros2_bridge=args.ros2_bridge,
@@ -317,7 +356,18 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
     print(f"  speed   : {args.speed:.2f} m/s max   SLAM map: {'on' if args.slam else 'off'}")
     print(f"  safety  : fwd_h={args.obstacle_height:.2f}m  tire_h={tire_h:.2f}m  "
           f"self_r={args.self_radius:.2f}m  tilt={args.lidar_tilt:.1f}°")
-    print(f"  cameras : {'OAK-D left+right enabled  stop=' + str(args.cam_stop_dist) + 'm' if args.camera else 'disabled'}")
+    if args.camera:
+        cam_mode = "OAK-D left+right"
+        if args.cam_depth_3d:
+            cam_mode += f"  3D-fusion  h={args.cam_height}m yaw={args.cam_yaw_deg}° pitch={args.cam_pitch_deg}°"
+        else:
+            cam_mode += "  strip-obstacle"
+        cam_mode += f"  stop={args.cam_stop_dist}m"
+        if args.ekf:
+            cam_mode += "  EKF-fusion"
+    else:
+        cam_mode = "disabled"
+    print(f"  cameras : {cam_mode}")
     if args.ros2_bridge:
         print("  ros2    : bridge ON — writing to /dev/shm/vidalia_pts.bin + vidalia_status.json")
         print("            start Docker bridge:  bash ros2_bridge/start.sh")
@@ -420,6 +470,26 @@ def main() -> None:
                         help="Consecutive camera-blocked frames required to trigger "
                              "OBSTACLE_WAIT (default: 3). Raise to reduce false positives "
                              "from depth noise or sparse crop returns.")
+
+    # --- 3-D depth fusion (Phase 1 sensor fusion) ---
+    parser.add_argument("--cam-depth-3d", action="store_true",
+                        help="Enable full 3-D depth-to-point-cloud fusion from OAK-D cameras "
+                             "(requires --camera). Merges projected depth clouds with LiDAR "
+                             "before SafetyMonitor to fill the 1.5 m blind zone. "
+                             "Replaces the legacy 1-D strip obstacle detector.")
+    parser.add_argument("--cam-height", type=float, default=0.55, metavar="M",
+                        help="Camera height above ground in metres (default: 0.55). "
+                             "Used with --cam-depth-3d for extrinsic transform.")
+    parser.add_argument("--cam-yaw-deg", type=float, default=35.0, metavar="DEG",
+                        help="Inward yaw of each camera from the forward axis in degrees "
+                             "(default: 35.0). Left cam is rotated -yaw, right cam +yaw.")
+    parser.add_argument("--cam-pitch-deg", type=float, default=5.0, metavar="DEG",
+                        help="Downward pitch of the camera mount in degrees (default: 5.0).")
+    parser.add_argument("--cam-y-fwd", type=float, default=0.30, metavar="M",
+                        help="Camera forward offset along robot Y axis in metres (default: 0.30).")
+    parser.add_argument("--ekf", action="store_true",
+                        help="Enable EKF sensor fusion to combine LiDAR and camera row estimates. "
+                             "Replaces the simple weighted average with a proper Kalman filter.")
     parser.add_argument("--ros2-bridge", action="store_true",
                         help="Write scan data and nav status to /dev/shm/ every scan so the "
                              "Docker ROS2 bridge (ros2_bridge/start.sh) can publish live "

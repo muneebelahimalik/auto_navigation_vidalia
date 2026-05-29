@@ -38,6 +38,22 @@ from navigation.row_controller import PurePursuitController
 from navigation.row_perception import RowDetector, RowEstimate
 from navigation.row_safety import SafetyMonitor
 
+# Optional enhanced modules — imported lazily to keep baseline import-clean.
+try:
+    from camera.depth_to_points import DepthToPoints as _DepthToPoints
+except ImportError:
+    _DepthToPoints = None  # type: ignore
+
+try:
+    from navigation.ekf_estimator import RowEKF as _RowEKF
+except ImportError:
+    _RowEKF = None  # type: ignore
+
+try:
+    from navigation.odometry import WheelOdometry as _WheelOdometry
+except ImportError:
+    _WheelOdometry = None  # type: ignore
+
 
 class _S:
     ACQUIRE = "ACQUIRE"
@@ -84,6 +100,10 @@ class RowNavigator:
         vis_detector=None,
         depth_left=None,
         depth_right=None,
+        depth_pts_left=None,
+        depth_pts_right=None,
+        ekf=None,
+        odometry=None,
         tilt_rad: float = 0.0,
         cam_block_frames: int = 3,
         ros2_bridge: bool = False,
@@ -102,6 +122,10 @@ class RowNavigator:
         self.vis_detector = vis_detector
         self.depth_left = depth_left
         self.depth_right = depth_right
+        self.depth_pts_left = depth_pts_left
+        self.depth_pts_right = depth_pts_right
+        self.ekf = ekf
+        self.odometry = odometry
         self.tilt_rad = tilt_rad
         self.cam_block_frames = cam_block_frames
         self.ros2_bridge = ros2_bridge
@@ -182,18 +206,46 @@ class RowNavigator:
                     pts = tilt_correct_pts(pts, self.tilt_rad)
 
             est = self.detector.update(pts)
-            safety = self.safety.check(pts)
 
-            if self.vis_detector is not None:
+            # --- Camera integration ---
+            vis_est = None
+            frame_l = frame_r = dep_l = dep_r = None
+            if self.vis_detector is not None or self.depth_pts_left is not None or self.depth_pts_right is not None:
                 frame_l = self.left_cam.get_latest() if self.left_cam is not None else None
                 frame_r = self.right_cam.get_latest() if self.right_cam is not None else None
-                rgb_l = frame_l.rgb if frame_l is not None else None
                 dep_l = frame_l.depth if frame_l is not None else None
-                rgb_r = frame_r.rgb if frame_r is not None else None
                 dep_r = frame_r.depth if frame_r is not None else None
-                vis_est = self.vis_detector.update(rgb_l, dep_l, rgb_r, dep_r)
-                est = self._fuse_estimates(est, vis_est)
+                rgb_l = frame_l.rgb if frame_l is not None else None
+                rgb_r = frame_r.rgb if frame_r is not None else None
 
+                if self.vis_detector is not None:
+                    vis_est = self.vis_detector.update(rgb_l, dep_l, rgb_r, dep_r)
+
+            # --- 3-D camera depth cloud: fill LiDAR blind zone ---
+            # Projects depth images to 3D, merges with LiDAR cloud so that
+            # SafetyMonitor.check() sees obstacles the LiDAR misses at < 1.5 m.
+            safety_pts = pts
+            if self.depth_pts_left is not None or self.depth_pts_right is not None:
+                cam_clouds = []
+                if self.depth_pts_left is not None and dep_l is not None:
+                    cl = self.depth_pts_left.project(dep_l)
+                    if len(cl):
+                        cam_clouds.append(cl)
+                if self.depth_pts_right is not None and dep_r is not None:
+                    cr = self.depth_pts_right.project(dep_r)
+                    if len(cr):
+                        cam_clouds.append(cr)
+                if cam_clouds:
+                    merged = np.vstack(cam_clouds)
+                    safety_pts = (np.vstack([pts, merged]) if len(pts) else merged)
+
+            safety = self.safety.check(safety_pts)
+
+            # --- Legacy strip-based camera obstacle detection ---
+            # Only runs when old DepthObstacleDetector objects are provided AND
+            # the new 3D path is NOT active (backward compatibility).
+            if (self.depth_pts_left is None and self.depth_pts_right is None
+                    and self.vis_detector is not None):
                 cam_raw_blocked = False
                 cam_raw_reason = ""
                 if self.depth_left is not None:
@@ -201,7 +253,6 @@ class RowNavigator:
                     if ds_l.blocked:
                         cam_raw_blocked = True
                         cam_raw_reason = ds_l.reason()
-
                 if self.depth_right is not None:
                     ds_r = self.depth_right.check(dep_r, "right")
                     if ds_r.blocked:
@@ -209,9 +260,6 @@ class RowNavigator:
                         reason_r = ds_r.reason()
                         cam_raw_reason = (cam_raw_reason + "," + reason_r
                                           if cam_raw_reason else reason_r)
-
-                # Require cam_block_frames consecutive blocked frames to avoid
-                # single-frame depth noise tripping OBSTACLE_WAIT.
                 if cam_raw_blocked:
                     self._cam_block_count += 1
                 else:
@@ -219,6 +267,16 @@ class RowNavigator:
                 if self._cam_block_count >= self.cam_block_frames:
                     safety.cam_blocked = True
                     safety.cam_reason = cam_raw_reason
+
+            # --- Sensor fusion: EKF or weighted average ---
+            if self.ekf is not None:
+                self.ekf.predict()
+                self.ekf.update_lidar(est)
+                if vis_est is not None:
+                    self.ekf.update_camera(vis_est)
+                est = self.ekf.to_estimate(est)
+            elif vis_est is not None:
+                est = self._fuse_estimates(est, vis_est)
 
             linear, angular = self._step(est, safety, dt)
             self.cmd = (linear, angular)
@@ -284,7 +342,10 @@ class RowNavigator:
             return 0.0, 0.0
 
         linear, angular = self.controller.compute(est)
-        self._row_dist += linear * dt
+        if self.odometry is not None:
+            self._row_dist += abs(self.odometry.tick(linear, angular, dt))
+        else:
+            self._row_dist += linear * dt
         return linear, angular
 
     def _step_obstacle(self, safety) -> tuple[float, float]:
@@ -341,6 +402,8 @@ class RowNavigator:
     def _enter(self, state: str) -> None:
         if state != self.state:
             print(f"\n[navigator] {self.state} -> {state}")
+            if state == _S.ACQUIRE and self.ekf is not None:
+                self.ekf.reset()
         self.state = state
 
     async def _drive(self, linear: float, angular: float) -> None:
@@ -403,7 +466,16 @@ class RowNavigator:
 
     def _print_status(self, est, safety, linear: float, angular: float) -> None:
         cam_active = self.vis_detector is not None
-        mode = ("AUTO" if self.auto else "PERC") + ("+CAM" if cam_active else "")
+        depth3d = self.depth_pts_left is not None or self.depth_pts_right is not None
+        ekf_active = self.ekf is not None
+        suffix = ""
+        if cam_active:
+            suffix += "+CAM"
+        if depth3d:
+            suffix += "+3D"
+        if ekf_active:
+            suffix += "+EKF"
+        mode = ("AUTO" if self.auto else "PERC") + suffix
         deg = math.degrees(est.heading_error)
         line = (
             f"\r[{mode}] {self.state:11s} | "
