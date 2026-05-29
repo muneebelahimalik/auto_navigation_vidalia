@@ -7,6 +7,13 @@
 # /var/lib/docker is mounted on the NVMe and PERSISTS across reboots.
 # Building this image once means it is always available — no reinstall needed.
 #
+# BASE IMAGE: dustynv/ros:foxy-ros-base-l4t-r35.2.1
+# --------------------------------------------------
+# L4T-optimised build for Jetson Xavier NX (L4T R35.2.1 / Jetpack 5.1).
+# Matches the Amiga Brain kernel (linux-tegra 5.10.104, aarch64, Ubuntu 20.04).
+# Uses --runtime nvidia to enable the Jetson NVIDIA container runtime.
+# (Same approach as farm-ng's official amiga-ros-bridge Docker setup.)
+#
 # WHAT RUNS INSIDE
 # ----------------
 #   vidalia_node.py    reads /dev/shm/ written by row_follow.py --ros2-bridge,
@@ -72,6 +79,7 @@ echo ""
 
 docker run --rm \
     --name "$CONTAINER_NAME" \
+    --runtime nvidia \
     --net=host \
     -v /dev/shm:/dev/shm \
     -p "${FOXGLOVE_PORT}:${FOXGLOVE_PORT}" \

@@ -1,4 +1,7 @@
-FROM osrf/ros:foxy-ros-base
+# L4T-optimised ROS2 Foxy base for Jetson Xavier NX — L4T R35.2.1 / Jetpack 5.1
+# Matches the farm-ng Amiga Brain kernel (linux-tegra 5.10.104, aarch64).
+# /var/lib/docker lives on NVMe → image persists across reboots.
+FROM dustynv/ros:foxy-ros-base-l4t-r35.2.1
 
 # Install bridge node deps + Foxglove WebSocket bridge for browser visualisation.
 # ros-foxy-foxglove-bridge exposes all ROS2 topics over WebSocket on port 8765.

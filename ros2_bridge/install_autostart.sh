@@ -31,6 +31,7 @@ WorkingDirectory=${REPO_ROOT}
 ExecStartPre=/usr/bin/docker rm -f vidalia_bridge || true
 ExecStart=/usr/bin/docker run --rm \\
     --name vidalia_bridge \\
+    --runtime nvidia \\
     --net=host \\
     -v /dev/shm:/dev/shm \\
     -p 8765:8765 \\
