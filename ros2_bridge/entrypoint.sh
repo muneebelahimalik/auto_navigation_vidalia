@@ -85,9 +85,7 @@ sleep 3
 echo "  x11vnc ready."
 
 echo "[5/5] Starting noVNC web server on port 6080..."
-# --web-index redirects bare '/' to vnc.html so the user doesn't see a directory listing.
-websockify --web=/usr/share/novnc/ --wrap-mode=ignore \
-           --index-file=vnc.html 6080 localhost:$VNC_PORT &
+websockify --web=/usr/share/novnc/ --wrap-mode=ignore 6080 localhost:$VNC_PORT &
 NOVNC_PID=$!
 
 echo ""
