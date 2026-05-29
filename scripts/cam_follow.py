@@ -142,6 +142,7 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
         acquire_conf=args.acquire_conf,
         acquire_green=args.acquire_green,
         poll_hz=float(args.fps) * 2,
+        cam_block_frames=args.cam_block_frames,
     )
     nav_ref.append(navigator)
 
@@ -233,6 +234,9 @@ def main() -> None:
                         help="Camera lateral offset from robot centreline (default: 0.915)")
     parser.add_argument("--cam-stop-dist", type=float, default=2.5, metavar="M",
                         help="Depth obstacle stop distance in metres (default: 2.5)")
+    parser.add_argument("--cam-block-frames", type=int, default=3, metavar="N",
+                        help="Consecutive camera-blocked frames required to trigger "
+                             "OBSTACLE_WAIT (default: 3)")
     parser.add_argument("--acquire-conf", type=float, default=0.20, metavar="F",
                         help="Min visual confidence to leave ACQUIRE (default: 0.20)")
     parser.add_argument("--acquire-green", type=float, default=0.08, metavar="F",

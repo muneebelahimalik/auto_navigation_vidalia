@@ -87,6 +87,7 @@ class CamRowNavigator:
         headland_speed: float = 0.10,
         headland_turn_rate: float = 0.25,
         poll_hz: float = 20.0,
+        cam_block_frames: int = 3,
     ) -> None:
         self.canbus = canbus
         self.left_cam = left_cam
@@ -120,6 +121,8 @@ class CamRowNavigator:
         self._row_dist = 0.0
         self._rows_done = 0
         self._obstacle_clear_t: Optional[float] = None
+        self.cam_block_frames = cam_block_frames
+        self._cam_block_count: int = 0
         self._hl_progress = 0.0
         self._turn_sign = 1.0
         self._t_prev = time.monotonic()
@@ -158,20 +161,26 @@ class CamRowNavigator:
 
     # ------------------------------------------------------------------
     def _depth_check(self, dep_l, dep_r):
-        """Check both depth cameras; return (blocked, reason_str)."""
-        blocked = False
+        """Check both depth cameras; return (blocked, reason_str) with debounce."""
+        raw_blocked = False
         reason = ""
         if self.depth_left is not None:
             ds = self.depth_left.check(dep_l, "left")
             if ds.blocked:
-                blocked = True
+                raw_blocked = True
                 reason = ds.reason()
         if self.depth_right is not None:
             ds = self.depth_right.check(dep_r, "right")
             if ds.blocked:
-                blocked = True
+                raw_blocked = True
                 r = ds.reason()
                 reason = (reason + "," + r) if reason else r
+
+        if raw_blocked:
+            self._cam_block_count += 1
+        else:
+            self._cam_block_count = 0
+        blocked = self._cam_block_count >= self.cam_block_frames
         return blocked, reason
 
     # ------------------------------------------------------------------

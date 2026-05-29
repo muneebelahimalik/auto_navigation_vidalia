@@ -82,6 +82,7 @@ class RowNavigator:
         depth_left=None,
         depth_right=None,
         tilt_rad: float = 0.0,
+        cam_block_frames: int = 3,
     ) -> None:
         self.canbus = canbus
         self.detector = detector
@@ -98,6 +99,7 @@ class RowNavigator:
         self.depth_left = depth_left
         self.depth_right = depth_right
         self.tilt_rad = tilt_rad
+        self.cam_block_frames = cam_block_frames
 
         self.acquire_conf = acquire_conf
         self.acquire_frames = acquire_frames
@@ -118,6 +120,7 @@ class RowNavigator:
         self._row_dist = 0.0
         self._rows_done = 0
         self._obstacle_clear_t: Optional[float] = None
+        self._cam_block_count: int = 0
         self._hl_progress = 0.0
         self._turn_sign = 1.0
         self._t_prev = time.monotonic()
@@ -186,21 +189,31 @@ class RowNavigator:
                 vis_est = self.vis_detector.update(rgb_l, dep_l, rgb_r, dep_r)
                 est = self._fuse_estimates(est, vis_est)
 
+                cam_raw_blocked = False
+                cam_raw_reason = ""
                 if self.depth_left is not None:
                     ds_l = self.depth_left.check(dep_l, "left")
                     if ds_l.blocked:
-                        safety.cam_blocked = True
-                        safety.cam_reason = ds_l.reason()
+                        cam_raw_blocked = True
+                        cam_raw_reason = ds_l.reason()
 
                 if self.depth_right is not None:
                     ds_r = self.depth_right.check(dep_r, "right")
                     if ds_r.blocked:
-                        safety.cam_blocked = True
+                        cam_raw_blocked = True
                         reason_r = ds_r.reason()
-                        if safety.cam_reason:
-                            safety.cam_reason = safety.cam_reason + "," + reason_r
-                        else:
-                            safety.cam_reason = reason_r
+                        cam_raw_reason = (cam_raw_reason + "," + reason_r
+                                          if cam_raw_reason else reason_r)
+
+                # Require cam_block_frames consecutive blocked frames to avoid
+                # single-frame depth noise tripping OBSTACLE_WAIT.
+                if cam_raw_blocked:
+                    self._cam_block_count += 1
+                else:
+                    self._cam_block_count = 0
+                if self._cam_block_count >= self.cam_block_frames:
+                    safety.cam_blocked = True
+                    safety.cam_reason = cam_raw_reason
 
             linear, angular = self._step(est, safety, dt)
             self.cmd = (linear, angular)

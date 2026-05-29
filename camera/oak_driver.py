@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from dataclasses import dataclass
 from typing import Optional
@@ -79,6 +80,7 @@ class OakDriver:
         self._depth: Optional[np.ndarray] = None
         self._rgb_ts: float = 0.0
         self._depth_ts: float = 0.0
+        self._not_found_logged = False
 
     def get_latest(self) -> Optional[CameraFrame]:
         return self._latest
@@ -87,6 +89,10 @@ class OakDriver:
         if not _FARMNG_OK or not _CV2_OK:
             return
         self._running = True
+        # Suppress repeated gRPC NOT_FOUND warnings that the farm-ng EventClient
+        # retry loop emits when a named sub-service (e.g. oak1) is not registered
+        # on amiga_service.  We print a one-time message from our own handler.
+        logging.getLogger("oak/client").setLevel(logging.ERROR)
         try:
             await asyncio.gather(
                 self._subscribe_rgb(),
@@ -101,6 +107,11 @@ class OakDriver:
     def _client(self) -> "EventClient":
         cfg = EventServiceConfig(name="oak", host=_OAK_HOST, port=_OAK_PORT)
         return EventClient(cfg)
+
+    def _is_not_found(self, exc: Exception) -> bool:
+        """True if exc is a gRPC NOT_FOUND ('no matching topics') error."""
+        s = str(exc)
+        return "NOT_FOUND" in s or "no matching topics" in s
 
     async def _subscribe_rgb(self) -> None:
         req = SubscribeRequest(
@@ -120,6 +131,11 @@ class OakDriver:
             pass
         except Exception as exc:
             if self._running:
+                if self._is_not_found(exc):
+                    if not self._not_found_logged:
+                        self._not_found_logged = True
+                        print(f"\n[oak_driver:{self.side}] service '{self.service_name}' not available — camera offline")
+                    return  # don't retry
                 print(f"\n[oak_driver:{self.side}] RGB stream error: {exc}")
 
     async def _subscribe_disparity(self) -> None:
@@ -140,6 +156,11 @@ class OakDriver:
             pass
         except Exception as exc:
             if self._running:
+                if self._is_not_found(exc):
+                    if not self._not_found_logged:
+                        self._not_found_logged = True
+                        print(f"\n[oak_driver:{self.side}] service '{self.service_name}' not available — camera offline")
+                    return  # don't retry
                 print(f"\n[oak_driver:{self.side}] disparity stream error: {exc}")
 
     def _merge(self) -> None:

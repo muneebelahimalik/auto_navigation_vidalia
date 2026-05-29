@@ -304,6 +304,7 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
         depth_left=depth_left,
         depth_right=depth_right,
         tilt_rad=_math.radians(args.lidar_tilt),
+        cam_block_frames=args.cam_block_frames,
     )
     nav_ref.append(navigator)
 
@@ -411,6 +412,10 @@ def main() -> None:
                         help="Camera lateral offset from centreline (default: 0.915)")
     parser.add_argument("--cam-stop-dist", type=float, default=2.5, metavar="M",
                         help="Camera depth obstacle stop distance in metres (default: 2.5)")
+    parser.add_argument("--cam-block-frames", type=int, default=3, metavar="N",
+                        help="Consecutive camera-blocked frames required to trigger "
+                             "OBSTACLE_WAIT (default: 3). Raise to reduce false positives "
+                             "from depth noise or sparse crop returns.")
     args = parser.parse_args()
 
     nav_ref: list = []
