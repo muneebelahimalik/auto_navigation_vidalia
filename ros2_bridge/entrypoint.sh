@@ -9,8 +9,10 @@
 #   https://app.foxglove.dev
 #   → Open connection → Rosbridge WebSocket → ws://<amiga-ip>:8765
 
-set -euo pipefail
+set -eo pipefail
 
+# ROS setup scripts reference optional env vars (e.g. AMENT_TRACE_SETUP_FILES)
+# that are not always exported; -u (unbound variable) would abort the script.
 source /opt/ros/foxy/setup.bash
 
 # Start our navigation bridge node in the background

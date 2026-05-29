@@ -34,7 +34,6 @@ ExecStart=/usr/bin/docker run --rm \\
     --runtime nvidia \\
     --net=host \\
     -v /dev/shm:/dev/shm \\
-    -p 8765:8765 \\
     -e ROS_DOMAIN_ID=42 \\
     vidalia-ros2-foxy
 ExecStop=/usr/bin/docker rm -f vidalia_bridge || true

@@ -82,6 +82,5 @@ docker run --rm \
     --runtime nvidia \
     --net=host \
     -v /dev/shm:/dev/shm \
-    -p "${FOXGLOVE_PORT}:${FOXGLOVE_PORT}" \
     -e ROS_DOMAIN_ID="$ROS_DOMAIN_ID" \
     "$IMAGE_NAME"
