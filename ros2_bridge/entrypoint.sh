@@ -73,9 +73,19 @@ sleep 2
 
 echo "[4/5] Starting VNC server (x11vnc :99 → port $VNC_PORT)..."
 x11vnc -display :99 -forever -nopw -rfbport $VNC_PORT \
-       -noxdamage -noxrecord -quiet &
+       -noxdamage -noxrecord &
 VNC_PID=$!
-sleep 1
+
+# Wait until x11vnc is actually accepting TCP connections (up to 15 s).
+for i in $(seq 1 30); do
+    nc -z localhost $VNC_PORT 2>/dev/null && break
+    sleep 0.5
+done
+if ! nc -z localhost $VNC_PORT 2>/dev/null; then
+    echo "[ERROR] x11vnc failed to bind to port $VNC_PORT after 15 s — exiting."
+    exit 1
+fi
+echo "  x11vnc ready."
 
 echo "[5/5] Starting noVNC web server on port 6080..."
 websockify --web=/usr/share/novnc/ --wrap-mode=ignore 6080 localhost:$VNC_PORT &
