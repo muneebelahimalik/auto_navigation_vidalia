@@ -76,17 +76,12 @@ x11vnc -display :99 -forever -nopw -rfbport $VNC_PORT \
        -noxdamage -noxrecord &
 VNC_PID=$!
 
-# Wait until x11vnc is accepting TCP connections (up to 15 s).
-# Uses bash /dev/tcp — no nc/netcat dependency.
-VNC_READY=0
-for i in $(seq 1 30); do
-    (echo >/dev/tcp/localhost/$VNC_PORT) 2>/dev/null && { VNC_READY=1; break; }
-    sleep 0.5
-done
-if [ $VNC_READY -eq 0 ]; then
-    echo "[ERROR] x11vnc failed to bind to port $VNC_PORT after 15 s — exiting."
-    exit 1
-fi
+# Wait for x11vnc to finish initialising.
+# DO NOT use /dev/tcp or nc to probe — they open a raw TCP connection
+# that x11vnc treats as a VNC client, corrupting its handshake state.
+# x11vnc logs "PORT=NNNN" and the screen setup within ~1 s of starting;
+# a 3-second sleep is more than sufficient.
+sleep 3
 echo "  x11vnc ready."
 
 echo "[5/5] Starting noVNC web server on port 6080..."
