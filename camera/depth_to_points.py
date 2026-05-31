@@ -104,10 +104,10 @@ class DepthToPoints:
         cam_pitch: float = 0.0,
         subsample: int = 4,
         y_max: float = 3.0,
-        fx: float = _DEFAULT_FX,
-        fy: float = _DEFAULT_FY,
-        cx: float = _DEFAULT_CX,
-        cy: float = _DEFAULT_CY,
+        fx: Optional[float] = None,
+        fy: Optional[float] = None,
+        cx: Optional[float] = None,
+        cy: Optional[float] = None,
     ) -> None:
         self.cam_x = cam_x
         self.cam_y_fwd = cam_y_fwd
@@ -115,11 +115,15 @@ class DepthToPoints:
         self.subsample = max(1, subsample)
         self.y_max = y_max
 
-        # Intrinsics — use device calibration values if known, else defaults.
-        self._fx = fx
-        self._fy = fy
-        self._cx = cx
-        self._cy = cy
+        # When all four intrinsics are None (default), _build_grid auto-scales
+        # from the 640×400 defaults proportionally to whatever frame size the
+        # camera actually delivers.  Pass explicit values to override (e.g. when
+        # you have calibration data from the device).
+        self._user_intrinsics = not (fx is None and fy is None and cx is None and cy is None)
+        self._fx = fx if fx is not None else _DEFAULT_FX
+        self._fy = fy if fy is not None else _DEFAULT_FY
+        self._cx = cx if cx is not None else _DEFAULT_CX
+        self._cy = cy if cy is not None else _DEFAULT_CY
 
         # Full rotation: Rz(yaw) @ Rx(-pitch) @ R_opt2body
         # Rx(-pitch) because "positive pitch = camera tilts nose-down" means
@@ -143,23 +147,28 @@ class DepthToPoints:
     def _build_grid(self, h: int, w: int) -> None:
         if self._grid_hw == (h, w):
             return
-        # Warn once if frame size differs from the calibration assumption so the
-        # operator knows to supply correct fx/fy/cx/cy values.
-        if (w != _DEFAULT_W or h != _DEFAULT_H) and self._grid_hw is None:
-            print(
-                f"[depth_to_points] frame {w}×{h} differs from assumed "
-                f"{_DEFAULT_W}×{_DEFAULT_H}. "
-                f"Using fx={self._fx:.1f} fy={self._fy:.1f} "
-                f"cx={self._cx:.1f} cy={self._cy:.1f}. "
-                "Pass calibrated intrinsics for accurate 3-D projection."
-            )
+        if self._user_intrinsics:
+            fx, fy, cx, cy = self._fx, self._fy, self._cx, self._cy
+        else:
+            scale_x = w / _DEFAULT_W
+            scale_y = h / _DEFAULT_H
+            fx = self._fx * scale_x
+            fy = self._fy * scale_y
+            cx = self._cx * scale_x
+            cy = self._cy * scale_y
+            if self._grid_hw is None and (scale_x != 1.0 or scale_y != 1.0):
+                print(
+                    f"[depth_to_points] Auto-scaled intrinsics for {w}×{h}: "
+                    f"fx={fx:.0f} fy={fy:.0f} cx={cx:.0f} cy={cy:.0f}. "
+                    "Pass calibrated fx/fy/cx/cy for higher accuracy."
+                )
         us = np.arange(w, dtype=np.float64)
         vs = np.arange(h, dtype=np.float64)
         uu, vv = np.meshgrid(us, vs)   # (H, W)
         # Unit direction in camera optical frame (z=1 forward plane):
         #   x_cam = (u - cx) / fx,  y_cam = (v - cy) / fy,  z_cam = 1.0
-        x_dir = (uu - self._cx) / self._fx
-        y_dir = (vv - self._cy) / self._fy
+        x_dir = (uu - cx) / fx
+        y_dir = (vv - cy) / fy
         z_dir = np.ones_like(x_dir)
         self._dirs = np.stack([x_dir, y_dir, z_dir], axis=-1)  # (H, W, 3)
         self._grid_hw = (h, w)

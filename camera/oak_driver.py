@@ -83,6 +83,7 @@ class OakDriver:
         self._depth_ts: float = 0.0
         self._not_found_logged = False
         self._intrinsics_logged = False
+        self._disparity_logged = False
 
     def get_latest(self) -> Optional[CameraFrame]:
         return self._latest
@@ -162,6 +163,10 @@ class OakDriver:
                     break
                 img = _decode_image(msg.image_data)
                 if img is not None:
+                    if not self._disparity_logged:
+                        self._disparity_logged = True
+                        dh, dw = img.shape[:2]
+                        print(f"[oak_driver:{self.side}] first disparity frame: {dw}×{dh}")
                     self._depth = _disp_to_depth_mm(img)
                     self._depth_ts = time.monotonic()
                     self._merge()
