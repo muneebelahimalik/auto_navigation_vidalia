@@ -46,7 +46,7 @@ from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 from builtin_interfaces.msg import Time as RosTime
 from geometry_msgs.msg import Point as RosPoint
 from geometry_msgs.msg import Twist, TransformStamped, Quaternion
-from sensor_msgs.msg import PointCloud2, PointField
+from sensor_msgs.msg import Image as RosImage, PointCloud2, PointField
 from std_msgs.msg import Header, ColorRGBA
 from tf2_ros import StaticTransformBroadcaster
 from visualization_msgs.msg import Marker, MarkerArray
@@ -54,9 +54,12 @@ from visualization_msgs.msg import Marker, MarkerArray
 # ---------------------------------------------------------------------------
 # Shared-memory paths (same as row_follow.py --ros2-bridge writes)
 # ---------------------------------------------------------------------------
-SHM_PTS     = "/dev/shm/vidalia_pts.bin"
-SHM_CAM_PTS = "/dev/shm/vidalia_cam_pts.bin"
-SHM_STATUS  = "/dev/shm/vidalia_status.json"
+SHM_PTS       = "/dev/shm/vidalia_pts.bin"
+SHM_LIDAR_PTS = "/dev/shm/vidalia_lidar_pts.bin"
+SHM_CAM_PTS   = "/dev/shm/vidalia_cam_pts.bin"
+SHM_STATUS    = "/dev/shm/vidalia_status.json"
+SHM_IMG_LEFT  = "/dev/shm/vidalia_img_left.bin"
+SHM_IMG_RIGHT = "/dev/shm/vidalia_img_right.bin"
 
 # ---------------------------------------------------------------------------
 # Geometry constants (must match CLAUDE.md)
@@ -203,6 +206,38 @@ def _box_rect_pts(
     ]
 
 
+def _read_shm_bgr(path: str):
+    """Read a BGR image written by row_navigator._write_shm_bgr.
+    Returns HxWx3 uint8 numpy array or None on any error.
+    """
+    try:
+        with open(path, "rb") as f:
+            raw = f.read()
+    except OSError:
+        return None
+    if len(raw) < 8:
+        return None
+    h, w = struct.unpack_from("<ii", raw, 0)
+    expected = 8 + h * w * 3
+    if len(raw) < expected or h <= 0 or w <= 0:
+        return None
+    arr = np.frombuffer(raw, dtype=np.uint8, count=h * w * 3, offset=8)
+    return arr.reshape(h, w, 3)
+
+
+def _bgr_to_ros_image(bgr: np.ndarray, node: Node) -> RosImage:
+    """Convert BGR HxWx3 uint8 numpy array to sensor_msgs/Image."""
+    msg = RosImage()
+    msg.header = _header(node, "base_link")
+    msg.height = bgr.shape[0]
+    msg.width  = bgr.shape[1]
+    msg.encoding = "bgr8"
+    msg.is_bigendian = False
+    msg.step = bgr.shape[1] * 3
+    msg.data = bgr.tobytes()
+    return msg
+
+
 # ---------------------------------------------------------------------------
 # Main node
 # ---------------------------------------------------------------------------
@@ -217,24 +252,32 @@ class VidaliaBridgeNode(Node):
             depth=10,
         )
 
-        self._pc_pub      = self.create_publisher(PointCloud2, "/velodyne_points",  reliable_qos)
-        self._cam_pub     = self.create_publisher(PointCloud2, "/camera_points",    reliable_qos)
-        self._row_pub     = self.create_publisher(MarkerArray, "/row_viz",           reliable_qos)
-        self._safety_pub  = self.create_publisher(MarkerArray, "/safety_viz",        reliable_qos)
-        self._nstatus_pub = self.create_publisher(MarkerArray, "/nav_status_viz",    reliable_qos)
-        self._vel_pub     = self.create_publisher(Twist,       "/cmd_vel",           reliable_qos)
+        self._pc_pub       = self.create_publisher(PointCloud2, "/velodyne_points",   reliable_qos)
+        self._lidar_pub    = self.create_publisher(PointCloud2, "/lidar_points",     reliable_qos)
+        self._cam_pub      = self.create_publisher(PointCloud2, "/camera_points",    reliable_qos)
+        self._row_pub      = self.create_publisher(MarkerArray, "/row_viz",          reliable_qos)
+        self._safety_pub   = self.create_publisher(MarkerArray, "/safety_viz",       reliable_qos)
+        self._nstatus_pub  = self.create_publisher(MarkerArray, "/nav_status_viz",   reliable_qos)
+        self._vel_pub      = self.create_publisher(Twist,       "/cmd_vel",          reliable_qos)
+        self._img_left_pub = self.create_publisher(RosImage,    "/camera_left/image",  reliable_qos)
+        self._img_right_pub= self.create_publisher(RosImage,    "/camera_right/image", reliable_qos)
 
         self._tf_static  = StaticTransformBroadcaster(self)
         self._publish_tf_static()
 
-        self._timer       = self.create_timer(1.0 / 12.0, self._poll_shm)
-        self._last_pts_t  = 0.0
-        self._last_cam_t  = 0.0
-        self._last_stat_t = 0.0
+        self._timer          = self.create_timer(1.0 / 12.0, self._poll_shm)
+        self._last_pts_t     = 0.0
+        self._last_lidar_t   = 0.0
+        self._last_cam_t     = 0.0
+        self._last_stat_t    = 0.0
+        self._last_img_left_t  = 0.0
+        self._last_img_right_t = 0.0
 
         self.get_logger().info(
             "Vidalia ROS2 bridge started — waiting for /dev/shm/ data …\n"
-            "  Topics: /velodyne_points  /row_viz  /safety_viz  /nav_status_viz  /cmd_vel"
+            "  LiDAR  : /lidar_points (LiDAR only)  /velodyne_points (fused)\n"
+            "  Camera : /camera_points (depth 3D)  /camera_left/image  /camera_right/image\n"
+            "  Nav    : /row_viz  /safety_viz  /nav_status_viz  /cmd_vel"
         )
 
     # ------------------------------------------------------------------
@@ -253,7 +296,9 @@ class VidaliaBridgeNode(Node):
     # ------------------------------------------------------------------
     def _poll_shm(self) -> None:
         self._try_publish_pts()
+        self._try_publish_lidar_pts()
         self._try_publish_cam_pts()
+        self._try_publish_cam_images()
         self._try_publish_status()
 
     # ------------------------------------------------------------------
@@ -281,6 +326,29 @@ class VidaliaBridgeNode(Node):
 
         pts = np.frombuffer(raw, dtype=np.float32, count=n * 3, offset=4).reshape(n, 3)
         self._pc_pub.publish(_make_pc2(pts.astype(np.float64), self))
+
+    # ------------------------------------------------------------------
+    def _try_publish_lidar_pts(self) -> None:
+        try:
+            mtime = os.path.getmtime(SHM_LIDAR_PTS)
+        except OSError:
+            return
+        if mtime <= self._last_lidar_t:
+            return
+        self._last_lidar_t = mtime
+        try:
+            with open(SHM_LIDAR_PTS, "rb") as f:
+                raw = f.read()
+        except OSError:
+            return
+        if len(raw) < 4:
+            return
+        n = struct.unpack_from("<i", raw, 0)[0]
+        expected = 4 + n * 3 * 4
+        if len(raw) < expected or n <= 0:
+            return
+        pts = np.frombuffer(raw, dtype=np.float32, count=n * 3, offset=4).reshape(n, 3)
+        self._lidar_pub.publish(_make_pc2(pts.astype(np.float64), self))
 
     # ------------------------------------------------------------------
     def _try_publish_cam_pts(self) -> None:
@@ -311,6 +379,23 @@ class VidaliaBridgeNode(Node):
         # intensity_override=2.0 → saturated value above the normal 0–1 height range,
         # so RViz rainbow colormap renders these points as a visually distinct orange.
         self._cam_pub.publish(_make_pc2(pts.astype(np.float64), self, intensity_override=2.0))
+
+    # ------------------------------------------------------------------
+    def _try_publish_cam_images(self) -> None:
+        for shm_path, pub, attr in (
+            (SHM_IMG_LEFT,  self._img_left_pub,  "_last_img_left_t"),
+            (SHM_IMG_RIGHT, self._img_right_pub, "_last_img_right_t"),
+        ):
+            try:
+                mtime = os.path.getmtime(shm_path)
+            except OSError:
+                continue
+            if mtime <= getattr(self, attr):
+                continue
+            setattr(self, attr, mtime)
+            bgr = _read_shm_bgr(shm_path)
+            if bgr is not None:
+                pub.publish(_bgr_to_ros_image(bgr, self))
 
     # ------------------------------------------------------------------
     def _try_publish_status(self) -> None:

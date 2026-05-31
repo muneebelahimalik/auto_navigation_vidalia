@@ -55,6 +55,19 @@ except ImportError:
     _WheelOdometry = None  # type: ignore
 
 
+def _write_shm_bgr(img: np.ndarray, path: str) -> None:
+    """Write BGR numpy HxWx3 uint8 image to shm as: int32 H, int32 W, raw bytes."""
+    try:
+        h, w = img.shape[:2]
+        raw = struct.pack("<ii", h, w) + img.astype(np.uint8).tobytes()
+        tmp = path + ".tmp"
+        with open(tmp, "wb") as f:
+            f.write(raw)
+        os.rename(tmp, path)
+    except OSError:
+        pass
+
+
 class _S:
     ACQUIRE = "ACQUIRE"
     FOLLOW = "FOLLOW"
@@ -284,7 +297,9 @@ class RowNavigator:
             await self._drive(linear, angular)
             self._print_status(est, safety, linear, angular)
             if self.ros2_bridge:
-                self._write_bridge(safety_pts, cam_cloud, est, safety, linear, angular)
+                img_l = getattr(frame_l, "rgb", None) if frame_l is not None else None
+                img_r = getattr(frame_r, "rgb", None) if frame_r is not None else None
+                self._write_bridge(pts, safety_pts, cam_cloud, est, safety, linear, angular, img_l, img_r)
 
             if self.state == _S.DONE:
                 break
@@ -448,30 +463,44 @@ class RowNavigator:
                 pass
 
     # ------------------------------------------------------------------
-    def _write_bridge(self, pts: np.ndarray, cam_pts: np.ndarray, est, safety, linear: float, angular: float) -> None:
+    def _write_bridge(
+        self,
+        lidar_pts: np.ndarray,
+        fused_pts: np.ndarray,
+        cam_pts: np.ndarray,
+        est,
+        safety,
+        linear: float,
+        angular: float,
+        img_left: Optional[np.ndarray] = None,
+        img_right: Optional[np.ndarray] = None,
+    ) -> None:
         """Write scan + nav status to /dev/shm/ for the ROS2 bridge container.
 
-        pts     : fused cloud (LiDAR + camera) — what SafetyMonitor used.
-        cam_pts : camera-only cloud — shown separately in RViz as /camera_points.
+        lidar_pts : LiDAR-only cloud (self-filtered, tilt-corrected).
+        fused_pts : LiDAR + camera merged — what SafetyMonitor used.
+        cam_pts   : camera-only 3D cloud — shown as orange /camera_points.
+        img_left  : left OAK-D BGR image (HxWx3 uint8) or None.
+        img_right : right OAK-D BGR image (HxWx3 uint8) or None.
         """
         try:
-            # --- fused point cloud (LiDAR + camera, Nx3 float32) ---
-            pts_f32 = pts.astype(np.float32)
-            n = len(pts_f32)
-            raw = struct.pack("<i", n) + pts_f32.tobytes()
-            tmp = "/dev/shm/vidalia_pts_tmp.bin"
-            with open(tmp, "wb") as f:
-                f.write(raw)
-            os.rename(tmp, "/dev/shm/vidalia_pts.bin")
+            def _write_pts(arr: np.ndarray, path: str) -> None:
+                f32 = arr.astype(np.float32)
+                raw = struct.pack("<i", len(f32)) + (f32.tobytes() if len(f32) else b"")
+                tmp = path + ".tmp"
+                with open(tmp, "wb") as fp:
+                    fp.write(raw)
+                os.rename(tmp, path)
 
-            # --- camera-only cloud (Mx3 float32, may be empty) ---
-            cam_f32 = cam_pts.astype(np.float32)
-            nc = len(cam_f32)
-            raw_c = struct.pack("<i", nc) + (cam_f32.tobytes() if nc else b"")
-            tmp_c = "/dev/shm/vidalia_cam_tmp.bin"
-            with open(tmp_c, "wb") as f:
-                f.write(raw_c)
-            os.rename(tmp_c, "/dev/shm/vidalia_cam_pts.bin")
+            _write_pts(lidar_pts, "/dev/shm/vidalia_lidar_pts.bin")
+            _write_pts(fused_pts, "/dev/shm/vidalia_pts.bin")
+            _write_pts(cam_pts,   "/dev/shm/vidalia_cam_pts.bin")
+
+            # --- camera images (BGR HxWx3 uint8) ---
+            if img_left is not None and img_left.ndim == 3:
+                _write_shm_bgr(img_left,  "/dev/shm/vidalia_img_left.bin")
+            if img_right is not None and img_right.ndim == 3:
+                _write_shm_bgr(img_right, "/dev/shm/vidalia_img_right.bin")
 
             # --- navigation status (JSON) ---
             status = {
