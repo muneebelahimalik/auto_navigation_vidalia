@@ -322,7 +322,16 @@ class RowNavigator:
 
     # ------------------------------------------------------------------
     def _step_acquire(self, est) -> tuple[float, float]:
-        self._acq_count = self._acq_count + 1 if est.confidence >= self.acquire_conf else 0
+        if self.ekf is not None:
+            # EKF-aware: once the filter absorbs ≥2 real measurements its
+            # std_lateral drops to ~0.04 m and stays below 0.08 m through
+            # predict-only (empty-scan) steps.  Raw confidence oscillates
+            # 0.70→0.35 on alternating full/empty VLP-16 scans, making the
+            # old consecutive-frame counter reset indefinitely.
+            frame_ok = self.ekf.converged
+        else:
+            frame_ok = est.confidence >= self.acquire_conf
+        self._acq_count = self._acq_count + 1 if frame_ok else 0
         if self._acq_count >= self.acquire_frames:
             self._enter(_S.FOLLOW)
             self._row_dist = 0.0
@@ -490,11 +499,15 @@ class RowNavigator:
             suffix += "+EKF"
         mode = ("AUTO" if self.auto else "PERC") + suffix
         deg = math.degrees(est.heading_error)
+        ekf_str = ""
+        if ekf_active and self.ekf is not None:
+            ekf_str = f" σ={self.ekf.std_lateral:.3f}"
+        acq_str = f" acq={self._acq_count}/{self.acquire_frames}" if self.state == _S.ACQUIRE else ""
         line = (
             f"\r[{mode}] {self.state:11s} | "
             f"hdg={deg:+5.1f}° off={est.lateral_offset:+5.2f}m "
             f"conf={est.confidence:.2f} end={est.row_end_confidence:.2f} "
-            f"n={est.n_points:4d} | "
+            f"n={est.n_points:4d}{ekf_str}{acq_str} | "
             f"row={self._rows_done}/{self.rows} d={self._row_dist:4.1f}m | "
             f"safe={safety.reason():14s} | "
             f"cmd v={linear:+.2f} w={angular:+.2f}   "

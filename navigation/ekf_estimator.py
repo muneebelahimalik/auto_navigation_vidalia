@@ -83,6 +83,7 @@ class RowEKF:
         self._x: np.ndarray = np.zeros(_N)
         self._P: np.ndarray = np.diag([0.20, 0.10])
         self._initialised: bool = False
+        self._real_updates: int = 0
 
     # ------------------------------------------------------------------
     def reset(self) -> None:
@@ -90,6 +91,7 @@ class RowEKF:
         self._x = np.zeros(_N)
         self._P = np.diag([0.20, 0.10])
         self._initialised = False
+        self._real_updates = 0
 
     # ------------------------------------------------------------------
     def predict(self) -> None:
@@ -98,8 +100,15 @@ class RowEKF:
 
     # ------------------------------------------------------------------
     def update_lidar(self, est: RowEstimate) -> None:
-        """LiDAR measurement update.  Skipped if confidence < 0.05."""
-        if est is None or est.confidence < 0.05:
+        """LiDAR measurement update.
+
+        Skipped when the estimate is invalid (n=0, empty scan) or confidence is
+        low.  The `valid` flag is False whenever RowDetector._decay() ran without
+        a real scan — confidence in that case is a decayed EMA phantom, not a
+        sensor measurement.  Feeding phantoms into the filter is circular and
+        inflates the update count without adding real information.
+        """
+        if est is None or not est.valid or est.confidence < 0.10:
             return
         z = np.array([est.lateral_offset, est.heading_error])
         conf2 = max(est.confidence ** 2, _CONF_EPS)
@@ -154,6 +163,18 @@ class RowEKF:
     def std_heading(self) -> float:
         return float(math.sqrt(max(0.0, float(self._P[1, 1]))))
 
+    @property
+    def converged(self) -> bool:
+        """True once the filter has absorbed ≥2 real measurements and std_lateral < 0.08 m.
+
+        With the VLP-16 alternating full/empty scan pattern, the first real scan drops
+        std_lateral from 0.45 m to ~0.057 m; the second brings it to ~0.041 m.  After
+        that, predict-only (empty) steps raise std by ≤0.015 m per scan so convergence
+        persists through multiple consecutive empty scans.  This lets ACQUIRE complete
+        reliably in ~0.3 s regardless of the alternating pattern.
+        """
+        return self._initialised and self._real_updates >= 2 and self.std_lateral < 0.08
+
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
@@ -165,6 +186,7 @@ class RowEKF:
         initialise_from: Optional[RowEstimate] = None,
     ) -> None:
         """Standard linear Kalman update with H = I."""
+        self._real_updates += 1
         if not self._initialised:
             # Seed the filter with the first valid measurement.
             self._x = z.copy()

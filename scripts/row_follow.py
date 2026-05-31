@@ -405,7 +405,10 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
             for t in cam_tasks:
                 t.cancel()
             if cam_tasks:
-                await asyncio.gather(*cam_tasks, return_exceptions=True)
+                try:
+                    await asyncio.gather(*cam_tasks, return_exceptions=True)
+                except RuntimeError:
+                    pass  # gRPC threads may call call_soon_threadsafe on a closing loop
 
 
 # ---------------------------------------------------------------------------
