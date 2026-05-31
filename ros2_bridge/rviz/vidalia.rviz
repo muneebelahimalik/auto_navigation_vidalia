@@ -149,7 +149,7 @@ Visualization Manager:
       Name: Left OAK-D
       Normalize Range: true
       Queue Size: 2
-      Topic: /camera_left/image
+      Topic: /camera_right/image
       Unreliable: false
       Value: true
 
@@ -161,7 +161,7 @@ Visualization Manager:
       Name: Right OAK-D
       Normalize Range: true
       Queue Size: 2
-      Topic: /camera_right/image
+      Topic: /camera_left/image
       Unreliable: false
       Value: true
 
