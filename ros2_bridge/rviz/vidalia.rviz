@@ -7,6 +7,7 @@ Panels:
         - /Global Options1
         - /LiDAR PointCloud1
         - /LiDAR PointCloud1/Color Transformer1
+        - /Camera Points1
         - /Row Estimate1
         - /Safety Zones1
         - /Nav Status1
@@ -78,6 +79,35 @@ Visualization Manager:
       Topic: /velodyne_points
       Use Fixed Frame: false
       Use rainbow: true
+      Value: true
+
+    - Alpha: 1
+      Autocompute Intensity Bounds: false
+      Autocompute Value Bounds:
+        Max Value: 1
+        Min Value: 0
+        Value: false
+      Axis: Z
+      Channel Name: intensity
+      Class: rviz_default_plugins/PointCloud2
+      Color: 255; 140; 0
+      Color Transformer: FlatColor
+      Decay Time: 0
+      Enabled: true
+      Invert Rainbow: false
+      Max Color: 255; 140; 0
+      Max Intensity: 2
+      Min Color: 255; 140; 0
+      Min Intensity: 0
+      Name: Camera Points
+      Position Transformer: XYZ
+      Selectable: true
+      Size (Pixels): 4
+      Size (m): 0.04
+      Style: Points
+      Topic: /camera_points
+      Use Fixed Frame: false
+      Use rainbow: false
       Value: true
 
     - Class: rviz_default_plugins/MarkerArray

@@ -54,8 +54,9 @@ from visualization_msgs.msg import Marker, MarkerArray
 # ---------------------------------------------------------------------------
 # Shared-memory paths (same as row_follow.py --ros2-bridge writes)
 # ---------------------------------------------------------------------------
-SHM_PTS    = "/dev/shm/vidalia_pts.bin"
-SHM_STATUS = "/dev/shm/vidalia_status.json"
+SHM_PTS     = "/dev/shm/vidalia_pts.bin"
+SHM_CAM_PTS = "/dev/shm/vidalia_cam_pts.bin"
+SHM_STATUS  = "/dev/shm/vidalia_status.json"
 
 # ---------------------------------------------------------------------------
 # Geometry constants (must match CLAUDE.md)
@@ -126,13 +127,22 @@ def _quat_from_rpy(roll: float, pitch: float, yaw: float) -> Quaternion:
     return q
 
 
-def _make_pc2(pts: np.ndarray, node: Node) -> PointCloud2:
-    """Convert Nx3 float64 (x,y,z) array to a PointCloud2 in velodyne frame."""
+def _make_pc2(pts: np.ndarray, node: Node, intensity_override: float = -1.0) -> PointCloud2:
+    """Convert Nx3 float64 (x,y,z) array to a PointCloud2 in base_link frame.
+
+    intensity_override >= 0: sets every point to a fixed intensity value (used
+    for the camera cloud so RViz can give it a flat colour distinct from LiDAR).
+    intensity_override < 0 (default): height-relative colour (blue→red).
+    """
     n = len(pts)
     h = (pts[:, 2] + LIDAR_MOUNT_HEIGHT).astype(np.float32)
-    h_norm = np.clip(h / H_OBS, 0.0, 1.0).astype(np.float32)
 
-    xyz = pts.astype(np.float32)
+    if intensity_override >= 0.0:
+        h_norm = np.full(n, intensity_override, dtype=np.float32)
+    else:
+        h_norm = np.clip(h / H_OBS, 0.0, 1.0).astype(np.float32)
+
+    xyz  = pts.astype(np.float32)
     data = np.hstack([xyz, h_norm[:, None]])   # Nx4 float32
     raw  = data.tobytes()
 
@@ -143,7 +153,7 @@ def _make_pc2(pts: np.ndarray, node: Node) -> PointCloud2:
         PointField(name="intensity", offset=12, datatype=PointField.FLOAT32, count=1),
     ]
     msg = PointCloud2()
-    msg.header       = _header(node, "velodyne")
+    msg.header       = _header(node, "base_link")
     msg.height       = 1
     msg.width        = n
     msg.fields       = fields
@@ -208,6 +218,7 @@ class VidaliaBridgeNode(Node):
         )
 
         self._pc_pub      = self.create_publisher(PointCloud2, "/velodyne_points",  reliable_qos)
+        self._cam_pub     = self.create_publisher(PointCloud2, "/camera_points",    reliable_qos)
         self._row_pub     = self.create_publisher(MarkerArray, "/row_viz",           reliable_qos)
         self._safety_pub  = self.create_publisher(MarkerArray, "/safety_viz",        reliable_qos)
         self._nstatus_pub = self.create_publisher(MarkerArray, "/nav_status_viz",    reliable_qos)
@@ -218,6 +229,7 @@ class VidaliaBridgeNode(Node):
 
         self._timer       = self.create_timer(1.0 / 12.0, self._poll_shm)
         self._last_pts_t  = 0.0
+        self._last_cam_t  = 0.0
         self._last_stat_t = 0.0
 
         self.get_logger().info(
@@ -241,6 +253,7 @@ class VidaliaBridgeNode(Node):
     # ------------------------------------------------------------------
     def _poll_shm(self) -> None:
         self._try_publish_pts()
+        self._try_publish_cam_pts()
         self._try_publish_status()
 
     # ------------------------------------------------------------------
@@ -268,6 +281,36 @@ class VidaliaBridgeNode(Node):
 
         pts = np.frombuffer(raw, dtype=np.float32, count=n * 3, offset=4).reshape(n, 3)
         self._pc_pub.publish(_make_pc2(pts.astype(np.float64), self))
+
+    # ------------------------------------------------------------------
+    def _try_publish_cam_pts(self) -> None:
+        try:
+            mtime = os.path.getmtime(SHM_CAM_PTS)
+        except OSError:
+            return
+        if mtime <= self._last_cam_t:
+            return
+        self._last_cam_t = mtime
+
+        try:
+            with open(SHM_CAM_PTS, "rb") as f:
+                raw = f.read()
+        except OSError:
+            return
+
+        if len(raw) < 4:
+            return
+        n = struct.unpack_from("<i", raw, 0)[0]
+        if n <= 0:
+            return
+        expected = 4 + n * 3 * 4
+        if len(raw) < expected:
+            return
+
+        pts = np.frombuffer(raw, dtype=np.float32, count=n * 3, offset=4).reshape(n, 3)
+        # intensity_override=2.0 → saturated value above the normal 0–1 height range,
+        # so RViz rainbow colormap renders these points as a visually distinct orange.
+        self._cam_pub.publish(_make_pc2(pts.astype(np.float64), self, intensity_override=2.0))
 
     # ------------------------------------------------------------------
     def _try_publish_status(self) -> None:

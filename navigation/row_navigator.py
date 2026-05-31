@@ -224,6 +224,7 @@ class RowNavigator:
             # --- 3-D camera depth cloud: fill LiDAR blind zone ---
             # Projects depth images to 3D, merges with LiDAR cloud so that
             # SafetyMonitor.check() sees obstacles the LiDAR misses at < 1.5 m.
+            cam_cloud = np.empty((0, 3), dtype=np.float32)  # camera-only, for bridge
             safety_pts = pts
             if self.depth_pts_left is not None or self.depth_pts_right is not None:
                 cam_clouds = []
@@ -236,8 +237,8 @@ class RowNavigator:
                     if len(cr):
                         cam_clouds.append(cr)
                 if cam_clouds:
-                    merged = np.vstack(cam_clouds)
-                    safety_pts = (np.vstack([pts, merged]) if len(pts) else merged)
+                    cam_cloud = np.vstack(cam_clouds)
+                    safety_pts = (np.vstack([pts, cam_cloud]) if len(pts) else cam_cloud)
 
             safety = self.safety.check(safety_pts)
 
@@ -283,7 +284,7 @@ class RowNavigator:
             await self._drive(linear, angular)
             self._print_status(est, safety, linear, angular)
             if self.ros2_bridge:
-                self._write_bridge(pts, est, safety, linear, angular)
+                self._write_bridge(safety_pts, cam_cloud, est, safety, linear, angular)
 
             if self.state == _S.DONE:
                 break
@@ -447,10 +448,14 @@ class RowNavigator:
                 pass
 
     # ------------------------------------------------------------------
-    def _write_bridge(self, pts: np.ndarray, est, safety, linear: float, angular: float) -> None:
-        """Write scan + nav status to /dev/shm/ for the ROS2 bridge container."""
+    def _write_bridge(self, pts: np.ndarray, cam_pts: np.ndarray, est, safety, linear: float, angular: float) -> None:
+        """Write scan + nav status to /dev/shm/ for the ROS2 bridge container.
+
+        pts     : fused cloud (LiDAR + camera) — what SafetyMonitor used.
+        cam_pts : camera-only cloud — shown separately in RViz as /camera_points.
+        """
         try:
-            # --- point cloud (Nx3 float32) ---
+            # --- fused point cloud (LiDAR + camera, Nx3 float32) ---
             pts_f32 = pts.astype(np.float32)
             n = len(pts_f32)
             raw = struct.pack("<i", n) + pts_f32.tobytes()
@@ -458,6 +463,15 @@ class RowNavigator:
             with open(tmp, "wb") as f:
                 f.write(raw)
             os.rename(tmp, "/dev/shm/vidalia_pts.bin")
+
+            # --- camera-only cloud (Mx3 float32, may be empty) ---
+            cam_f32 = cam_pts.astype(np.float32)
+            nc = len(cam_f32)
+            raw_c = struct.pack("<i", nc) + (cam_f32.tobytes() if nc else b"")
+            tmp_c = "/dev/shm/vidalia_cam_tmp.bin"
+            with open(tmp_c, "wb") as f:
+                f.write(raw_c)
+            os.rename(tmp_c, "/dev/shm/vidalia_cam_pts.bin")
 
             # --- navigation status (JSON) ---
             status = {
