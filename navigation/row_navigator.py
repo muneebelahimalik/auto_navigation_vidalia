@@ -476,7 +476,13 @@ class RowNavigator:
                 "nearest_forward":    float(safety.nearest_forward)
                                       if safety.nearest_forward < 99.0 else 99.0,
                 "rows_done":          int(self._rows_done),
+                "rows_total":         int(self.rows),
                 "row_dist":           float(self._row_dist),
+                "acq_count":          int(self._acq_count),
+                "acquire_frames":     int(self.acquire_frames),
+                "ekf_std_lat":        float(self.ekf.std_lateral) if self.ekf is not None else 0.0,
+                "ekf_std_hdg":        float(self.ekf.std_heading) if self.ekf is not None else 0.0,
+                "ekf_converged":      bool(self.ekf.converged)    if self.ekf is not None else False,
                 "ts":                 time.monotonic(),
             }
             tmp2 = "/dev/shm/vidalia_status_tmp.json"

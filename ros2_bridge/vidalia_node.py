@@ -3,16 +3,25 @@
 vidalia_node.py — ROS2 Foxy bridge for the Vidalia autonomous navigation stack.
 
 Reads scan data and navigation status written by row_follow.py to /dev/shm/,
-then publishes standard ROS2 topics so RViz2 on a laptop can visualise the
-live robot state during field operation.
+then publishes standard ROS2 topics so RViz2 can visualise the live robot state
+during field operation.
 
 Topics published
 ----------------
-/velodyne_points      sensor_msgs/PointCloud2       Full scan @ 10 Hz
-/tf_static            (StaticTransformBroadcaster)  base_link → velodyne
-/row_viz              visualization_msgs/MarkerArray  Row estimate overlay
-/safety_viz           visualization_msgs/MarkerArray  Safety zone outlines
-/cmd_vel              geometry_msgs/Twist             Navigation commands
+/velodyne_points      sensor_msgs/PointCloud2         Full scan @ 10 Hz
+/tf_static            (StaticTransformBroadcaster)    base_link → velodyne
+/row_viz              visualization_msgs/MarkerArray   Row estimate overlay
+                        id 10 : ARROW  — row direction arrow
+                        id 11 : LINE   — lateral offset line (robot → row centre)
+                        id 12 : LINE   — row centreline  ±7 m along row direction
+                        id 13,14: LINE — EKF ±2σ uncertainty band
+/safety_viz           visualization_msgs/MarkerArray   Safety zones + robot footprint
+                        id 0–2  : safety zone rectangles (forward + L/R tire)
+                        id 30   : robot footprint rectangle
+/nav_status_viz       visualization_msgs/MarkerArray   Nav state indicators
+                        id 20 : CYLINDER  — state-coloured ground disc
+                        id 21 : TEXT      — multi-line nav state summary
+/cmd_vel              geometry_msgs/Twist              Navigation commands
 
 Shared-memory protocol (written by row_follow.py --ros2-bridge)
 ---------------------------------------------------------------
@@ -33,9 +42,10 @@ import time
 import numpy as np
 import rclpy
 from rclpy.node import Node
-from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
+from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 from builtin_interfaces.msg import Time as RosTime
-from geometry_msgs.msg import Twist, TransformStamped, Vector3, Quaternion
+from geometry_msgs.msg import Point as RosPoint
+from geometry_msgs.msg import Twist, TransformStamped, Quaternion
 from sensor_msgs.msg import PointCloud2, PointField
 from std_msgs.msg import Header, ColorRGBA
 from tf2_ros import StaticTransformBroadcaster
@@ -61,11 +71,28 @@ TIRE_TRACK     = 0.915
 TIRE_HALF_W    = 0.25
 TIRE_DIST      = 2.5
 
+# Amiga robot footprint in base_link frame (approximate)
+ROBOT_FRONT =  0.85
+ROBOT_REAR  = -0.85
+ROBOT_LEFT  = -TIRE_TRACK
+ROBOT_RIGHT =  TIRE_TRACK
+
 # Height band thresholds for point-cloud colouring in RViz (ground-relative)
 H_GROUND  = 0.0
-H_CROP_LO = 0.05
 H_CROP_HI = 0.60
 H_OBS     = 0.75
+
+# ---------------------------------------------------------------------------
+# Colour lookup — one entry per navigator state
+# ---------------------------------------------------------------------------
+_STATE_COLOR: dict[str, tuple] = {
+    "ACQUIRE":       (1.0, 0.80, 0.0,  0.9),   # amber
+    "FOLLOW":        (0.1, 0.95, 0.1,  0.9),   # green
+    "OBSTACLE_WAIT": (1.0, 0.15, 0.15, 0.9),   # red
+    "ROW_END":       (0.2, 0.55, 1.0,  0.9),   # blue
+    "DONE":          (0.7, 0.7,  0.7,  0.9),   # grey
+}
+_DEFAULT_COLOR = (0.7, 0.7, 0.7, 0.9)
 
 
 # ---------------------------------------------------------------------------
@@ -88,7 +115,6 @@ def _header(node: Node, frame: str) -> Header:
 
 
 def _quat_from_rpy(roll: float, pitch: float, yaw: float) -> Quaternion:
-    """Convert roll/pitch/yaw (rad) to a geometry_msgs Quaternion."""
     cr, sr = math.cos(roll / 2),  math.sin(roll / 2)
     cp, sp = math.cos(pitch / 2), math.sin(pitch / 2)
     cy, sy = math.cos(yaw / 2),   math.sin(yaw / 2)
@@ -103,12 +129,11 @@ def _quat_from_rpy(roll: float, pitch: float, yaw: float) -> Quaternion:
 def _make_pc2(pts: np.ndarray, node: Node) -> PointCloud2:
     """Convert Nx3 float64 (x,y,z) array to a PointCloud2 in velodyne frame."""
     n = len(pts)
-    # Add height-relative intensity for colour-by-height in RViz
     h = (pts[:, 2] + LIDAR_MOUNT_HEIGHT).astype(np.float32)
-    h_norm = np.clip((h - H_GROUND) / (H_OBS - H_GROUND), 0.0, 1.0).astype(np.float32)
+    h_norm = np.clip(h / H_OBS, 0.0, 1.0).astype(np.float32)
 
     xyz = pts.astype(np.float32)
-    data = np.hstack([xyz, h_norm[:, None]])        # Nx4 float32
+    data = np.hstack([xyz, h_norm[:, None]])   # Nx4 float32
     raw  = data.tobytes()
 
     fields = [
@@ -118,49 +143,54 @@ def _make_pc2(pts: np.ndarray, node: Node) -> PointCloud2:
         PointField(name="intensity", offset=12, datatype=PointField.FLOAT32, count=1),
     ]
     msg = PointCloud2()
-    msg.header        = _header(node, "velodyne")
-    msg.height        = 1
-    msg.width         = n
-    msg.fields        = fields
-    msg.is_bigendian  = False
-    msg.point_step    = 16
-    msg.row_step      = 16 * n
-    msg.data          = raw
-    msg.is_dense      = True
+    msg.header       = _header(node, "velodyne")
+    msg.height       = 1
+    msg.width        = n
+    msg.fields       = fields
+    msg.is_bigendian = False
+    msg.point_step   = 16
+    msg.row_step     = 16 * n
+    msg.data         = raw
+    msg.is_dense     = True
     return msg
 
 
-def _make_box_marker(
-    mid_x: float, mid_y: float, half_x: float, half_y: float,
-    h_lo: float, h_hi: float,
+def _line_marker(
+    ns: str, marker_id: int,
+    pts: list, frame: str,
     r: float, g: float, b: float, a: float,
-    marker_id: int,
+    width: float,
+    lifetime_ns: int,
     node: Node,
 ) -> Marker:
-    """Return a LINE_STRIP marker outlining a rectangular zone in base_link frame."""
     m = Marker()
-    m.header      = _header(node, "base_link")
-    m.ns          = "safety"
-    m.id          = marker_id
-    m.type        = Marker.LINE_STRIP
-    m.action      = Marker.ADD
-    m.scale.x     = 0.03
-    m.color       = ColorRGBA(r=r, g=g, b=b, a=a)
-    m.lifetime.sec = 0
-    m.lifetime.nanosec = 200_000_000   # 0.2 s
-
-    # Draw a box at mid height
-    mid_z = (h_lo + h_hi) / 2.0
-    corners = [
-        (mid_x - half_x, mid_y - half_y, mid_z),
-        (mid_x + half_x, mid_y - half_y, mid_z),
-        (mid_x + half_x, mid_y + half_y, mid_z),
-        (mid_x - half_x, mid_y + half_y, mid_z),
-        (mid_x - half_x, mid_y - half_y, mid_z),  # close
-    ]
-    from geometry_msgs.msg import Point as RosPoint
-    m.points = [RosPoint(x=cx, y=cy, z=cz) for cx, cy, cz in corners]
+    m.header           = _header(node, frame)
+    m.ns               = ns
+    m.id               = marker_id
+    m.type             = Marker.LINE_STRIP
+    m.action           = Marker.ADD
+    m.scale.x          = width
+    m.color            = ColorRGBA(r=r, g=g, b=b, a=a)
+    m.lifetime.nanosec = lifetime_ns
+    m.points           = pts
     return m
+
+
+def _box_rect_pts(
+    mid_x: float, mid_y: float,
+    half_x: float, half_y: float,
+    z: float,
+) -> list:
+    """5 RosPoints forming a closed rectangle (for LINE_STRIP)."""
+    x0, x1 = mid_x - half_x, mid_x + half_x
+    y0, y1 = mid_y - half_y, mid_y + half_y
+    return [
+        RosPoint(x=x0, y=y0, z=z),
+        RosPoint(x=x1, y=y0, z=z),
+        RosPoint(x=x1, y=y1, z=z),
+        RosPoint(x=x0, y=y1, z=z),
+        RosPoint(x=x0, y=y0, z=z),
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -171,56 +201,42 @@ class VidaliaBridgeNode(Node):
     def __init__(self) -> None:
         super().__init__("vidalia_bridge")
 
-        # RELIABLE QoS matches RViz2's default subscription policy.
-        # BEST_EFFORT on the publisher causes RELIABILITY_QOS_POLICY mismatch
-        # warnings and RViz2 receives nothing.
         reliable_qos = QoSProfile(
             reliability=ReliabilityPolicy.RELIABLE,
             history=HistoryPolicy.KEEP_LAST,
             depth=10,
         )
 
-        self._pc_pub     = self.create_publisher(PointCloud2, "/velodyne_points", reliable_qos)
-        self._row_pub    = self.create_publisher(MarkerArray, "/row_viz",          reliable_qos)
-        self._safety_pub = self.create_publisher(MarkerArray, "/safety_viz",       reliable_qos)
-        self._vel_pub    = self.create_publisher(Twist,       "/cmd_vel",          reliable_qos)
+        self._pc_pub      = self.create_publisher(PointCloud2, "/velodyne_points",  reliable_qos)
+        self._row_pub     = self.create_publisher(MarkerArray, "/row_viz",           reliable_qos)
+        self._safety_pub  = self.create_publisher(MarkerArray, "/safety_viz",        reliable_qos)
+        self._nstatus_pub = self.create_publisher(MarkerArray, "/nav_status_viz",    reliable_qos)
+        self._vel_pub     = self.create_publisher(Twist,       "/cmd_vel",           reliable_qos)
 
         self._tf_static  = StaticTransformBroadcaster(self)
         self._publish_tf_static()
 
-        # Poll /dev/shm/ at 12 Hz — slightly faster than LiDAR 10 Hz so no scan is missed
-        self._timer      = self.create_timer(1.0 / 12.0, self._poll_shm)
-        self._last_pts_t = 0.0
+        self._timer       = self.create_timer(1.0 / 12.0, self._poll_shm)
+        self._last_pts_t  = 0.0
         self._last_stat_t = 0.0
 
         self.get_logger().info(
-            "Vidalia ROS2 bridge started — waiting for data in /dev/shm/ …\n"
-            f"  pts:    {SHM_PTS}\n"
-            f"  status: {SHM_STATUS}\n"
-            "  Topics: /velodyne_points /row_viz /safety_viz /cmd_vel /tf_static"
+            "Vidalia ROS2 bridge started — waiting for /dev/shm/ data …\n"
+            "  Topics: /velodyne_points  /row_viz  /safety_viz  /nav_status_viz  /cmd_vel"
         )
 
     # ------------------------------------------------------------------
     def _publish_tf_static(self) -> None:
-        """Broadcast static transform: base_link → velodyne (15° tilt, 0.959 m fwd, 0.699 m up)."""
         ts = TransformStamped()
         ts.header.stamp    = _ros_time(self)
         ts.header.frame_id = "base_link"
         ts.child_frame_id  = "velodyne"
-
         ts.transform.translation.x = LIDAR_MOUNT_X
         ts.transform.translation.y = 0.0
         ts.transform.translation.z = LIDAR_MOUNT_HEIGHT
-
-        # 15° nose-down pitch (rotation around Y in ROS frame = around X in sensor frame)
-        tilt_rad = math.radians(-LIDAR_TILT_DEG)   # negative = nose down
+        tilt_rad = math.radians(-LIDAR_TILT_DEG)
         ts.transform.rotation = _quat_from_rpy(0.0, tilt_rad, 0.0)
-
         self._tf_static.sendTransform(ts)
-        self.get_logger().info(
-            f"TF: base_link → velodyne  x={LIDAR_MOUNT_X}m  z={LIDAR_MOUNT_HEIGHT}m  "
-            f"pitch={-LIDAR_TILT_DEG}°"
-        )
 
     # ------------------------------------------------------------------
     def _poll_shm(self) -> None:
@@ -271,98 +287,204 @@ class VidaliaBridgeNode(Node):
 
         self._publish_safety_markers(st)
         self._publish_row_marker(st)
+        self._publish_nav_status_markers(st)
         self._publish_cmd_vel(st)
 
     # ------------------------------------------------------------------
     def _publish_safety_markers(self, st: dict) -> None:
-        markers = MarkerArray()
+        markers  = MarkerArray()
+        state    = st.get("state", "ACQUIRE")
+        fwd_blk  = st.get("forward_blocked",    False)
+        left_blk = st.get("left_tire_blocked",  False)
+        rgt_blk  = st.get("right_tire_blocked", False)
 
-        fwd_blocked   = st.get("forward_blocked", False)
-        left_blocked  = st.get("left_tire_blocked", False)
-        right_blocked = st.get("right_tire_blocked", False)
-        cam_blocked   = st.get("cam_blocked", False)
+        safe  = (0.2, 1.0, 0.2, 0.5)
+        block = (1.0, 0.2, 0.2, 0.8)
+        LT    = 250_000_000   # 0.25 s marker lifetime
 
-        any_blocked = fwd_blocked or left_blocked or right_blocked or cam_blocked
-        safe_col  = (0.2, 1.0, 0.2, 0.5)   # green
-        block_col = (1.0, 0.2, 0.2, 0.8)   # red
-
-        # Forward zone: centred on robot
-        fc = block_col if fwd_blocked else safe_col
-        markers.markers.append(
-            _make_box_marker(
-                0.0, FWD_DIST / 2, FWD_HALF_WIDTH, FWD_DIST / 2,
-                0.5, 1.2, *fc, 0, self
-            )
-        )
+        # Forward zone
+        fc = block if fwd_blk else safe
+        markers.markers.append(_line_marker(
+            "safety", 0,
+            _box_rect_pts(0.0, FWD_DIST / 2, FWD_HALF_WIDTH, FWD_DIST / 2, 0.85),
+            "base_link", *fc, 0.04, LT, self,
+        ))
         # Left tire zone
-        lc = block_col if left_blocked else safe_col
-        markers.markers.append(
-            _make_box_marker(
-                -(TIRE_TRACK), TIRE_DIST / 2, TIRE_HALF_W, TIRE_DIST / 2,
-                0.3, 1.0, *lc, 1, self
-            )
-        )
+        lc = block if left_blk else safe
+        markers.markers.append(_line_marker(
+            "safety", 1,
+            _box_rect_pts(-TIRE_TRACK, TIRE_DIST / 2, TIRE_HALF_W, TIRE_DIST / 2, 0.85),
+            "base_link", *lc, 0.04, LT, self,
+        ))
         # Right tire zone
-        rc = block_col if right_blocked else safe_col
-        markers.markers.append(
-            _make_box_marker(
-                TIRE_TRACK, TIRE_DIST / 2, TIRE_HALF_W, TIRE_DIST / 2,
-                0.3, 1.0, *rc, 2, self
-            )
-        )
+        rc = block if rgt_blk else safe
+        markers.markers.append(_line_marker(
+            "safety", 2,
+            _box_rect_pts(TIRE_TRACK, TIRE_DIST / 2, TIRE_HALF_W, TIRE_DIST / 2, 0.85),
+            "base_link", *rc, 0.04, LT, self,
+        ))
+
+        # Robot footprint — colored by nav state
+        sr, sg, sb, sa = _STATE_COLOR.get(state, _DEFAULT_COLOR)
+        markers.markers.append(_line_marker(
+            "robot", 30,
+            _box_rect_pts(
+                (ROBOT_LEFT + ROBOT_RIGHT) / 2,
+                (ROBOT_FRONT + ROBOT_REAR) / 2,
+                abs(ROBOT_RIGHT - ROBOT_LEFT) / 2,
+                abs(ROBOT_FRONT - ROBOT_REAR) / 2,
+                0.10,
+            ),
+            "base_link", sr, sg, sb, 0.85, 0.06, LT, self,
+        ))
+
         self._safety_pub.publish(markers)
 
     # ------------------------------------------------------------------
     def _publish_row_marker(self, st: dict) -> None:
-        offset  = st.get("lateral_offset", 0.0)
-        heading = st.get("heading_error", 0.0)
-        conf    = st.get("confidence", 0.0)
+        offset   = st.get("lateral_offset", 0.0)
+        heading  = st.get("heading_error",  0.0)
+        conf     = st.get("confidence",     0.0)
+        ekf_std  = st.get("ekf_std_lat",    0.0)
 
         if conf < 0.10:
             return
 
-        markers = MarkerArray()
+        sh, ch   = math.sin(heading), math.cos(heading)
+        K_BACK   = -2.0
+        K_FWD    =  7.0
+        LT       = 350_000_000   # 0.35 s
+        markers  = MarkerArray()
 
-        # Arrow showing the detected row direction
-        m = Marker()
-        m.header    = _header(self, "base_link")
-        m.ns        = "row"
-        m.id        = 10
-        m.type      = Marker.ARROW
-        m.action    = Marker.ADD
-        m.scale.x   = 0.06
-        m.scale.y   = 0.12
-        m.scale.z   = 0.0
-        m.color     = ColorRGBA(r=0.0, g=0.5, b=1.0, a=min(1.0, conf + 0.3))
-        m.lifetime.nanosec = 300_000_000
-
-        from geometry_msgs.msg import Point as RosPoint
-        # Arrow from robot origin → 3 m ahead along detected row direction
-        m.points = [
-            RosPoint(x=0.0, y=0.0, z=0.3),
-            RosPoint(x=math.sin(heading) * 3.0 + offset,
-                     y=math.cos(heading) * 3.0,
-                     z=0.3),
+        # Direction arrow (short — 3 m ahead)
+        arr = Marker()
+        arr.header           = _header(self, "base_link")
+        arr.ns               = "row"
+        arr.id               = 10
+        arr.type             = Marker.ARROW
+        arr.action           = Marker.ADD
+        arr.scale.x          = 0.06
+        arr.scale.y          = 0.14
+        arr.scale.z          = 0.0
+        arr.color            = ColorRGBA(r=0.0, g=0.6, b=1.0, a=min(1.0, conf + 0.3))
+        arr.lifetime.nanosec = LT
+        arr.points = [
+            RosPoint(x=0.0, y=0.0, z=0.35),
+            RosPoint(x=sh * 3.0 + offset, y=ch * 3.0, z=0.35),
         ]
-        markers.markers.append(m)
+        markers.markers.append(arr)
 
-        # Lateral offset line at crop height
-        m2 = Marker()
-        m2.header   = _header(self, "base_link")
-        m2.ns       = "row"
-        m2.id       = 11
-        m2.type     = Marker.LINE_STRIP
-        m2.action   = Marker.ADD
-        m2.scale.x  = 0.04
-        m2.color    = ColorRGBA(r=1.0, g=0.8, b=0.0, a=0.8)
-        m2.lifetime.nanosec = 300_000_000
-        m2.points   = [
-            RosPoint(x=0.0,    y=0.0, z=0.3),
-            RosPoint(x=offset, y=0.0, z=0.3),
-        ]
-        markers.markers.append(m2)
+        # Lateral offset line (robot origin → row centre at Y=0)
+        markers.markers.append(_line_marker(
+            "row", 11,
+            [RosPoint(x=0.0, y=0.0, z=0.30), RosPoint(x=offset, y=0.0, z=0.30)],
+            "base_link", 1.0, 0.85, 0.0, 0.9, 0.05, LT, self,
+        ))
+
+        # Row centreline: extends K_BACK..K_FWD metres along detected row
+        markers.markers.append(_line_marker(
+            "row", 12,
+            [
+                RosPoint(x=offset + K_BACK * sh, y=K_BACK * ch, z=0.18),
+                RosPoint(x=offset + K_FWD  * sh, y=K_FWD  * ch, z=0.18),
+            ],
+            "base_link", 0.2, 1.0, 0.2, 0.75, 0.035, LT, self,
+        ))
+
+        # EKF ±2σ uncertainty band (only when EKF is active and std is meaningful)
+        if ekf_std > 0.003:
+            for sign, mid in [(+1, 13), (-1, 14)]:
+                band_off = offset + sign * 2.0 * ekf_std
+                markers.markers.append(_line_marker(
+                    "row", mid,
+                    [
+                        RosPoint(x=band_off + K_BACK * sh, y=K_BACK * ch, z=0.18),
+                        RosPoint(x=band_off + K_FWD  * sh, y=K_FWD  * ch, z=0.18),
+                    ],
+                    "base_link", 0.2, 1.0, 0.2, 0.30, 0.015, LT, self,
+                ))
 
         self._row_pub.publish(markers)
+
+    # ------------------------------------------------------------------
+    def _publish_nav_status_markers(self, st: dict) -> None:
+        """State-coloured ground disc + multi-line text overlay above the robot."""
+        state    = st.get("state",           "ACQUIRE")
+        conf     = st.get("confidence",      0.0)
+        off      = st.get("lateral_offset",  0.0)
+        hdg      = math.degrees(st.get("heading_error", 0.0))
+        n        = st.get("n_points",        0)
+        d        = st.get("row_dist",        0.0)
+        rows_done = st.get("rows_done",      0)
+        rows_tot  = st.get("rows_total",     1)
+        ekf_std  = st.get("ekf_std_lat",     0.0)
+        ekf_conv = st.get("ekf_converged",   False)
+        acq_n    = st.get("acq_count",       0)
+        acq_f    = st.get("acquire_frames",  5)
+        fwd_blk  = st.get("forward_blocked", False)
+        cam_blk  = st.get("cam_blocked",     False)
+        nearest  = st.get("nearest_forward", 99.0)
+
+        r, g, b, a = _STATE_COLOR.get(state, _DEFAULT_COLOR)
+        LT = 400_000_000   # 0.4 s
+
+        markers = MarkerArray()
+
+        # Ground disc (shows state colour at a glance)
+        disc = Marker()
+        disc.header           = _header(self, "base_link")
+        disc.ns               = "nav_state"
+        disc.id               = 20
+        disc.type             = Marker.CYLINDER
+        disc.action           = Marker.ADD
+        disc.pose.position.z  = 0.02
+        disc.pose.orientation.w = 1.0
+        disc.scale.x          = 0.60
+        disc.scale.y          = 0.60
+        disc.scale.z          = 0.04
+        disc.color            = ColorRGBA(r=r, g=g, b=b, a=a)
+        disc.lifetime.nanosec = LT
+        markers.markers.append(disc)
+
+        # Text overlay — displayed 1.8 m above and 1.5 m behind robot
+        # so it doesn't obscure the forward view
+        if ekf_std > 0.001:
+            ekf_line = f"σ={ekf_std:.3f}m" + ("  CONV" if ekf_conv else f"  acq={acq_n}/{acq_f}")
+        else:
+            ekf_line = f"acq={acq_n}/{acq_f}"
+
+        obs_line = ""
+        if fwd_blk:
+            obs_line = f"\nFWD-BLOCKED  {nearest:.1f}m"
+        elif cam_blk:
+            obs_line = "\nCAM-BLOCKED"
+
+        text_content = (
+            f"{state}\n"
+            f"conf={conf:.2f}  off={off:+.2f}m\n"
+            f"hdg={hdg:+.1f}°  n={n}\n"
+            f"{ekf_line}\n"
+            f"d={d:.1f}m  rows={rows_done}/{rows_tot}"
+            f"{obs_line}"
+        )
+
+        txt = Marker()
+        txt.header              = _header(self, "base_link")
+        txt.ns                  = "nav_state"
+        txt.id                  = 21
+        txt.type                = Marker.TEXT_VIEW_FACING
+        txt.action              = Marker.ADD
+        txt.pose.position.x     = 0.0
+        txt.pose.position.y     = -1.8   # behind robot
+        txt.pose.position.z     = 1.8
+        txt.pose.orientation.w  = 1.0
+        txt.scale.z             = 0.20   # text height in metres
+        txt.color               = ColorRGBA(r=r, g=g, b=b, a=1.0)
+        txt.text                = text_content
+        txt.lifetime.nanosec    = LT
+        markers.markers.append(txt)
+
+        self._nstatus_pub.publish(markers)
 
     # ------------------------------------------------------------------
     def _publish_cmd_vel(self, st: dict) -> None:

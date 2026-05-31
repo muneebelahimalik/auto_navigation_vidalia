@@ -5,10 +5,11 @@ Panels:
     Property Tree Widget:
       Expanded:
         - /Global Options1
-        - /PointCloud21
-        - /PointCloud21/Color Transformer1
-        - /MarkerArray1
-        - /MarkerArray2
+        - /LiDAR PointCloud1
+        - /LiDAR PointCloud1/Color Transformer1
+        - /Row Estimate1
+        - /Safety Zones1
+        - /Nav Status1
       Splitter Ratio: 0.5
     Tree Height: 755
   - Class: rviz_common/Selection
@@ -34,10 +35,10 @@ Visualization Manager:
     - Alpha: 1
       Cell Size: 1
       Class: rviz_default_plugins/Grid
-      Color: 160; 160; 164
+      Color: 100; 100; 104
       Enabled: true
       Line Style:
-        Line Width: 0.03
+        Line Width: 0.02
         Value: Lines
       Name: Grid
       Normal Cell Count: 0
@@ -46,20 +47,21 @@ Visualization Manager:
         Y: 0
         Z: 0
       Plane: XY
-      Plane Cell Count: 20
+      Plane Cell Count: 30
       Reference Frame: base_link
       Value: true
+
     - Alpha: 1
       Autocompute Intensity Bounds: true
       Autocompute Value Bounds:
-        Max Value: 2
-        Min Value: -2
+        Max Value: 1
+        Min Value: 0
         Value: true
       Axis: Z
       Channel Name: intensity
       Class: rviz_default_plugins/PointCloud2
       Color: 255; 255; 255
-      Color Transformer: AxisColor
+      Color Transformer: Intensity
       Decay Time: 0
       Enabled: true
       Invert Rainbow: false
@@ -71,19 +73,13 @@ Visualization Manager:
       Position Transformer: XYZ
       Selectable: true
       Size (Pixels): 2
-      Size (m): 0.02
+      Size (m): 0.025
       Style: Points
       Topic: /velodyne_points
       Use Fixed Frame: false
       Use rainbow: true
       Value: true
-    - Class: rviz_default_plugins/MarkerArray
-      Enabled: true
-      Name: Safety Zones
-      Namespaces:
-        safety: true
-      Topic: /safety_viz
-      Value: true
+
     - Class: rviz_default_plugins/MarkerArray
       Enabled: true
       Name: Row Estimate
@@ -91,12 +87,30 @@ Visualization Manager:
         row: true
       Topic: /row_viz
       Value: true
+
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Name: Safety Zones
+      Namespaces:
+        safety: true
+        robot: true
+      Topic: /safety_viz
+      Value: true
+
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Name: Nav Status
+      Namespaces:
+        nav_state: true
+      Topic: /nav_status_viz
+      Value: true
+
     - Class: rviz_default_plugins/TF
       Enabled: true
       Frame Timeout: 15
       Frames:
         All Enabled: true
-      Marker Scale: 0.5
+      Marker Scale: 0.4
       Name: TF
       Show Arrows: true
       Show Axes: true
@@ -105,32 +119,10 @@ Visualization Manager:
         {}
       Update Interval: 0
       Value: true
-    - Angle Tolerance: 0.1
-      Class: rviz_default_plugins/Odometry
-      Covariance:
-        Orientation:
-          Alpha: 0.5
-          Color: 255; 255; 127
-          Color Style: Unique
-          Frame: Local
-          Offset: 1
-          Scale: 1
-          Value: false
-        Position:
-          Alpha: 0.5
-          Color: 204; 51; 204
-          Scale: 1
-          Value: false
-        Value: false
-      Enabled: false
-      Keep: 100
-      Name: Odometry
-      Position Tolerance: 0.1
-      Topic: /odom
-      Value: false
+
   Enabled: true
   Global Options:
-    Background Color: 20; 20; 20
+    Background Color: 15; 15; 20
     Fixed Frame: base_link
     Frame Rate: 15
   Name: root
@@ -157,14 +149,14 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz_default_plugins/ThirdPersonFollower
-      Distance: 8
+      Distance: 10
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.06
         Stereo Focal Distance: 1
         Swap Stereo Eyes: false
         Value: false
       Focal Point:
-        X: 0
+        X: 1.5
         Y: 0
         Z: 0
       Focal Shape Fixed Size: true
@@ -172,7 +164,7 @@ Visualization Manager:
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.01
-      Pitch: 0.8
+      Pitch: 0.65
       Target Frame: base_link
       Value: ThirdPersonFollower (rviz_default_plugins)
       Yaw: 3.14
