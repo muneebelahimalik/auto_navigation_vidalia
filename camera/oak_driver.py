@@ -67,12 +67,13 @@ class OakDriver:
 
     Subscribes to /rgb and /disparity streams from amiga_service (port 50010).
     The device_id parameter selects the oak sub-service (e.g. 'oak0', 'oak1').
-    Empty device_id defaults to 'oak0' for the left camera, 'oak1' for the right.
+    Empty device_id defaults to 'oak1' for the left camera, 'oak0' for the right
+    (oak0 is physically mounted on the right side of the Amiga).
     """
 
     def __init__(self, side: str, device_id: str = "", fps: int = 10) -> None:
         self.side = side
-        self.service_name = device_id if device_id else ("oak0" if side == "left" else "oak1")
+        self.service_name = device_id if device_id else ("oak1" if side == "left" else "oak0")
         self.fps = fps
         self._latest: Optional[CameraFrame] = None
         self._running = False
