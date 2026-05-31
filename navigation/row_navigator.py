@@ -295,11 +295,14 @@ class RowNavigator:
         """Advance the state machine one scan; return (linear, angular)."""
         st = self.state
 
-        # --- safety override: highest priority during active motion ---
-        if st in (_S.ACQUIRE, _S.FOLLOW) or st in _HEADLAND_STATES:
-            if safety.blocked and st != _S.OBSTACLE_WAIT:
+        # --- Safety override — only interrupt active motion states ---
+        # ACQUIRE: robot is always stationary (cmd=0 always); entering OBSTACLE_WAIT
+        # while stationary gains nothing and creates spurious halt cycles from
+        # intermittent depth noise or near-field camera returns.
+        # HEADLAND states: pause-in-place rather than abandon the manoeuvre.
+        if st in (_S.FOLLOW,) or st in _HEADLAND_STATES:
+            if safety.blocked:
                 if st in _HEADLAND_STATES:
-                    # pause the maneuver in place rather than abandon it
                     return 0.0, 0.0
                 self._enter(_S.OBSTACLE_WAIT)
                 self._obstacle_clear_t = None
@@ -336,7 +339,17 @@ class RowNavigator:
             self._enter(_S.ROW_END)
             return 0.0, 0.0
 
-        if est.confidence < self.controller.min_confidence:
+        # When the EKF is tracking well (small lateral uncertainty), tolerate
+        # brief LiDAR detection gaps without dropping back to ACQUIRE. VLP-16
+        # scans vary widely in point density (12k–28k) scan-to-scan; a single
+        # empty crop-band scan halves EMA confidence and without this floor the
+        # robot exits FOLLOW after just 1–2 bad scans.
+        # Threshold 0.08 m: steady-state EKF lateral std ≈ 0.055 m (well below).
+        min_conf = self.controller.min_confidence
+        if self.ekf is not None and self.ekf.std_lateral < 0.08:
+            min_conf = max(0.12, min_conf - 0.20)
+
+        if est.confidence < min_conf:
             self._enter(_S.ACQUIRE)
             self._acq_count = 0
             return 0.0, 0.0

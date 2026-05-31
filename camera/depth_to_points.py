@@ -183,8 +183,13 @@ class DepthToPoints:
         pts_robot = pts_cam_flat @ self._R.T + self._t   # (N, 3)
 
         # Apply forward-distance filter.
+        # y_min = 0.50 m: excludes the robot's own body / chassis.  The camera
+        # is at cam_y_fwd ≈ 0.30 m; depth returns at 0.10–0.40 m in the camera
+        # (within the robot body volume) project to Y ≈ 0.35–0.70 m.  Without
+        # this floor they land inside the forward safety zone and cause spurious
+        # OBSTACLE_WAIT triggers while the robot is stationary.
         y_fwd = pts_robot[:, 1]
-        fwd_valid = (y_fwd >= 0.05) & (y_fwd <= self.y_max)
+        fwd_valid = (y_fwd >= 0.50) & (y_fwd <= self.y_max)
 
         # Apply height filter: discard ground and sky.
         z_robot = pts_robot[:, 2]
