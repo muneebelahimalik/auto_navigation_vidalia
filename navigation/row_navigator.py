@@ -163,6 +163,7 @@ class RowNavigator:
         self._rows_done = 0
         self._obstacle_clear_t: Optional[float] = None
         self._cam_block_count: int = 0
+        self._cam_cloud_buf: list = []   # rolling 3-frame camera depth buffer
         self._hl_progress = 0.0
         self._turn_sign = 1.0
         self._t_prev = time.monotonic()
@@ -237,21 +238,36 @@ class RowNavigator:
             # --- 3-D camera depth cloud: fill LiDAR blind zone ---
             # Projects depth images to 3D, merges with LiDAR cloud so that
             # SafetyMonitor.check() sees obstacles the LiDAR misses at < 1.5 m.
-            cam_cloud = np.empty((0, 3), dtype=np.float32)  # camera-only, for bridge
-            safety_pts = pts
+            cam_cloud = np.empty((0, 3), dtype=np.float32)  # current frame, for bridge
             if self.depth_pts_left is not None or self.depth_pts_right is not None:
-                cam_clouds = []
+                cam_frames = []
                 if self.depth_pts_left is not None and dep_l is not None:
                     cl = self.depth_pts_left.project(dep_l)
                     if len(cl):
-                        cam_clouds.append(cl)
+                        cam_frames.append(cl)
                 if self.depth_pts_right is not None and dep_r is not None:
                     cr = self.depth_pts_right.project(dep_r)
                     if len(cr):
-                        cam_clouds.append(cr)
-                if cam_clouds:
-                    cam_cloud = np.vstack(cam_clouds)
-                    safety_pts = (np.vstack([pts, cam_cloud]) if len(pts) else cam_cloud)
+                        cam_frames.append(cr)
+                if cam_frames:
+                    cam_cloud = np.vstack(cam_frames)
+
+            # Debounce: accumulate camera cloud over a rolling 3-frame window.
+            # A single noisy depth frame can't trigger OBSTACLE_WAIT on its own
+            # — it must produce ≥ min_points across 3 consecutive scans.
+            # Mirrors cam_block_frames=3 from the legacy strip-based detector.
+            if len(cam_cloud):
+                self._cam_cloud_buf.append(cam_cloud)
+                if len(self._cam_cloud_buf) > 3:
+                    self._cam_cloud_buf.pop(0)
+            elif self._cam_cloud_buf:
+                self._cam_cloud_buf.pop(0)
+
+            cam_stable = (np.vstack(self._cam_cloud_buf)
+                          if self._cam_cloud_buf else np.empty((0, 3), dtype=np.float32))
+            safety_pts = pts
+            if len(cam_stable):
+                safety_pts = np.vstack([pts, cam_stable]) if len(pts) else cam_stable
 
             safety = self.safety.check(safety_pts)
 
@@ -284,7 +300,8 @@ class RowNavigator:
 
             # --- Sensor fusion: EKF or weighted average ---
             if self.ekf is not None:
-                self.ekf.predict()
+                prev_v, prev_w = self.cmd   # commanded last scan — best motion estimate
+                self.ekf.predict(linear_vel=prev_v, angular_vel=prev_w, dt=dt)
                 self.ekf.update_lidar(est)
                 if vis_est is not None:
                     self.ekf.update_camera(vis_est)

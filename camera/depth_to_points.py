@@ -34,12 +34,16 @@ import numpy as np
 
 from lidar.obstacle_filter import LIDAR_MOUNT_HEIGHT
 
-# OAK-D stereo intrinsics at 640×400 resolution.
-# Consistent with oak_driver.py FOCAL_PX = 452.
-_FX = 452.0
-_FY = 452.0
-_CX = 320.0
-_CY = 200.0
+# Default OAK-D stereo intrinsics at 640×400 resolution.
+# Approximate — computed from FOCAL_PX=452 in oak_driver.py calibration constants.
+# Pass actual values from device calibration via DepthToPoints(fx=..., fy=..., cx=..., cy=...)
+# if the frame size or calibration differs.
+_DEFAULT_FX = 452.0
+_DEFAULT_FY = 452.0
+_DEFAULT_CX = 320.0
+_DEFAULT_CY = 200.0
+_DEFAULT_W   = 640
+_DEFAULT_H   = 400
 
 # Depth validity window (metres in robot Y / forward direction).
 _DEPTH_MIN_M = 0.10
@@ -100,12 +104,22 @@ class DepthToPoints:
         cam_pitch: float = 0.0,
         subsample: int = 4,
         y_max: float = 3.0,
+        fx: float = _DEFAULT_FX,
+        fy: float = _DEFAULT_FY,
+        cx: float = _DEFAULT_CX,
+        cy: float = _DEFAULT_CY,
     ) -> None:
         self.cam_x = cam_x
         self.cam_y_fwd = cam_y_fwd
         self.cam_z = cam_z
         self.subsample = max(1, subsample)
         self.y_max = y_max
+
+        # Intrinsics — use device calibration values if known, else defaults.
+        self._fx = fx
+        self._fy = fy
+        self._cx = cx
+        self._cy = cy
 
         # Full rotation: Rz(yaw) @ Rx(-pitch) @ R_opt2body
         # Rx(-pitch) because "positive pitch = camera tilts nose-down" means
@@ -129,13 +143,23 @@ class DepthToPoints:
     def _build_grid(self, h: int, w: int) -> None:
         if self._grid_hw == (h, w):
             return
+        # Warn once if frame size differs from the calibration assumption so the
+        # operator knows to supply correct fx/fy/cx/cy values.
+        if (w != _DEFAULT_W or h != _DEFAULT_H) and self._grid_hw is None:
+            print(
+                f"[depth_to_points] frame {w}×{h} differs from assumed "
+                f"{_DEFAULT_W}×{_DEFAULT_H}. "
+                f"Using fx={self._fx:.1f} fy={self._fy:.1f} "
+                f"cx={self._cx:.1f} cy={self._cy:.1f}. "
+                "Pass calibrated intrinsics for accurate 3-D projection."
+            )
         us = np.arange(w, dtype=np.float64)
         vs = np.arange(h, dtype=np.float64)
         uu, vv = np.meshgrid(us, vs)   # (H, W)
         # Unit direction in camera optical frame (z=1 forward plane):
         #   x_cam = (u - cx) / fx,  y_cam = (v - cy) / fy,  z_cam = 1.0
-        x_dir = (uu - _CX) / _FX
-        y_dir = (vv - _CY) / _FY
+        x_dir = (uu - self._cx) / self._fx
+        y_dir = (vv - self._cy) / self._fy
         z_dir = np.ones_like(x_dir)
         self._dirs = np.stack([x_dir, y_dir, z_dir], axis=-1)  # (H, W, 3)
         self._grid_hw = (h, w)

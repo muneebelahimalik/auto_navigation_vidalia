@@ -94,8 +94,21 @@ class RowEKF:
         self._real_updates = 0
 
     # ------------------------------------------------------------------
-    def predict(self) -> None:
-        """Prediction step: state unchanged, covariance grows by Q."""
+    def predict(self, linear_vel: float = 0.0, angular_vel: float = 0.0, dt: float = 0.1) -> None:
+        """Prediction step: propagate state with commanded velocity, then grow covariance.
+
+        Velocity-informed model (Euler integration):
+          d(lateral_offset)/dt  ≈ −linear_vel × sin(heading_error)
+            — robot drifts across the row when misaligned
+          d(heading_error)/dt   ≈ −angular_vel
+            — robot turns reduce (or increase) misalignment with row direction
+
+        Falls back to pure Brownian-motion prediction (P += Q only) when
+        called with defaults (linear_vel=0, angular_vel=0, dt=0.1).
+        """
+        if self._initialised and dt > 0.0 and (linear_vel != 0.0 or angular_vel != 0.0):
+            self._x[0] -= linear_vel * math.sin(self._x[1]) * dt
+            self._x[1] -= angular_vel * dt
         self._P = self._P + self._Q
 
     # ------------------------------------------------------------------
@@ -117,10 +130,21 @@ class RowEKF:
 
     # ------------------------------------------------------------------
     def update_camera(self, vis_est: Optional[object]) -> None:
-        """Camera measurement update.  Safe to pass None when cameras disabled."""
+        """Camera measurement update.  Safe to pass None when cameras disabled.
+
+        Innovation gate: if the camera's lateral estimate disagrees with the
+        current filter state by more than 3σ + 0.15 m the measurement is
+        rejected as an outlier (wrong row, shadow, specular reflection).
+        This prevents a single bad camera frame from dragging the fused
+        estimate sideways while the LiDAR is between scans.
+        """
         if vis_est is None or getattr(vis_est, "confidence", 0.0) < 0.05:
             return
         z = np.array([vis_est.lateral_offset, vis_est.heading_error])
+        if self._initialised:
+            gate = 3.0 * self.std_lateral + 0.15
+            if abs(z[0] - self._x[0]) > gate:
+                return  # outlier — skip this measurement
         conf2 = max(vis_est.confidence ** 2, _CONF_EPS)
         R = self._R_cam_base / conf2
         self._kf_update(z, R)
@@ -129,15 +153,24 @@ class RowEKF:
     def to_estimate(self, lidar_est: RowEstimate) -> RowEstimate:
         """Build a RowEstimate from the current filter state.
 
-        All fields except lateral_offset and heading_error come from the
-        LiDAR estimate so metadata (n_points, row_end_confidence) is preserved.
-        The confidence is the max of LiDAR confidence and a small floor so the
-        controller always gets a valid signal when the filter has been updated.
+        Confidence is the max of the raw LiDAR confidence and an EKF-derived
+        floor based on lateral uncertainty:
+          ekf_conf = max(0, 1 − σ_lateral / 0.20)
+          → 1.0 at σ=0 m, 0.5 at σ=0.10 m, 0.0 at σ≥0.20 m
+
+        This prevents the controller from slowing down on alternating empty
+        VLP-16 scans (where LiDAR confidence halves via EMA decay) when the
+        EKF is well-converged (σ ≈ 0.04 m → ekf_conf ≈ 0.80).
         """
+        if self._initialised:
+            ekf_conf = max(0.0, 1.0 - self.std_lateral / 0.20)
+            confidence = max(float(lidar_est.confidence), ekf_conf)
+        else:
+            confidence = float(lidar_est.confidence)
         return RowEstimate(
             heading_error=float(self._x[1]),
             lateral_offset=float(self._x[0]),
-            confidence=float(lidar_est.confidence),
+            confidence=confidence,
             row_end_confidence=float(lidar_est.row_end_confidence),
             n_points=int(lidar_est.n_points),
             valid=lidar_est.valid,
