@@ -359,9 +359,9 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
     if args.camera:
         cam_mode = "OAK-D left+right"
         if args.cam_depth_3d:
-            cam_mode += f"  3D-fusion  h={args.cam_height}m yaw={args.cam_yaw_deg}° pitch={args.cam_pitch_deg}°"
+            cam_mode += f"  3D-fusion(h={args.cam_height}m yaw={args.cam_yaw_deg}° pitch={args.cam_pitch_deg}°)"
         else:
-            cam_mode += "  strip-obstacle"
+            cam_mode += "  strip-obstacle(no-height-filter)"
         cam_mode += f"  stop={args.cam_stop_dist}m"
         if args.ekf:
             cam_mode += "  EKF-fusion"
@@ -475,11 +475,14 @@ def main() -> None:
                              "from depth noise or sparse crop returns.")
 
     # --- 3-D depth fusion (Phase 1 sensor fusion) ---
-    parser.add_argument("--cam-depth-3d", action="store_true",
-                        help="Enable full 3-D depth-to-point-cloud fusion from OAK-D cameras "
-                             "(requires --camera). Merges projected depth clouds with LiDAR "
-                             "before SafetyMonitor to fill the 1.5 m blind zone. "
-                             "Replaces the legacy 1-D strip obstacle detector.")
+    parser.add_argument("--cam-depth-3d", action="store_true", default=True,
+                        help="Use full 3-D depth-to-point-cloud fusion from OAK-D cameras "
+                             "(default: on). Merges projected depth clouds with LiDAR "
+                             "before SafetyMonitor with height filtering — ignores crop canopy, "
+                             "stops for humans/posts.")
+    parser.add_argument("--no-cam-depth-3d", action="store_false", dest="cam_depth_3d",
+                        help="Fall back to legacy 1-D depth strip obstacle detector "
+                             "(no height filtering — triggers on crops).")
     parser.add_argument("--cam-height", type=float, default=0.55, metavar="M",
                         help="Camera height above ground in metres (default: 0.55). "
                              "Used with --cam-depth-3d for extrinsic transform.")

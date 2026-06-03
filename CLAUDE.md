@@ -357,6 +357,11 @@ Applied in `row_navigator.py` after self-filtering, before `detector.update()` a
 | `--cam-x M` | 0.915 | Camera lateral offset from centreline m |
 | `--cam-stop-dist M` | **2.5** | Camera depth obstacle stop distance m |
 | `--cam-block-frames N` | **3** | Consecutive camera-blocked frames required to trigger OBSTACLE_WAIT |
+| `--cam-depth-3d` | **on** | 3-D depth fusion through height-filtered SafetyMonitor (default: on) |
+| `--no-cam-depth-3d` | — | Fall back to legacy 1-D depth strip (no height filtering — triggers on crops) |
+| `--cam-height M` | 0.55 | Camera height above ground (m) for 3-D extrinsic transform |
+| `--cam-yaw-deg DEG` | 35.0 | Inward yaw angle of each camera (degrees) |
+| `--cam-pitch-deg DEG` | 5.0 | Downward pitch of camera mount (degrees) |
 | `--ros2-bridge` | off | Write scan + nav status to `/dev/shm/` at each scan for the Docker ROS 2 bridge |
 | `--debug` | off | Stream LiDAR height histogram + save bird's-eye PNG |
 | `--save-dir DIR` | — | Save raw point-cloud numpy arrays to DIR |
