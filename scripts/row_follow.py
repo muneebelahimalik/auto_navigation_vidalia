@@ -456,11 +456,12 @@ def main() -> None:
     parser.add_argument("--obstacle-height", type=float, default=0.75, metavar="M",
                         help="Min ground-relative height (m) to count as obstacle "
                              "in the FORWARD zone (default: 0.75)")
-    parser.add_argument("--tire-height", type=float, default=None, metavar="M",
+    parser.add_argument("--tire-height", type=float, default=0.92, metavar="M",
                         help="Min ground-relative height (m) for TIRE-ZONE obstacles "
-                             "(default: same as --obstacle-height). Raise above the "
-                             "adjacent-row canopy height to stop tall crop triggering "
-                             "tire-zone stops (e.g. 0.85 for bolted onions).")
+                             "(default: 0.92). Above mature onion canopy (h≈0.80–0.90m) "
+                             "so adjacent rows never trigger a tire-zone stop, but a "
+                             "person, post or animal still triggers at any height above "
+                             "the forward zone threshold.")
     parser.add_argument("--lidar-tilt", type=float, default=15.0, metavar="DEG",
                         help="Forward (nose-down) tilt of the LiDAR mount in degrees "
                              "(default: 15.0). Set 0 for a flat mount.")
