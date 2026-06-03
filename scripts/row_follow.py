@@ -339,6 +339,7 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
         auto=args.auto, rows=args.rows, headland=args.headland, slam=slam,
         self_radius=args.self_radius,
         acquire_conf=args.acquire_conf,
+        row_end_min_dist=args.row_end_min_dist,
         align_heading=args.align_heading,
         align_rate=args.align_speed,
         left_cam=left_cam,
@@ -531,6 +532,9 @@ def main() -> None:
     parser.add_argument("--align-speed", type=float, default=0.20, metavar="R",
                         help="Max rotation speed (rad/s) during heading pre-align "
                              "(default: 0.20). Raise to 0.35 for faster alignment.")
+    parser.add_argument("--row-end-min-dist", type=float, default=3.0, metavar="M",
+                        help="Minimum distance (m) driven before ROW_END can trigger "
+                             "(default: 3.0). Increase to 5.0 for longer rows.")
     parser.add_argument("--ros2-bridge", action="store_true",
                         help="Write scan data and nav status to /dev/shm/ every scan so the "
                              "Docker ROS2 bridge (ros2_bridge/start.sh) can publish live "

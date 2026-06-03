@@ -101,7 +101,7 @@ class RowNavigator:
         acquire_conf: float = 0.45,
         acquire_frames: int = 5,
         row_end_conf: float = 0.70,
-        row_end_frames: int = 5,
+        row_end_frames: int = 8,
         row_end_min_dist: float = 2.0,
         obstacle_clear_secs: float = 1.5,
         buffer_dist: float = 1.5,
@@ -111,6 +111,7 @@ class RowNavigator:
         align_heading: bool = True,
         align_thresh: float = 0.14,
         align_rate: float = 0.20,
+        max_align_frames: int = 20,
         left_cam=None,
         right_cam=None,
         vis_detector=None,
@@ -159,6 +160,7 @@ class RowNavigator:
         self.align_heading = align_heading
         self.align_thresh = align_thresh
         self.align_rate = align_rate
+        self.max_align_frames = max_align_frames
 
         self.state = _S.ACQUIRE
         self.cmd = (0.0, 0.0)
@@ -372,13 +374,20 @@ class RowNavigator:
             frame_ok = est.confidence >= self.acquire_conf
         self._acq_count = self._acq_count + 1 if frame_ok else 0
         if self._acq_count >= self.acquire_frames:
-            # Pre-align: rotate in-place to reduce heading error before FOLLOW
-            # so the robot doesn't lurch sideways at the start of each row.
-            # -heading_error * P maps: negative hdg → positive angular (right turn).
-            if self.align_heading and abs(est.heading_error) > self.align_thresh:
+            align_frames = self._acq_count - self.acquire_frames
+            # Pre-align: rotate in-place to reduce heading error before FOLLOW.
+            # Timeout after max_align_frames — if the heading doesn't converge
+            # (e.g. curved row, EKF measurement pulling heading back each scan),
+            # enter FOLLOW anyway rather than blocking indefinitely.
+            if (self.align_heading
+                    and abs(est.heading_error) > self.align_thresh
+                    and align_frames < self.max_align_frames):
                 rate = self.align_rate
                 w = max(-rate, min(rate, -est.heading_error * 2.0))
                 return 0.0, w
+            if align_frames >= self.max_align_frames and abs(est.heading_error) > self.align_thresh:
+                print(f"\n[navigator] heading pre-align timeout "
+                      f"(hdg={math.degrees(est.heading_error):+.1f}°) — entering FOLLOW")
             self._enter(_S.FOLLOW)
             self._row_dist = 0.0
             self._row_end_count = 0
@@ -581,7 +590,15 @@ class RowNavigator:
         ekf_str = ""
         if ekf_active and self.ekf is not None:
             ekf_str = f" σ={self.ekf.std_lateral:.3f}"
-        acq_str = f" acq={self._acq_count}/{self.acquire_frames}" if self.state == _S.ACQUIRE else ""
+        if self.state == _S.ACQUIRE:
+            align_frames = self._acq_count - self.acquire_frames
+            if align_frames > 0:
+                acq_str = (f" ALIGN {align_frames}/{self.max_align_frames}"
+                           f"({math.degrees(est.heading_error):+.1f}°)")
+            else:
+                acq_str = f" acq={self._acq_count}/{self.acquire_frames}"
+        else:
+            acq_str = ""
         line = (
             f"\r[{mode}] {self.state:11s} | "
             f"hdg={deg:+5.1f}° off={est.lateral_offset:+5.2f}m "
