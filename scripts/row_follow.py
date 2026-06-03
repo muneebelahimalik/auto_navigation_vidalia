@@ -366,7 +366,8 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
     print(f"  safety  : fwd_h={args.obstacle_height:.2f}m  tire_h={tire_h:.2f}m  "
           f"self_r={args.self_radius:.2f}m  tilt={args.lidar_tilt:.1f}°  "
           f"fwd_zone={args.forward_dist:.1f}m×{args.forward_half_width*2:.2f}m")
-    print(f"  control : lookahead={args.lookahead:.1f}m  max_angular={args.max_angular:.2f}rad/s")
+    align_str = f"align={args.align_speed:.2f}rad/s (on)" if args.align_heading else "align=off"
+    print(f"  control : lookahead={args.lookahead:.1f}m  max_angular={args.max_angular:.2f}rad/s  {align_str}")
     if args.camera:
         cam_mode = "OAK-D left+right"
         if args.cam_depth_3d:
@@ -512,9 +513,11 @@ def main() -> None:
     parser.add_argument("--forward-dist", type=float, default=2.5, metavar="M",
                         help="LiDAR forward safety zone depth (default: 2.5 m). "
                              "Reduce to 1.5 m for indoor or confined-space testing.")
-    parser.add_argument("--forward-half-width", type=float, default=0.95, metavar="M",
-                        help="LiDAR forward safety zone half-width (default: 0.95 m). "
-                             "Reduce if walls/equipment are within ±0.95 m of path.")
+    parser.add_argument("--forward-half-width", type=float, default=0.60, metavar="M",
+                        help="LiDAR forward safety zone half-width (default: 0.60 m). "
+                             "Robot body is ±0.46 m wide; 0.60 m avoids triggering on "
+                             "adjacent row canopy when slightly off-centre. "
+                             "Raise to 0.95 m for wider obstacle coverage.")
     parser.add_argument("--lookahead", type=float, default=1.0, metavar="M",
                         help="Pure-pursuit lookahead distance in metres (default: 1.0). "
                              "Smaller = more aggressive lateral correction. "
@@ -522,13 +525,11 @@ def main() -> None:
     parser.add_argument("--max-angular", type=float, default=0.40, metavar="R",
                         help="Maximum angular velocity in rad/s (default: 0.40). "
                              "Raise to 0.60 if the robot drifts and cannot steer back.")
-    parser.add_argument("--align-heading", action="store_true", default=True,
+    parser.add_argument("--align-heading", action="store_true", default=False,
                         help="Rotate in-place during ACQUIRE to reduce heading error "
-                             "before FOLLOW (default: on). Prevents the robot from "
-                             "lurching sideways at the start of each row.")
-    parser.add_argument("--no-align-heading", action="store_false", dest="align_heading",
-                        help="Disable in-place heading alignment — robot will start "
-                             "correcting while driving forward instead.")
+                             "before FOLLOW (default: off). The LiDAR re-measures the "
+                             "row each scan so rotation rarely converges; easier to just "
+                             "start the robot roughly aligned with the row.")
     parser.add_argument("--align-speed", type=float, default=0.20, metavar="R",
                         help="Max rotation speed (rad/s) during heading pre-align "
                              "(default: 0.20). Raise to 0.35 for faster alignment.")

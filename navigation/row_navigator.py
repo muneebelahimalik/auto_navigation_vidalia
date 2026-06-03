@@ -108,7 +108,7 @@ class RowNavigator:
         bed_shift: float = 1.5,
         headland_speed: float = 0.15,
         headland_turn_rate: float = 0.30,
-        align_heading: bool = True,
+        align_heading: bool = False,
         align_thresh: float = 0.14,
         align_rate: float = 0.20,
         max_align_frames: int = 20,
@@ -478,7 +478,13 @@ class RowNavigator:
     # ------------------------------------------------------------------
     def _enter(self, state: str) -> None:
         if state != self.state:
-            print(f"\n[navigator] {self.state} -> {state}")
+            if state == _S.FOLLOW:
+                est_hdg = ""
+                if self.ekf is not None:
+                    est_hdg = f" (hdg={math.degrees(self.ekf._x[1]):.1f}°)" if hasattr(self.ekf, '_x') else ""
+                print(f"\n[navigator] {self.state} -> {state}{est_hdg}")
+            else:
+                print(f"\n[navigator] {self.state} -> {state}")
             if state == _S.ACQUIRE and self.ekf is not None:
                 self.ekf.reset()
         self.state = state
