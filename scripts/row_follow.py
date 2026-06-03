@@ -328,7 +328,11 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
         forward_dist=args.forward_dist,
         forward_half_width=args.forward_half_width,
     )
-    controller = PurePursuitController(max_linear=args.speed)
+    controller = PurePursuitController(
+        max_linear=args.speed,
+        lookahead=args.lookahead,
+        max_angular=args.max_angular,
+    )
     import math as _math
     navigator = RowNavigator(
         canbus, detector, safety, controller,
@@ -359,6 +363,7 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
     print(f"  safety  : fwd_h={args.obstacle_height:.2f}m  tire_h={tire_h:.2f}m  "
           f"self_r={args.self_radius:.2f}m  tilt={args.lidar_tilt:.1f}°  "
           f"fwd_zone={args.forward_dist:.1f}m×{args.forward_half_width*2:.2f}m")
+    print(f"  control : lookahead={args.lookahead:.1f}m  max_angular={args.max_angular:.2f}rad/s")
     if args.camera:
         cam_mode = "OAK-D left+right"
         if args.cam_depth_3d:
@@ -507,6 +512,13 @@ def main() -> None:
     parser.add_argument("--forward-half-width", type=float, default=0.95, metavar="M",
                         help="LiDAR forward safety zone half-width (default: 0.95 m). "
                              "Reduce if walls/equipment are within ±0.95 m of path.")
+    parser.add_argument("--lookahead", type=float, default=1.0, metavar="M",
+                        help="Pure-pursuit lookahead distance in metres (default: 1.0). "
+                             "Smaller = more aggressive lateral correction. "
+                             "Increase to 2.0 on straight, well-centred rows.")
+    parser.add_argument("--max-angular", type=float, default=0.40, metavar="R",
+                        help="Maximum angular velocity in rad/s (default: 0.40). "
+                             "Raise to 0.60 if the robot drifts and cannot steer back.")
     parser.add_argument("--ros2-bridge", action="store_true",
                         help="Write scan data and nav status to /dev/shm/ every scan so the "
                              "Docker ROS2 bridge (ros2_bridge/start.sh) can publish live "
