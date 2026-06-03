@@ -325,6 +325,8 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
     safety = SafetyMonitor(
         obstacle_height=args.obstacle_height,
         tire_obstacle_height=tire_h,
+        forward_dist=args.forward_dist,
+        forward_half_width=args.forward_half_width,
     )
     controller = PurePursuitController(max_linear=args.speed)
     import math as _math
@@ -355,7 +357,8 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
     print(f"  rows    : {args.rows}   headland turns: {'on' if args.headland else 'off'}")
     print(f"  speed   : {args.speed:.2f} m/s max   SLAM map: {'on' if args.slam else 'off'}")
     print(f"  safety  : fwd_h={args.obstacle_height:.2f}m  tire_h={tire_h:.2f}m  "
-          f"self_r={args.self_radius:.2f}m  tilt={args.lidar_tilt:.1f}°")
+          f"self_r={args.self_radius:.2f}m  tilt={args.lidar_tilt:.1f}°  "
+          f"fwd_zone={args.forward_dist:.1f}m×{args.forward_half_width*2:.2f}m")
     if args.camera:
         cam_mode = "OAK-D left+right"
         if args.cam_depth_3d:
@@ -363,11 +366,10 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
         else:
             cam_mode += "  strip-obstacle(no-height-filter)"
         cam_mode += f"  stop={args.cam_stop_dist}m"
-        if args.ekf:
-            cam_mode += "  EKF-fusion"
     else:
         cam_mode = "disabled"
-    print(f"  cameras : {cam_mode}")
+    ekf_str = "EKF=on" if args.ekf else "EKF=off"
+    print(f"  cameras : {cam_mode}  {ekf_str}")
     if args.ros2_bridge:
         print("  ros2    : bridge ON — writing to /dev/shm/vidalia_pts.bin + vidalia_status.json")
         print("            start Docker bridge:  bash ros2_bridge/start.sh")
@@ -493,9 +495,18 @@ def main() -> None:
                         help="Downward pitch of the camera mount in degrees (default: 5.0).")
     parser.add_argument("--cam-y-fwd", type=float, default=0.30, metavar="M",
                         help="Camera forward offset along robot Y axis in metres (default: 0.30).")
-    parser.add_argument("--ekf", action="store_true",
-                        help="Enable EKF sensor fusion to combine LiDAR and camera row estimates. "
-                             "Replaces the simple weighted average with a proper Kalman filter.")
+    parser.add_argument("--ekf", action="store_true", default=True,
+                        help="Enable EKF sensor fusion (default: on). Keeps FOLLOW stable through "
+                             "VLP-16 alternating empty/full scans — prevents confidence oscillation "
+                             "that would otherwise drop the robot back to ACQUIRE every other scan.")
+    parser.add_argument("--no-ekf", action="store_false", dest="ekf",
+                        help="Disable EKF and use raw LiDAR confidence directly.")
+    parser.add_argument("--forward-dist", type=float, default=2.5, metavar="M",
+                        help="LiDAR forward safety zone depth (default: 2.5 m). "
+                             "Reduce to 1.5 m for indoor or confined-space testing.")
+    parser.add_argument("--forward-half-width", type=float, default=0.95, metavar="M",
+                        help="LiDAR forward safety zone half-width (default: 0.95 m). "
+                             "Reduce if walls/equipment are within ±0.95 m of path.")
     parser.add_argument("--ros2-bridge", action="store_true",
                         help="Write scan data and nav status to /dev/shm/ every scan so the "
                              "Docker ROS2 bridge (ros2_bridge/start.sh) can publish live "
