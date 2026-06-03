@@ -108,6 +108,9 @@ class RowNavigator:
         bed_shift: float = 1.5,
         headland_speed: float = 0.15,
         headland_turn_rate: float = 0.30,
+        align_heading: bool = True,
+        align_thresh: float = 0.14,
+        align_rate: float = 0.20,
         left_cam=None,
         right_cam=None,
         vis_detector=None,
@@ -153,6 +156,9 @@ class RowNavigator:
         self.bed_shift = bed_shift
         self.headland_speed = headland_speed
         self.headland_turn_rate = headland_turn_rate
+        self.align_heading = align_heading
+        self.align_thresh = align_thresh
+        self.align_rate = align_rate
 
         self.state = _S.ACQUIRE
         self.cmd = (0.0, 0.0)
@@ -366,6 +372,13 @@ class RowNavigator:
             frame_ok = est.confidence >= self.acquire_conf
         self._acq_count = self._acq_count + 1 if frame_ok else 0
         if self._acq_count >= self.acquire_frames:
+            # Pre-align: rotate in-place to reduce heading error before FOLLOW
+            # so the robot doesn't lurch sideways at the start of each row.
+            # -heading_error * P maps: negative hdg → positive angular (right turn).
+            if self.align_heading and abs(est.heading_error) > self.align_thresh:
+                rate = self.align_rate
+                w = max(-rate, min(rate, -est.heading_error * 2.0))
+                return 0.0, w
             self._enter(_S.FOLLOW)
             self._row_dist = 0.0
             self._row_end_count = 0

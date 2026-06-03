@@ -339,6 +339,8 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
         auto=args.auto, rows=args.rows, headland=args.headland, slam=slam,
         self_radius=args.self_radius,
         acquire_conf=args.acquire_conf,
+        align_heading=args.align_heading,
+        align_rate=args.align_speed,
         left_cam=left_cam,
         right_cam=right_cam,
         vis_detector=vis_detector,
@@ -519,6 +521,16 @@ def main() -> None:
     parser.add_argument("--max-angular", type=float, default=0.40, metavar="R",
                         help="Maximum angular velocity in rad/s (default: 0.40). "
                              "Raise to 0.60 if the robot drifts and cannot steer back.")
+    parser.add_argument("--align-heading", action="store_true", default=True,
+                        help="Rotate in-place during ACQUIRE to reduce heading error "
+                             "before FOLLOW (default: on). Prevents the robot from "
+                             "lurching sideways at the start of each row.")
+    parser.add_argument("--no-align-heading", action="store_false", dest="align_heading",
+                        help="Disable in-place heading alignment — robot will start "
+                             "correcting while driving forward instead.")
+    parser.add_argument("--align-speed", type=float, default=0.20, metavar="R",
+                        help="Max rotation speed (rad/s) during heading pre-align "
+                             "(default: 0.20). Raise to 0.35 for faster alignment.")
     parser.add_argument("--ros2-bridge", action="store_true",
                         help="Write scan data and nav status to /dev/shm/ every scan so the "
                              "Docker ROS2 bridge (ros2_bridge/start.sh) can publish live "

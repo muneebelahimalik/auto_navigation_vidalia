@@ -130,14 +130,7 @@ class OakDriver:
                     if not self._intrinsics_logged:
                         self._intrinsics_logged = True
                         h, w = img.shape[:2]
-                        # depth_to_points defaults assume 640×400.
-                        # Log actual size so the operator can verify or supply
-                        # calibrated fx/fy/cx/cy if the resolution differs.
-                        match = "OK" if (w == 640 and h == 400) else "MISMATCH — pass fx/fy/cx/cy to DepthToPoints"
-                        print(
-                            f"[oak_driver:{self.side}] first RGB frame: {w}×{h} "
-                            f"— intrinsic assumption {match}"
-                        )
+                        print(f"[oak_driver:{self.side}] first RGB frame: {w}×{h}")
                     self._rgb = img
                     self._rgb_ts = time.monotonic()
                     self._merge()
