@@ -2,10 +2,11 @@
 """
 row_perception.py — Online centre crop-row detection from VLP-16 scans.
 
-The Amiga straddles a crop bed: the robot body passes over the planted
-centre rows while the wheels run in the furrows either side.  This module
-detects the centre crop row directly ahead of the robot in real time, with
-NO prior map, and reports how the robot sits relative to it.
+The Amiga straddles a centre residue strip (soybean field) or a raised crop
+bed (onion field): the robot body passes over the centre while the wheels run
+in the furrows on either side.  This module detects the centre line ahead of
+the robot in real time with NO prior map and reports how the robot sits
+relative to it.
 
 Pipeline (per scan, sensor frame X=right, Y=forward, Z=up):
   1. Crop a forward region of interest (ROI) ahead of the robot.
@@ -15,8 +16,12 @@ Pipeline (per scan, sensor frame X=right, Y=forward, Z=up):
   3. Project to a 2-D bird's-eye view (X, Y).
   4. PCA over the whole ROI -> dominant *row direction*.  All crop rows are
      parallel, so the elongation axis is the row heading.
-  5. Project points onto the cross-row axis and locate the centre row
-     (the cluster nearest the robot centreline) -> lateral offset.
+  5. Locate the lateral centre:
+       Single-row mode (default): histogram peak nearest the robot centreline.
+       Dual-row mode (--dual-row): midpoint between the nearest left and right
+         peaks — used in soybean fields where the robot straddles a dark centre
+         residue strip flanked by soybean rows on each side; the midpoint is
+         the centre of the residue strip, not either soybean row.
   6. Exponential smoothing over time so the controller follows the row
      trend, not every plant-to-plant wobble.
 
@@ -35,7 +40,7 @@ from lidar.obstacle_filter import LIDAR_MOUNT_HEIGHT
 
 @dataclass
 class RowEstimate:
-    """Robot pose relative to the centre crop row."""
+    """Robot pose relative to the centre crop row / residue strip."""
     heading_error: float = 0.0       # rad; +ve = row angled to robot's right
     lateral_offset: float = 0.0      # m;   +ve = centre row is to the right
     confidence: float = 0.0          # 0..1 row-detection quality
@@ -46,9 +51,15 @@ class RowEstimate:
 
 class RowDetector:
     """
-    Stateful centre-row detector.  Call update() once per LiDAR scan.
+    Stateful centre-row / centre-residue detector.  Call update() once per
+    LiDAR scan.
 
     All distances are metres in the sensor frame (X=right, Y=forward).
+
+    dual_row=False (default): single crop row under the robot (onion field).
+    dual_row=True: robot straddles a centre residue strip flanked by crop rows
+      on each side (soybean field).  Lateral offset = midpoint between the
+      nearest left and right crop-band histogram peaks.
     """
 
     def __init__(
@@ -56,14 +67,15 @@ class RowDetector:
         roi_y_min: float = 1.5,
         roi_y_max: float = 7.0,
         roi_x_half: float = 0.80,
-        crop_h_min: float = 0.05,
-        crop_h_max: float = 0.60,
+        crop_h_min: float = 0.03,
+        crop_h_max: float = 0.30,
         min_points: int = 40,
         full_points: int = 130,
         refine_window: float = 0.18,
         bin_width: float = 0.10,
         row_end_density: float = 70.0,
         ema_alpha: float = 0.35,
+        dual_row: bool = False,
     ) -> None:
         self.roi_y_min = roi_y_min
         self.roi_y_max = roi_y_max
@@ -76,15 +88,17 @@ class RowDetector:
         self.bin_width = bin_width
         self.row_end_density = row_end_density
         self.ema_alpha = ema_alpha
+        self.dual_row = dual_row
         self._est = RowEstimate()
 
     # ------------------------------------------------------------------
     def update(self, pts: np.ndarray) -> RowEstimate:
         """
-        Detect the centre row from an Nx3 (x, y, z) sensor-frame point array.
+        Detect the centre row/residue from an Nx3 (x, y, z) sensor-frame
+        point array.
 
         Returns a smoothed RowEstimate.  When no row is found the previous
-        estimate is decayed (confidence halved, row-end confidence raised)
+        estimate is decayed (confidence reduced, row-end confidence raised)
         so the state machine can react instead of acting on a stale fix.
         """
         if pts is None or len(pts) == 0:
@@ -118,15 +132,21 @@ class RowDetector:
         linearity = (lam_major - lam_minor) / (lam_major + lam_minor + 1e-9)
         heading = math.atan2(direction[0], direction[1])
 
-        # --- locate the centre row on the cross-row axis ---
-        # Histogram the cross-row coordinate, pick the peak nearest the
-        # robot centreline, then refine with a tight window around it so
-        # adjacent rows are never merged into the estimate.
+        # --- locate the centre on the cross-row axis ---
         perp = np.array([direction[1], -direction[0]])   # unit, +X-ish
         cross = P @ perp
-        peak = self._nearest_peak(cross)
-        near = np.abs(cross - peak) <= self.refine_window
-        lateral = float(cross[near].mean()) if int(near.sum()) >= 8 else peak
+
+        if self.dual_row:
+            # Soybean / centre-residue mode: find the midpoint between the
+            # nearest left and right crop-row peaks.  The midpoint is the
+            # centre of the residue strip, which is the tracking target.
+            lateral = self._midpoint_peaks(cross)
+        else:
+            # Single-row mode: histogram peak nearest the robot centreline,
+            # then refine with a tight window so adjacent rows are not merged.
+            peak = self._nearest_peak(cross)
+            near = np.abs(cross - peak) <= self.refine_window
+            lateral = float(cross[near].mean()) if int(near.sum()) >= 8 else peak
 
         density = min(1.0, n / self.full_points)
         linear_factor = max(0.0, min(1.0, (linearity - 0.20) / 0.55))
@@ -159,6 +179,48 @@ class RowDetector:
             peaks = [int(np.argmax(smooth))]
         best = min(peaks, key=lambda i: abs(centres[i]))
         return float(centres[best])
+
+    # ------------------------------------------------------------------
+    def _midpoint_peaks(self, cross: np.ndarray) -> float:
+        """Return the midpoint between the nearest left and right histogram
+        peaks (dual-row / soybean centre-residue mode).
+
+        The robot straddles the dark residue strip; the soybean rows flank it
+        symmetrically on each side.  Their histogram peaks are at roughly
+        ±(row_spacing/2) in the robot frame.  The midpoint of those two peaks
+        is the centre of the residue strip — the tracking target.
+
+        When only one side is visible (robot is far off-centre), falls back to
+        the nearest single peak so the correction direction is still correct.
+        """
+        lo, hi = -self.roi_x_half, self.roi_x_half
+        edges = np.arange(lo, hi + self.bin_width, self.bin_width)
+        hist, edges = np.histogram(cross, bins=edges)
+        centres = 0.5 * (edges[:-1] + edges[1:])
+        smooth = np.convolve(hist.astype(float), [0.25, 0.5, 0.25], mode="same")
+        thresh = max(3.0, 0.25 * float(smooth.max()))
+        peaks = [
+            i for i in range(1, len(smooth) - 1)
+            if smooth[i] >= smooth[i - 1] and smooth[i] >= smooth[i + 1]
+            and smooth[i] >= thresh
+        ]
+        if not peaks:
+            peaks = [int(np.argmax(smooth))]
+
+        # Separate into left (x < -0.05 m) and right (x > +0.05 m) peaks.
+        # The small dead-band avoids treating noise exactly at centre as a peak.
+        left_peaks = [p for p in peaks if centres[p] < -0.05]
+        right_peaks = [p for p in peaks if centres[p] > 0.05]
+
+        if left_peaks and right_peaks:
+            # Rightmost left peak and leftmost right peak bracket the residue strip.
+            best_left = max(left_peaks, key=lambda i: centres[i])
+            best_right = min(right_peaks, key=lambda i: centres[i])
+            return 0.5 * (centres[best_left] + centres[best_right])
+
+        # Only one side visible — robot is far off-centre.  Nearest peak gives
+        # the correct correction sign so the robot steers back toward centre.
+        return float(centres[min(peaks, key=lambda i: abs(centres[i]))])
 
     # ------------------------------------------------------------------
     def _smooth(self, fresh: RowEstimate) -> RowEstimate:

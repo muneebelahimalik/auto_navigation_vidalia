@@ -5,7 +5,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Project Overview
 
 Autonomous navigation workspace for the farm-ng Amiga robot using a Velodyne VLP-16 LiDAR
-and two OAK-D stereo cameras. Goal: fully autonomous laser-based weed control in onion fields.
+and two OAK-D stereo cameras. Goal: fully autonomous precision row following in soybean fields
+(centre-residue strip tracking) and onion fields.
 
 Three parallel stacks are maintained:
 
@@ -82,20 +83,36 @@ source /farm_ng_image/venv/bin/activate
 cd ~/auto_navigation_vidalia
 ```
 
-### LiDAR Row Follow (primary)
+### LiDAR Row Follow — Soybean Field (centre-residue strip, primary)
+
+```bash
+# Perception-only — verify detection first (robot stays still):
+python3 scripts/row_follow.py --dual-row
+
+# Autonomous (robot WILL move):
+python3 scripts/row_follow.py --auto --dual-row
+
+# Autonomous with OAK-D cameras:
+python3 scripts/row_follow.py --auto --dual-row --camera
+
+# Debug mode — stream height histogram, save bird's-eye PNG:
+python3 scripts/row_follow.py --debug
+```
+
+### LiDAR Row Follow — Onion Field (single raised crop row)
 
 ```bash
 # Perception-only — robot stays still, verify detection first:
-python3 scripts/row_follow.py
+python3 scripts/row_follow.py --crop-max 0.60 --obstacle-height 0.75 --tire-height 0.85
 
 # Autonomous (robot WILL move):
-python3 scripts/row_follow.py --auto --tire-height 0.85
+python3 scripts/row_follow.py --auto --crop-max 0.60 --obstacle-height 0.75 --tire-height 0.85
 
 # Autonomous with OAK-D cameras:
-python3 scripts/row_follow.py --auto --tire-height 0.85 --camera
+python3 scripts/row_follow.py --auto --crop-max 0.60 --obstacle-height 0.75 --tire-height 0.85 --camera
 
 # Autonomous with ROS 2 visualization bridge output:
-python3 scripts/row_follow.py --auto --tire-height 0.85 --ros2-bridge
+python3 scripts/row_follow.py --auto --dual-row --ros2-bridge
 
 # Debug mode — stream height histogram, save bird's-eye PNG:
 python3 scripts/row_follow.py --debug
@@ -258,7 +275,8 @@ async for event, message in EventClient(config).subscribe(config.subscriptions[0
 - Ground-relative height: `h = z_corrected + LIDAR_MOUNT_HEIGHT`
 - `LIDAR_MOUNT_HEIGHT = 0.705 m` (defined in `lidar/obstacle_filter.py`; measured: ground to VLP-16 drum centre)
 - **LiDAR tilt: 15° forward (nose-down)** — requires tilt correction before any height math
-- Crop geometry: onion canopy h ≈ 0.10–0.60 m; adjacent row canopy h ≈ 0.70–0.85 m
+- Crop geometry (soybean): seedling canopy h ≈ 0.03–0.30 m; tires run in furrows between soybean beds
+- Crop geometry (onion): canopy h ≈ 0.10–0.60 m; adjacent row canopy h ≈ 0.70–0.85 m
 
 ---
 
@@ -268,8 +286,8 @@ async for event, message in EventClient(config).subscribe(config.subscriptions[0
 `h = z_sensor + LIDAR_MOUNT_HEIGHT` is wrong by `y × sin(15°)` ≈ 0.52 m at 2 m forward.
 
 **Impact without correction:**
-- Onion crop at true h=0.30 m appears as h=0.83 m → above crop band max (0.60 m) → ACQUIRE forever
-- Ground return at 3 m appears as h=0.80 m → above obstacle threshold (0.75 m) → OBSTACLE_WAIT immediately
+- Soybean at true h=0.15 m appears as h=0.68 m → above crop band max (0.30 m) → ACQUIRE forever
+- Ground return at 3 m appears as h=0.80 m → above obstacle threshold (0.50 m) → OBSTACLE_WAIT immediately
 
 **Fix** — `lidar/obstacle_filter.py::tilt_correct_pts(pts, tilt_rad)`:
 ```
@@ -282,7 +300,7 @@ Applied in `row_navigator.py` after self-filtering, before `detector.update()` a
 
 ---
 
-### Tuned Parameters (current working values for onion field)
+### Tuned Parameters
 
 #### Self-filter (`lidar/obstacle_filter.py` / `--self-radius`)
 | Parameter | Value | Rationale |
@@ -290,36 +308,38 @@ Applied in `row_navigator.py` after self-filtering, before `detector.update()` a
 | `self_radius` | **1.5 m** | Robot frame seen at ~0.72 m planar range; 1.5 m clears all body returns without cutting crop ROI (which starts at y=1.5 m) |
 
 #### Row Perception (`navigation/row_perception.py`)
-| Parameter | Value | Rationale |
-|---|---|---|
-| Crop height band | h ∈ [0.05, 0.60] m | Onion plants; excludes ground and above-canopy clutter |
-| ROI depth | y ∈ [1.5, 7.0] m | Past self-filter; within reliable row geometry |
-| ROI half-width | \|x\| ≤ 0.80 m | Captures crop row ± shoulder without pulling in adjacent rows |
-| PCA linearity threshold | > 0.20 | Below this the cluster is not line-like; confidence forced to 0 |
-| Density normaliser | n / 130 pts | 130 points = full confidence at typical VLP-16 density |
-| Confidence formula | `min(1, n/130) × max(0, min(1, (linearity−0.20)/0.55))` | |
-| EMA alpha | 0.35 | Smooths per-frame jitter without adding excessive lag |
-| Heading outlier gate | **30°** | Fresh PCA headings that jump >30° from smoothed heading are clamped; prevents ±50° oscillations from sparse/round clusters (row ends, cardboard) |
-| Empty-scan decay factor | **0.75** | Was 0.5; slower confidence decay on n=0 scans — takes ~5 consecutive empty scans to cross the 0.35 FOLLOW threshold instead of 2 |
+| Parameter | Soybean default | Onion field | Rationale |
+|---|---|---|---|
+| Crop height band | h ∈ [**0.03, 0.30**] m | h ∈ [0.05, 0.60] m | Soybean seedlings 3–30 cm; onion canopy 5–60 cm |
+| Detection mode | **dual-row** (`--dual-row`) | single-row (default) | Soybean: find midpoint between left+right soybean rows; onion: nearest crop row to centreline |
+| ROI depth | y ∈ [1.5, 7.0] m | same | Past self-filter; within reliable row geometry |
+| ROI half-width | \|x\| ≤ 0.80 m | same | Captures flanking soybean rows ± shoulder without pulling in outer rows |
+| PCA linearity threshold | > 0.20 | same | Below this the cluster is not line-like; confidence forced to 0 |
+| Density normaliser | n / 130 pts | same | 130 points = full confidence at typical VLP-16 density |
+| Confidence formula | `min(1, n/130) × max(0, min(1, (linearity−0.20)/0.55))` | same | |
+| EMA alpha | 0.35 | same | Smooths per-frame jitter without adding excessive lag |
+| Heading outlier gate | **30°** | same | Fresh PCA headings that jump >30° from smoothed heading are clamped; prevents ±50° oscillations from sparse/round clusters (row ends, cardboard) |
+| Empty-scan decay factor | **0.75** | same | Was 0.5; slower confidence decay on n=0 scans — takes ~5 consecutive empty scans to cross the 0.35 FOLLOW threshold instead of 2 |
 
 #### State Machine (`navigation/row_navigator.py`)
 | Parameter | Value | Rationale |
 |---|---|---|
-| `acquire_conf` | **0.45** | Lowered from 0.55 — robot 0.75 m off-centre reduces linearity enough that 0.55 was never reached |
+| `acquire_conf` | **0.35** | Lowered from 0.45 — soybean seedlings give sparser returns; lower threshold suits the typical 0.40–0.55 confidence range in sparse crops |
 | Acquire consecutive frames | 5 | Must see ≥ 5 frames ≥ acquire_conf before entering FOLLOW |
 | `obstacle_clear_secs` | **1.5 s** | Consecutive clear time required to leave OBSTACLE_WAIT |
 | Min confidence for control | 0.35 | Below this the controller outputs zero velocity |
 | `follow_miss_thresh` | **4** | Consecutive sub-threshold scans required to drop FOLLOW→ACQUIRE; stops motion (v=0,ω=0) during gap but stays in FOLLOW; prevents rapid cycling on intermittent empty VLP-16 scans |
+| `acq_miss_thresh` | **2** | Consecutive sub-threshold scans required to reset ACQUIRE counter; one isolated empty scan no longer wipes acq=4/5 back to 0 |
 | `cam_block_frames` | **3** | Consecutive camera-blocked frames required before OBSTACLE_WAIT; prevents false positives from intermittent depth noise (at 40% hit rate, getting 3 in a row is rare) |
 
 #### Safety Monitor (`navigation/row_safety.py`)
-| Parameter | Value | Rationale |
-|---|---|---|
-| `forward_dist` | 2.5 m | Stopping horizon ahead |
-| `forward_half_width` | **0.60 m** | Narrower than physical body (0.965 m) — prevents triggering on adjacent onion row canopy (h≈0.80–0.84 m) when slightly off-centre |
-| `obstacle_height` (forward) | **0.75 m** | Above LIDAR_MOUNT_HEIGHT (0.705 m); onion plants (h≤0.60) pass; humans/posts stop |
-| `tire_obstacle_height` | **0.85 m** (field default) | Raised above adjacent crop canopy (h≈0.80–0.84 m) to eliminate L-TIRE false positives |
-| `tire_track` | **0.965 m** | Half of 1.93 m robot body width (measured); sets L/R-TIRE zone positions |
+| Parameter | Soybean default | Onion field | Rationale |
+|---|---|---|---|
+| `forward_dist` | 2.5 m | same | Stopping horizon ahead |
+| `forward_half_width` | **0.60 m** | same | Narrower than physical body — prevents triggering on adjacent crop when slightly off-centre |
+| `obstacle_height` (forward) | **0.50 m** | 0.75 m | Soybean seedlings h≤0.30 m pass; humans/posts (>0.50 m) stop. Onion: 0.75 m |
+| `tire_obstacle_height` | **0.35 m** | 0.85 m | Soybean tires run in furrows (few plants); 0.35 m passes seedlings, stops hazards. Onion: 0.85 m |
+| `tire_track` | **0.965 m** | same | Half of 1.93 m robot body width (measured); sets L/R-TIRE zone positions |
 | `tire_half_width` | 0.25 m | ± corridor around each wheel centreline |
 | `tire_dist` | 2.5 m | Same stopping horizon as forward zone |
 | `near` | 0.20 m | Ignore returns closer than this (sensor artefacts at beam origin) |
@@ -351,9 +371,10 @@ Applied in `row_navigator.py` after self-filtering, before `detector.update()` a
 | `--crop-min H` | 0.05 | Minimum crop height above ground m |
 | `--crop-max H` | 0.60 | Maximum crop height above ground m |
 | `--self-radius R` | **1.5** | Self-filter radius — discard returns within R m (robot body) |
-| `--acquire-conf C` | **0.45** | Min row-detection confidence (0–1) to leave ACQUIRE |
-| `--obstacle-height H` | **0.75** | Min ground-relative height m to count as obstacle in FORWARD zone |
-| `--tire-height H` | (=obstacle-height) | Min height for TIRE-ZONE obstacles; set **0.85** for onion fields |
+| `--acquire-conf C` | **0.35** | Min row-detection confidence (0–1) to leave ACQUIRE |
+| `--dual-row` | off | Soybean / centre-residue mode: lateral offset = midpoint of left+right flanking crop peaks |
+| `--obstacle-height H` | **0.50** | Min ground-relative height m to count as obstacle in FORWARD zone (soybean default; onion: 0.75) |
+| `--tire-height H` | **0.35** | Min height for TIRE-ZONE obstacles (soybean default; onion: 0.85) |
 | `--camera` | off | Enable OAK-D stereo cameras |
 | `--cam-left-id S` | "" | Left camera farm-ng service name (default: oak0) |
 | `--cam-right-id S` | "" | Right camera farm-ng service name (default: oak1) |

@@ -1,15 +1,23 @@
 #!/usr/bin/env -S python3 -u
 """
-row_follow.py — Autonomous onion-row following on the Amiga brain (no ROS 2).
+row_follow.py — Autonomous crop-row following on the Amiga brain (no ROS 2).
 
 Runs entirely in the native Python stack: VLP-16 UDP -> LiDAR row
 perception -> pure-pursuit control -> Twist2d over the Amiga canbus.
 
-The robot detects the centre crop row directly ahead of it in real time
-and drives along it.  No pre-built map and no survey are required — this
-is online, perception-driven row following.  An occupancy-grid SLAM map
-can be built in the background (``--slam``) for global awareness and
-later coverage tracking, but it does NOT drive the robot.
+The robot detects and follows the centre line ahead of it in real time.
+Two detection modes:
+
+  Default (single-row): robot is centred over ONE raised crop row, e.g.
+    onion beds.  The LiDAR detects the canopy directly under the robot.
+
+  --dual-row: robot straddles a CENTRE RESIDUE STRIP flanked by crop rows on
+    each side, e.g. soybean fields.  The LiDAR detects the soybean rows on
+    both sides; the midpoint between them is the tracking target.
+    Use with --crop-min 0.03 --crop-max 0.30 --obstacle-height 0.50.
+
+No pre-built map and no survey are required — this is online, perception-
+driven row following.
 
 Usage (on the Amiga brain):
     source /farm_ng_image/venv/bin/activate
@@ -18,19 +26,19 @@ Usage (on the Amiga brain):
     # 1. PERCEPTION-ONLY — robot does not move; verify detection first:
     python3 scripts/row_follow.py
 
-    # 2. AUTONOMOUS — robot follows the row (start slow, supervise!):
-    python3 scripts/row_follow.py --auto
+    # 2. AUTONOMOUS — soybean field, centre residue strip:
+    python3 scripts/row_follow.py --auto --dual-row
 
-    # multi-row with headland turns + background SLAM map:
-    python3 scripts/row_follow.py --auto --rows 8 --headland --slam
+    # 3. AUTONOMOUS — onion field, single crop row:
+    python3 scripts/row_follow.py --auto --crop-max 0.60 --obstacle-height 0.75 --tire-height 0.85
 
 Press Ctrl+C at any time to stop the robot immediately.
 
 Key flags:
     --auto            enable motion (default: perception-only, no motion)
+    --dual-row        soybean / centre-residue mode (midpoint of flanking rows)
     --rows N          number of rows to cover (default: 1)
     --headland        perform open-loop headland turns between rows
-    --slam            build an occupancy-grid map in the background
     --speed M         max forward speed m/s (default: 0.30)
     --no-validate     skip the LiDAR startup health check
 """
@@ -322,6 +330,7 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
         roi_x_half=args.roi_x,
         crop_h_min=args.crop_min,
         crop_h_max=args.crop_max,
+        dual_row=args.dual_row,
     )
     tire_h = args.tire_height if args.tire_height is not None else args.obstacle_height
     safety = SafetyMonitor(
@@ -363,10 +372,12 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
 
     print()
     print("=" * 68)
-    print("  Autonomous onion-row follower")
+    det_mode = "dual-row (centre-residue / soybean)" if args.dual_row else "single-row"
+    print(f"  Autonomous crop-row follower  [{det_mode}]")
     print(f"  mode    : {'AUTONOMOUS — robot WILL move' if args.auto else 'perception-only (no motion)'}")
     print(f"  rows    : {args.rows}   headland turns: {'on' if args.headland else 'off'}")
     print(f"  speed   : {args.speed:.2f} m/s max   SLAM map: {'on' if args.slam else 'off'}")
+    print(f"  crop    : h=[{args.crop_min:.2f},{args.crop_max:.2f}]m  roi_x=±{args.roi_x:.2f}m")
     print(f"  safety  : fwd_h={args.obstacle_height:.2f}m  tire_h={tire_h:.2f}m  "
           f"self_r={args.self_radius:.2f}m  tilt={args.lidar_tilt:.1f}°  "
           f"fwd_zone={args.forward_dist:.1f}m×{args.forward_half_width*2:.2f}m")
@@ -432,7 +443,7 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Autonomous onion-row following (native stack, no ROS 2)"
+        description="Autonomous crop-row following (native stack, no ROS 2)"
     )
     parser.add_argument("--auto", action="store_true",
                         help="Enable motion (default: perception-only)")
@@ -446,30 +457,42 @@ def main() -> None:
                         help="Max forward speed in m/s (default: 0.30)")
     parser.add_argument("--roi-x", type=float, default=0.80, metavar="M",
                         help="Half-width of the centre-row search band (default: 0.80)")
-    parser.add_argument("--crop-min", type=float, default=0.05, metavar="M",
-                        help="Min crop height above ground to keep (default: 0.05)")
-    parser.add_argument("--crop-max", type=float, default=0.60, metavar="M",
-                        help="Max crop height above ground to keep (default: 0.60)")
+    parser.add_argument("--crop-min", type=float, default=0.03, metavar="M",
+                        help="Min crop height above ground to keep (default: 0.03). "
+                             "Soybean seedlings: 0.03. Mature onions: 0.05.")
+    parser.add_argument("--crop-max", type=float, default=0.30, metavar="M",
+                        help="Max crop height above ground to keep (default: 0.30). "
+                             "Soybean seedlings: 0.30. Mature onions: 0.60.")
+    parser.add_argument("--dual-row", action="store_true", default=False,
+                        help="Dual-row / centre-residue detection mode (default: off). "
+                             "Use for soybean fields where the robot straddles a dark centre "
+                             "residue strip flanked by soybean rows on each side. The detector "
+                             "finds the midpoint between the nearest left and right crop-band "
+                             "histogram peaks, which is the centre of the residue strip. "
+                             "Falls back to nearest-peak if only one side is visible (large offset). "
+                             "In single-row mode (default) the nearest peak to the robot centreline "
+                             "is used — correct for onion/raised-bed crops directly under the robot.")
     parser.add_argument("--self-radius", type=float, default=1.5, metavar="M",
                         help="Discard LiDAR returns within this radius — the "
                              "robot's own frame (default: 1.5)")
-    parser.add_argument("--acquire-conf", type=float, default=0.45, metavar="F",
+    parser.add_argument("--acquire-conf", type=float, default=0.35, metavar="F",
                         help="Min row-detection confidence (0-1) to leave ACQUIRE "
-                             "(default: 0.45). Lower if the robot gets stuck in ACQUIRE "
-                             "due to partial row coverage or skewed start position.")
-    parser.add_argument("--obstacle-height", type=float, default=0.75, metavar="M",
+                             "(default: 0.35). Lower threshold suits soybean seedlings "
+                             "which give sparser LiDAR returns than mature onion canopy.")
+    parser.add_argument("--obstacle-height", type=float, default=0.50, metavar="M",
                         help="Min ground-relative height (m) to count as obstacle "
-                             "in the FORWARD zone (default: 0.75)")
+                             "in the FORWARD zone (default: 0.50). "
+                             "Soybean seedlings are h≤0.30 m so 0.50 passes plants but "
+                             "stops humans/posts. Onion fields: use 0.75 m.")
     parser.add_argument("--tire-track", type=float, default=0.965, metavar="M",
                         help="Distance from robot centreline to wheel centre (default: 0.965 — "
                              "half of 1.93 m body width). Sets the lateral position of the "
                              "L-TIRE / R-TIRE safety zones.")
-    parser.add_argument("--tire-height", type=float, default=0.92, metavar="M",
+    parser.add_argument("--tire-height", type=float, default=0.35, metavar="M",
                         help="Min ground-relative height (m) for TIRE-ZONE obstacles "
-                             "(default: 0.92). Above mature onion canopy (h≈0.80–0.90m) "
-                             "so adjacent rows never trigger a tire-zone stop, but a "
-                             "person, post or animal still triggers at any height above "
-                             "the forward zone threshold.")
+                             "(default: 0.35). Tires run in the furrow between soybean beds "
+                             "where plants are absent or short; 0.35 m passes seedlings but "
+                             "stops real hazards. Onion fields: use 0.85 m.")
     parser.add_argument("--lidar-tilt", type=float, default=15.0, metavar="DEG",
                         help="Forward (nose-down) tilt of the LiDAR mount in degrees "
                              "(default: 15.0). Set 0 for a flat mount.")
