@@ -169,7 +169,7 @@ class DepthToPoints:
         # cam_pitch degrees nose-down, those are rows v < cy - fy*tan(pitch).
         # Discarding them prevents the robot's own overhead structure (gantry,
         # delta arm) from appearing as obstacle-height returns in the cloud.
-        self._v_crop_top = max(0, int(cy - fy * math.tan(abs(self._cam_pitch))))
+        self._v_crop_top = max(0, math.ceil(cy - fy * math.tan(abs(self._cam_pitch))))
         if self._grid_hw is None and self._v_crop_top > 0:
             print(
                 f"[depth_to_points] Cropping top {self._v_crop_top} rows "
