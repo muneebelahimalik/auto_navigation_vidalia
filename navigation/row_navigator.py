@@ -125,6 +125,7 @@ class RowNavigator:
         cam_block_frames: int = 3,
         cam_self_radius: float = 2.0,
         ros2_bridge: bool = False,
+        follow_miss_thresh: int = 4,
     ) -> None:
         self.canbus = canbus
         self.detector = detector
@@ -148,6 +149,7 @@ class RowNavigator:
         self.tilt_rad = tilt_rad
         self.cam_block_frames = cam_block_frames
         self.ros2_bridge = ros2_bridge
+        self.follow_miss_thresh = follow_miss_thresh
 
         self.acquire_conf = acquire_conf
         self.acquire_frames = acquire_frames
@@ -174,6 +176,7 @@ class RowNavigator:
         self._obstacle_clear_t: Optional[float] = None
         self._cam_block_count: int = 0
         self._cam_cloud_buf: list = []   # rolling 3-frame camera depth buffer
+        self._follow_miss_count: int = 0  # consecutive low-conf scans while in FOLLOW
         self._hl_progress = 0.0
         self._turn_sign = 1.0
         self._t_prev = time.monotonic()
@@ -416,20 +419,31 @@ class RowNavigator:
             self._enter(_S.ROW_END)
             return 0.0, 0.0
 
-        # When the EKF is tracking well (small lateral uncertainty), tolerate
-        # brief LiDAR detection gaps without dropping back to ACQUIRE. VLP-16
-        # scans vary widely in point density (12k–28k) scan-to-scan; a single
-        # empty crop-band scan halves EMA confidence and without this floor the
-        # robot exits FOLLOW after just 1–2 bad scans.
-        # Threshold 0.08 m: steady-state EKF lateral std ≈ 0.055 m (well below).
+        # Debounce low-confidence scans: the VLP-16 routinely produces 1–3
+        # empty crop-ROI scans per second due to beam-angle variation between
+        # 10 Hz rotations.  A single empty scan decays EMA confidence by ×0.75
+        # per _decay(); dropping to ACQUIRE immediately causes rapid
+        # FOLLOW→ACQUIRE→FOLLOW cycling (seen in warehouse cardboard tests).
+        #
+        # Policy: tolerate up to follow_miss_thresh consecutive sub-threshold
+        # scans by stopping motion (v=0, ω=0) and waiting; only abort to
+        # ACQUIRE when the gap is long enough to indicate genuine row loss.
+        # EKF path: same counter but with a lower effective threshold when the
+        # filter uncertainty is small.
         min_conf = self.controller.min_confidence
         if self.ekf is not None and self.ekf.std_lateral < 0.08:
             min_conf = max(0.12, min_conf - 0.20)
 
         if est.confidence < min_conf:
-            self._enter(_S.ACQUIRE)
-            self._acq_count = 0
+            self._follow_miss_count += 1
+            if self._follow_miss_count >= self.follow_miss_thresh:
+                self._follow_miss_count = 0
+                self._enter(_S.ACQUIRE)
+                self._acq_count = 0
+                return 0.0, 0.0
+            # Not enough consecutive misses — pause in FOLLOW, wait for row to reappear.
             return 0.0, 0.0
+        self._follow_miss_count = 0
 
         linear, angular = self.controller.compute(est)
         if self.odometry is not None:
@@ -506,6 +520,7 @@ class RowNavigator:
         if state != self.state:
             prev_state = self.state
             if state == _S.FOLLOW:
+                self._follow_miss_count = 0
                 est_hdg = ""
                 if self.ekf is not None:
                     est_hdg = f" (hdg={math.degrees(self.ekf._x[1]):.1f}°)" if hasattr(self.ekf, '_x') else ""

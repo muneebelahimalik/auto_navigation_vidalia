@@ -299,6 +299,8 @@ Applied in `row_navigator.py` after self-filtering, before `detector.update()` a
 | Density normaliser | n / 130 pts | 130 points = full confidence at typical VLP-16 density |
 | Confidence formula | `min(1, n/130) × max(0, min(1, (linearity−0.20)/0.55))` | |
 | EMA alpha | 0.35 | Smooths per-frame jitter without adding excessive lag |
+| Heading outlier gate | **30°** | Fresh PCA headings that jump >30° from smoothed heading are clamped; prevents ±50° oscillations from sparse/round clusters (row ends, cardboard) |
+| Empty-scan decay factor | **0.75** | Was 0.5; slower confidence decay on n=0 scans — takes ~5 consecutive empty scans to cross the 0.35 FOLLOW threshold instead of 2 |
 
 #### State Machine (`navigation/row_navigator.py`)
 | Parameter | Value | Rationale |
@@ -307,6 +309,7 @@ Applied in `row_navigator.py` after self-filtering, before `detector.update()` a
 | Acquire consecutive frames | 5 | Must see ≥ 5 frames ≥ acquire_conf before entering FOLLOW |
 | `obstacle_clear_secs` | **1.5 s** | Consecutive clear time required to leave OBSTACLE_WAIT |
 | Min confidence for control | 0.35 | Below this the controller outputs zero velocity |
+| `follow_miss_thresh` | **4** | Consecutive sub-threshold scans required to drop FOLLOW→ACQUIRE; stops motion (v=0,ω=0) during gap but stays in FOLLOW; prevents rapid cycling on intermittent empty VLP-16 scans |
 | `cam_block_frames` | **3** | Consecutive camera-blocked frames required before OBSTACLE_WAIT; prevents false positives from intermittent depth noise (at 40% hit rate, getting 3 in a row is rare) |
 
 #### Safety Monitor (`navigation/row_safety.py`)
@@ -637,7 +640,7 @@ Camera lateral estimate is capped at 50% of LiDAR weight in fusion.
 - Hough lines alone (without depth confirmation) are rejected — ambient structural edges
   (wall corners, machinery) bias heading in open environments
 
-EMA smoothing (alpha=0.35); `_decay()` halves confidence each frame with no detection.
+EMA smoothing (alpha=0.35); `_decay()` multiplies confidence by **0.75** (not 0.5) each frame with no detection.
 
 ---
 
@@ -714,6 +717,8 @@ OAK-D defaults: hfov=73°, vfov=54°, 640×400 → scale factor ≈ 0.91.
 | `RuntimeWarning: Mean of empty slice` | `np.nanmean` called on all-NaN column slice | Pre-check valid columns with `~np.all(np.isnan(band), axis=0)` |
 | ACQUIRE/FOLLOW/OBSTACLE_WAIT oscillation | Real environmental obstacle at ~2.2–2.5 m intermittently entering forward zone | Not a code bug; resolves in clear onion rows |
 | `\r` terminal shows only "clear" | Carriage-return overwrites intermediate blocked frames | Use `--debug` to see every frame; transitions always print with `\n` |
+| Rapid FOLLOW→ACQUIRE→FOLLOW cycling | VLP-16 produces 1–3 empty crop-ROI scans/s; 0.5 decay factor crossed 0.35 threshold in 2 scans | Decay factor 0.5→**0.75**; `follow_miss_thresh=4` consecutive misses required to drop to ACQUIRE |
+| Heading oscillating ±50° (cardboard/sparse row) | PCA direction flips on nearly-round clusters; EMA alone insufficient to damp | Added 30° outlier gate in `_smooth()` — clamps fresh heading to ≤30° from smoothed when conf>0.30 |
 
 ---
 

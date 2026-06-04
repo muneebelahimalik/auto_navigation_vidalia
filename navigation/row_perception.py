@@ -165,8 +165,22 @@ class RowDetector:
         """Exponentially blend a fresh estimate into the running state."""
         a = self.ema_alpha
         prev = self._est
+
+        # Heading outlier gate: if the fresh PCA heading jumps more than 30°
+        # from the current smoothed heading, clamp it. Sparse or nearly-round
+        # crop clusters (row ends, cardboard, thin canopy) give PCA directions
+        # that can flip ±90°; without the gate the heading EMA oscillates ±50°
+        # and pure-pursuit produces diverging steering corrections.
+        # Only active when the estimate is already established (conf > 0.30).
+        hdg_fresh = fresh.heading_error
+        if prev.confidence > 0.30:
+            delta = hdg_fresh - prev.heading_error
+            max_delta = math.radians(30.0)
+            if abs(delta) > max_delta:
+                hdg_fresh = prev.heading_error + math.copysign(max_delta, delta)
+
         self._est = RowEstimate(
-            heading_error=a * fresh.heading_error + (1 - a) * prev.heading_error,
+            heading_error=a * hdg_fresh + (1 - a) * prev.heading_error,
             lateral_offset=a * fresh.lateral_offset + (1 - a) * prev.lateral_offset,
             confidence=a * fresh.confidence + (1 - a) * prev.confidence,
             row_end_confidence=fresh.row_end_confidence,
@@ -177,12 +191,21 @@ class RowDetector:
 
     # ------------------------------------------------------------------
     def _decay(self, row_end_conf: float = 1.0) -> RowEstimate:
-        """No detection this scan — keep geometry, drop confidence."""
+        """No detection this scan — keep geometry, drop confidence.
+
+        Factor 0.75 (was 0.5) — at 10 Hz a VLP-16 can produce 1–3 empty crop
+        ROI scans due to beam angle variation between rotations; 0.5 caused
+        confidence to drop below the 0.35 FOLLOW threshold after just 2 empty
+        scans (~200 ms), triggering spurious FOLLOW→ACQUIRE→FOLLOW cycles.
+        With 0.75 it takes ~5 consecutive empty scans (~500 ms) to cross the
+        threshold, which is combined with the navigator's follow_miss_thresh
+        counter for a second layer of debounce.
+        """
         prev = self._est
         self._est = RowEstimate(
             heading_error=prev.heading_error,
             lateral_offset=prev.lateral_offset,
-            confidence=prev.confidence * 0.5,
+            confidence=prev.confidence * 0.75,
             row_end_confidence=max(prev.row_end_confidence, row_end_conf),
             n_points=0,
             valid=False,
