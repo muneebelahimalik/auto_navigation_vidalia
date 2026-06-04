@@ -313,7 +313,7 @@ Applied in `row_navigator.py` after self-filtering, before `detector.update()` a
 | Parameter | Value | Rationale |
 |---|---|---|
 | `forward_dist` | 2.5 m | Stopping horizon ahead |
-| `forward_half_width` | **0.97 m** | Half of 1.93 m robot body width + 2 cm margin (measured) |
+| `forward_half_width` | **0.60 m** | Narrower than physical body (0.965 m) — prevents triggering on adjacent onion row canopy (h≈0.80–0.84 m) when slightly off-centre |
 | `obstacle_height` (forward) | **0.75 m** | Above LIDAR_MOUNT_HEIGHT (0.705 m); onion plants (h≤0.60) pass; humans/posts stop |
 | `tire_obstacle_height` | **0.85 m** (field default) | Raised above adjacent crop canopy (h≈0.80–0.84 m) to eliminate L-TIRE false positives |
 | `tire_track` | **0.965 m** | Half of 1.93 m robot body width (measured); sets L/R-TIRE zone positions |

@@ -529,9 +529,11 @@ def main() -> None:
     parser.add_argument("--forward-dist", type=float, default=2.5, metavar="M",
                         help="LiDAR forward safety zone depth (default: 2.5 m). "
                              "Reduce to 1.5 m for indoor or confined-space testing.")
-    parser.add_argument("--forward-half-width", type=float, default=0.97, metavar="M",
-                        help="LiDAR forward safety zone half-width (default: 0.97 m — "
-                             "half of 1.93 m robot body width plus 2 cm margin).")
+    parser.add_argument("--forward-half-width", type=float, default=0.60, metavar="M",
+                        help="LiDAR forward safety zone half-width (default: 0.60 m). "
+                             "Robot body is ±0.965 m wide but 0.60 m avoids triggering on "
+                             "adjacent row canopy (h≈0.80–0.84 m) when slightly off-centre. "
+                             "Raise to 0.965 m only in wide open areas with no adjacent crops.")
     parser.add_argument("--lookahead", type=float, default=1.0, metavar="M",
                         help="Pure-pursuit lookahead distance in metres (default: 1.0). "
                              "Smaller = more aggressive lateral correction. "
