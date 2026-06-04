@@ -260,6 +260,17 @@ class RowNavigator:
                 if cam_frames:
                     cam_cloud = np.vstack(cam_frames)
 
+            # Camera cloud self-filter: remove points within the robot's own
+            # body envelope before the safety check.  Side-mounted cameras look
+            # inward at 35° and see the robot's own gantry / delta arm overhead
+            # at y ≈ 0.5–1.2 m, h ≈ 0.8–1.2 m — exactly matching the forward
+            # and tire-zone obstacle criteria.  Applying the same planar-range
+            # filter as LiDAR ensures the camera cloud only extends coverage
+            # beyond the self-filter radius and never reports the robot itself.
+            if len(cam_cloud) and self.self_radius > 0:
+                _rng = np.hypot(cam_cloud[:, 0], cam_cloud[:, 1])
+                cam_cloud = cam_cloud[_rng >= self.self_radius]
+
             # Debounce: accumulate camera cloud over a rolling 3-frame window.
             # A single noisy depth frame can't trigger OBSTACLE_WAIT on its own
             # — it must produce ≥ min_points across 3 consecutive scans.
