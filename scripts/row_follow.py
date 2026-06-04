@@ -520,12 +520,12 @@ def main() -> None:
                         help="Planar-range self-filter for the 3-D camera depth cloud (default: 1.0 m). "
                              "Points closer than this to the LiDAR origin are assumed to be the robot's "
                              "own structure and are discarded before the safety check.")
-    parser.add_argument("--ekf", action="store_true", default=True,
-                        help="Enable EKF sensor fusion (default: on). Keeps FOLLOW stable through "
-                             "VLP-16 alternating empty/full scans — prevents confidence oscillation "
-                             "that would otherwise drop the robot back to ACQUIRE every other scan.")
+    parser.add_argument("--ekf", action="store_true", default=False,
+                        help="Enable EKF sensor fusion (default: off). Adds Kalman filter over "
+                             "LiDAR+camera estimates — useful on rough terrain with many empty scans, "
+                             "but can add lag and destabilise the pure-pursuit loop on smooth rows.")
     parser.add_argument("--no-ekf", action="store_false", dest="ekf",
-                        help="Disable EKF and use raw LiDAR confidence directly.")
+                        help="Disable EKF and use raw LiDAR confidence directly (default).")
     parser.add_argument("--forward-dist", type=float, default=2.5, metavar="M",
                         help="LiDAR forward safety zone depth (default: 2.5 m). "
                              "Reduce to 1.5 m for indoor or confined-space testing.")
@@ -534,10 +534,10 @@ def main() -> None:
                              "Robot body is ±0.965 m wide but 0.60 m avoids triggering on "
                              "adjacent row canopy (h≈0.80–0.84 m) when slightly off-centre. "
                              "Raise to 0.965 m only in wide open areas with no adjacent crops.")
-    parser.add_argument("--lookahead", type=float, default=1.0, metavar="M",
-                        help="Pure-pursuit lookahead distance in metres (default: 1.0). "
-                             "Smaller = more aggressive lateral correction. "
-                             "Increase to 2.0 on straight, well-centred rows.")
+    parser.add_argument("--lookahead", type=float, default=2.0, metavar="M",
+                        help="Pure-pursuit lookahead distance in metres (default: 2.0). "
+                             "Smaller = more aggressive lateral correction but risks oscillation. "
+                             "1.0 m causes diverging limit cycles when starting >15° off heading.")
     parser.add_argument("--max-angular", type=float, default=0.40, metavar="R",
                         help="Maximum angular velocity in rad/s (default: 0.40). "
                              "Raise to 0.60 if the robot drifts and cannot steer back.")

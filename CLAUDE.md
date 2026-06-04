@@ -326,7 +326,7 @@ Applied in `row_navigator.py` after self-filtering, before `detector.update()` a
 #### Pure-Pursuit Controller (`navigation/row_controller.py`)
 | Parameter | Value | Rationale |
 |---|---|---|
-| `lookahead` | 2.0 m | Look-ahead distance |
+| `lookahead` | **2.0 m** | Look-ahead distance — 1.0 m causes diverging oscillation when starting >15° off heading |
 | `max_linear` | 0.30 m/s | Conservative field speed |
 | `min_linear` | 0.08 m/s | Minimum creep speed when turning hard |
 | `min_confidence` | 0.35 | Zero output below this |
