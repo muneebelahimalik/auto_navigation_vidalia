@@ -126,6 +126,7 @@ class RowNavigator:
         cam_self_radius: float = 2.0,
         ros2_bridge: bool = False,
         follow_miss_thresh: int = 4,
+        acq_miss_thresh: int = 2,
     ) -> None:
         self.canbus = canbus
         self.detector = detector
@@ -150,6 +151,7 @@ class RowNavigator:
         self.cam_block_frames = cam_block_frames
         self.ros2_bridge = ros2_bridge
         self.follow_miss_thresh = follow_miss_thresh
+        self.acq_miss_thresh = acq_miss_thresh
 
         self.acquire_conf = acquire_conf
         self.acquire_frames = acquire_frames
@@ -177,6 +179,7 @@ class RowNavigator:
         self._cam_block_count: int = 0
         self._cam_cloud_buf: list = []   # rolling 3-frame camera depth buffer
         self._follow_miss_count: int = 0  # consecutive low-conf scans while in FOLLOW
+        self._acq_miss_count: int = 0     # consecutive low-conf scans while in ACQUIRE
         self._hl_progress = 0.0
         self._turn_sign = 1.0
         self._t_prev = time.monotonic()
@@ -388,7 +391,20 @@ class RowNavigator:
             frame_ok = self.ekf.converged
         else:
             frame_ok = est.confidence >= self.acquire_conf
-        self._acq_count = self._acq_count + 1 if frame_ok else 0
+
+        # Debounce: same principle as follow_miss_thresh. A single empty scan
+        # decays EMA confidence below acquire_conf and would reset the 5-frame
+        # counter that was at acq=4/5. Require acq_miss_thresh consecutive bad
+        # scans before resetting, so one intermittent empty scan is absorbed
+        # without losing accumulated progress.
+        if frame_ok:
+            self._acq_miss_count = 0
+            self._acq_count += 1
+        else:
+            self._acq_miss_count += 1
+            if self._acq_miss_count >= self.acq_miss_thresh:
+                self._acq_count = 0
+                self._acq_miss_count = 0
         if self._acq_count >= self.acquire_frames:
             align_frames = self._acq_count - self.acquire_frames
             # Pre-align: rotate in-place to reduce heading error before FOLLOW.

@@ -171,9 +171,11 @@ class RowDetector:
         # crop clusters (row ends, cardboard, thin canopy) give PCA directions
         # that can flip ±90°; without the gate the heading EMA oscillates ±50°
         # and pure-pursuit produces diverging steering corrections.
-        # Only active when the estimate is already established (conf > 0.30).
+        # Threshold 0.15 (was 0.30): n=0 scans decay confidence ×0.75, so
+        # starting from conf≈0.45 it falls to 0.34→0.25. With 0.30 the gate
+        # disabled at 0.25 and allowed unclamped jumps, drifting heading +5°/scan.
         hdg_fresh = fresh.heading_error
-        if prev.confidence > 0.30:
+        if prev.confidence > 0.15:
             delta = hdg_fresh - prev.heading_error
             max_delta = math.radians(30.0)
             if abs(delta) > max_delta:
