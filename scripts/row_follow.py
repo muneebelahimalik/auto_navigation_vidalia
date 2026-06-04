@@ -503,8 +503,8 @@ def main() -> None:
     parser.add_argument("--no-cam-depth-3d", action="store_false", dest="cam_depth_3d",
                         help="Fall back to legacy 1-D depth strip obstacle detector "
                              "(no height filtering — triggers on crops).")
-    parser.add_argument("--cam-height", type=float, default=1.000, metavar="M",
-                        help="Camera height above ground in metres (default: 1.000 — measured). "
+    parser.add_argument("--cam-height", type=float, default=0.920, metavar="M",
+                        help="Camera height above ground in metres (default: 0.920 — measured). "
                              "Used with --cam-depth-3d for extrinsic transform.")
     parser.add_argument("--cam-yaw-deg", type=float, default=0.0, metavar="DEG",
                         help="Yaw of each camera from the robot forward axis in degrees "
@@ -513,9 +513,9 @@ def main() -> None:
     parser.add_argument("--cam-pitch-deg", type=float, default=15.0, metavar="DEG",
                         help="Downward pitch of the camera mount in degrees (default: 15.0 — "
                              "matches the VLP-16 nose-down tilt).")
-    parser.add_argument("--cam-y-fwd", type=float, default=-0.505, metavar="M",
-                        help="Camera offset from LiDAR along robot Y axis (default: -0.505 — "
-                             "cameras are 50.5 cm behind the LiDAR). Negative = behind LiDAR.")
+    parser.add_argument("--cam-y-fwd", type=float, default=-0.465, metavar="M",
+                        help="Camera offset from LiDAR along robot Y axis (default: -0.465 — "
+                             "cameras are 46.5 cm behind the LiDAR). Negative = behind LiDAR.")
     parser.add_argument("--cam-self-radius", type=float, default=1.0, metavar="M",
                         help="Planar-range self-filter for the 3-D camera depth cloud (default: 1.0 m). "
                              "Points closer than this to the LiDAR origin are assumed to be the robot's "

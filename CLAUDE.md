@@ -359,8 +359,8 @@ Applied in `row_navigator.py` after self-filtering, before `detector.update()` a
 | `--cam-block-frames N` | **3** | Consecutive camera-blocked frames required to trigger OBSTACLE_WAIT |
 | `--cam-depth-3d` | **on** | 3-D depth fusion through height-filtered SafetyMonitor (default: on) |
 | `--no-cam-depth-3d` | — | Fall back to legacy 1-D depth strip (no height filtering — triggers on crops) |
-| `--cam-height M` | **1.000** | Camera height above ground (m); measured |
-| `--cam-y-fwd M` | **-0.505** | Camera forward offset from LiDAR along robot Y (m); negative = behind LiDAR (measured: 50.5 cm behind) |
+| `--cam-height M` | **0.920** | Camera height above ground (m); measured |
+| `--cam-y-fwd M` | **-0.465** | Camera forward offset from LiDAR along robot Y (m); negative = behind LiDAR (measured: 46.5 cm behind) |
 | `--cam-yaw-deg DEG` | **0.0** | Yaw from robot forward axis (degrees). 0 = forward-facing (default). Left cam receives negative value, right cam positive. |
 | `--cam-pitch-deg DEG` | **15.0** | Downward pitch of camera mount (degrees). Matches VLP-16 nose-down tilt. |
 | `--ros2-bridge` | off | Write scan + nav status to `/dev/shm/` at each scan for the Docker ROS 2 bridge |
@@ -452,8 +452,8 @@ every ~0.5 s and logs a WARNING each time. Fix applied in `camera/oak_driver.py`
 
 #### Depth Obstacle Strip Geometry
 
-Both cameras are **forward-facing** at 0° yaw, mounted at 1.000 m height on the left
-and right sides of the robot with a 15° nose-down pitch, 50.5 cm behind the LiDAR. Because
+Both cameras are **forward-facing** at 0° yaw, mounted at 0.920 m height on the left
+and right sides of the robot with a 15° nose-down pitch, 46.5 cm behind the LiDAR. Because
 they face straight ahead, the robot's forward path is roughly at the **image centre** of each camera.
 
 | Camera | Position | `col_centre_frac` | Why |
