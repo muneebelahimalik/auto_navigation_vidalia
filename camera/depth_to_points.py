@@ -130,6 +130,7 @@ class DepthToPoints:
         # the look direction (robot +Y after R_opt2body) rotates toward −Z,
         # which is a negative rotation around robot X.
         self._R: np.ndarray = _rz(cam_yaw) @ _rx(-cam_pitch) @ _R_OPT2BODY
+        self._cam_pitch = cam_pitch  # kept for horizon-crop computation
 
         # Camera origin in robot base_link frame.
         self._t = np.array([cam_x, cam_y_fwd, cam_z], dtype=np.float64)
@@ -142,6 +143,7 @@ class DepthToPoints:
         # Pixel grid — recomputed lazily when frame size changes.
         self._grid_hw: Optional[tuple] = None
         self._dirs: Optional[np.ndarray] = None  # (H, W, 3) unit direction vectors
+        self._v_crop_top: int = 0                 # rows above horizon (computed in _build_grid)
 
     # ------------------------------------------------------------------
     def _build_grid(self, h: int, w: int) -> None:
@@ -162,6 +164,19 @@ class DepthToPoints:
                     f"fx={fx:.0f} fy={fy:.0f} cx={cx:.0f} cy={cy:.0f}. "
                     "Pass calibrated fx/fy/cx/cy for higher accuracy."
                 )
+        # Rows whose look direction is above the true horizon project to
+        # z_robot > cam_z (above camera mount height).  For a camera with
+        # cam_pitch degrees nose-down, those are rows v < cy - fy*tan(pitch).
+        # Discarding them prevents the robot's own overhead structure (gantry,
+        # delta arm) from appearing as obstacle-height returns in the cloud.
+        self._v_crop_top = max(0, int(cy - fy * math.tan(abs(self._cam_pitch))))
+        if self._grid_hw is None and self._v_crop_top > 0:
+            print(
+                f"[depth_to_points] Cropping top {self._v_crop_top} rows "
+                f"(above-horizon rows for {math.degrees(abs(self._cam_pitch)):.1f}° "
+                f"pitch; prevents overhead-structure false positives)."
+            )
+
         us = np.arange(w, dtype=np.float64)
         vs = np.arange(h, dtype=np.float64)
         uu, vv = np.meshgrid(us, vs)   # (H, W)
@@ -197,8 +212,9 @@ class DepthToPoints:
         self._build_grid(h, w)
 
         step = self.subsample
-        depth_sub = depth_mm[::step, ::step].astype(np.float64)  # (Hs, Ws)
-        dirs_sub = self._dirs[::step, ::step]                      # (Hs, Ws, 3)
+        v_c = self._v_crop_top
+        depth_sub = depth_mm[v_c::step, ::step].astype(np.float64)  # (Hs, Ws)
+        dirs_sub = self._dirs[v_c::step, ::step]                      # (Hs, Ws, 3)
 
         depth_m = depth_sub * 1e-3  # mm → m
 
