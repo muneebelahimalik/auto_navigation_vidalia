@@ -123,6 +123,7 @@ class RowNavigator:
         odometry=None,
         tilt_rad: float = 0.0,
         cam_block_frames: int = 3,
+        cam_self_radius: float = 2.0,
         ros2_bridge: bool = False,
     ) -> None:
         self.canbus = canbus
@@ -134,6 +135,7 @@ class RowNavigator:
         self.headland = headland
         self.slam = slam
         self.self_radius = self_radius
+        self.cam_self_radius = cam_self_radius
         self.left_cam = left_cam
         self.right_cam = right_cam
         self.vis_detector = vis_detector
@@ -267,9 +269,9 @@ class RowNavigator:
             # and tire-zone obstacle criteria.  Applying the same planar-range
             # filter as LiDAR ensures the camera cloud only extends coverage
             # beyond the self-filter radius and never reports the robot itself.
-            if len(cam_cloud) and self.self_radius > 0:
+            if len(cam_cloud) and self.cam_self_radius > 0:
                 _rng = np.hypot(cam_cloud[:, 0], cam_cloud[:, 1])
-                cam_cloud = cam_cloud[_rng >= self.self_radius]
+                cam_cloud = cam_cloud[_rng >= self.cam_self_radius]
 
             # Debounce: accumulate camera cloud over a rolling 3-frame window.
             # A single noisy depth frame can't trigger OBSTACLE_WAIT on its own
@@ -489,15 +491,22 @@ class RowNavigator:
     # ------------------------------------------------------------------
     def _enter(self, state: str) -> None:
         if state != self.state:
+            prev_state = self.state
             if state == _S.FOLLOW:
                 est_hdg = ""
                 if self.ekf is not None:
                     est_hdg = f" (hdg={math.degrees(self.ekf._x[1]):.1f}°)" if hasattr(self.ekf, '_x') else ""
-                print(f"\n[navigator] {self.state} -> {state}{est_hdg}")
+                print(f"\n[navigator] {prev_state} -> {state}{est_hdg}")
             else:
-                print(f"\n[navigator] {self.state} -> {state}")
+                print(f"\n[navigator] {prev_state} -> {state}")
             if state == _S.ACQUIRE and self.ekf is not None:
-                self.ekf.reset()
+                # Don't reset EKF when resuming from OBSTACLE_WAIT — the robot
+                # was stationary, so the EKF state (heading, lateral) is still
+                # valid.  Resetting here caused the next sparse scan to corrupt
+                # the heading estimate (high post-reset uncertainty accepted a
+                # noisy +31° measurement, sending the robot into a spiral).
+                if prev_state != _S.OBSTACLE_WAIT:
+                    self.ekf.reset()
         self.state = state
 
     async def _drive(self, linear: float, angular: float) -> None:

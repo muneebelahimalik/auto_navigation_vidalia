@@ -353,6 +353,7 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
         odometry=odometry,
         tilt_rad=_math.radians(args.lidar_tilt),
         cam_block_frames=args.cam_block_frames,
+        cam_self_radius=args.cam_self_radius,
         ros2_bridge=args.ros2_bridge,
     )
     nav_ref.append(navigator)
@@ -371,7 +372,7 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
     if args.camera:
         cam_mode = "OAK-D left+right"
         if args.cam_depth_3d:
-            cam_mode += f"  3D-fusion(h={args.cam_height}m yaw={args.cam_yaw_deg}° pitch={args.cam_pitch_deg}°)"
+            cam_mode += f"  3D-fusion(h={args.cam_height}m yaw={args.cam_yaw_deg}° pitch={args.cam_pitch_deg}° self_r={args.cam_self_radius:.1f}m)"
         else:
             cam_mode += "  strip-obstacle(no-height-filter)"
         cam_mode += f"  stop={args.cam_stop_dist}m"
@@ -505,6 +506,11 @@ def main() -> None:
                         help="Downward pitch of the camera mount in degrees (default: 5.0).")
     parser.add_argument("--cam-y-fwd", type=float, default=0.30, metavar="M",
                         help="Camera forward offset along robot Y axis in metres (default: 0.30).")
+    parser.add_argument("--cam-self-radius", type=float, default=2.0, metavar="M",
+                        help="Planar-range self-filter for the 3-D camera depth cloud (default: 2.0 m). "
+                             "Points closer than this are assumed to be the robot's own structure "
+                             "(gantry, delta arm) and are discarded before the safety check. "
+                             "Set larger than --self-radius (1.5 m) to cover the full arm reach.")
     parser.add_argument("--ekf", action="store_true", default=True,
                         help="Enable EKF sensor fusion (default: on). Keeps FOLLOW stable through "
                              "VLP-16 alternating empty/full scans — prevents confidence oscillation "
