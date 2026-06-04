@@ -495,14 +495,16 @@ def main() -> None:
                              "from depth noise or sparse crop returns.")
 
     # --- 3-D depth fusion (Phase 1 sensor fusion) ---
-    parser.add_argument("--cam-depth-3d", action="store_true", default=True,
+    parser.add_argument("--cam-depth-3d", action="store_true", default=False,
                         help="Use full 3-D depth-to-point-cloud fusion from OAK-D cameras "
-                             "(default: on). Merges projected depth clouds with LiDAR "
-                             "before SafetyMonitor with height filtering — ignores crop canopy, "
-                             "stops for humans/posts.")
+                             "(default: off). Camera at 0.92 m height projects near-horizontal "
+                             "views to z ≈ cam_z, which exceeds the 0.75 m obstacle threshold "
+                             "even in empty space — reliable only if cam_z ≤ obstacle_height + 0.1 m. "
+                             "Enable only when camera is mounted low (< 0.85 m) or obstacle_height "
+                             "is raised above cam_z.")
     parser.add_argument("--no-cam-depth-3d", action="store_false", dest="cam_depth_3d",
-                        help="Fall back to legacy 1-D depth strip obstacle detector "
-                             "(no height filtering — triggers on crops).")
+                        help="Legacy 1-D depth strip obstacle detector (default when --cam-depth-3d "
+                             "is not passed).")
     parser.add_argument("--cam-height", type=float, default=0.920, metavar="M",
                         help="Camera height above ground in metres (default: 0.920 — measured). "
                              "Used with --cam-depth-3d for extrinsic transform.")

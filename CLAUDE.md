@@ -357,8 +357,8 @@ Applied in `row_navigator.py` after self-filtering, before `detector.update()` a
 | `--cam-x M` | **0.88** | Camera lateral offset from centreline m (half of 1.76 m inter-camera span; measured) |
 | `--cam-stop-dist M` | **2.5** | Camera depth obstacle stop distance m |
 | `--cam-block-frames N` | **3** | Consecutive camera-blocked frames required to trigger OBSTACLE_WAIT |
-| `--cam-depth-3d` | **on** | 3-D depth fusion through height-filtered SafetyMonitor (default: on) |
-| `--no-cam-depth-3d` | — | Fall back to legacy 1-D depth strip (no height filtering — triggers on crops) |
+| `--cam-depth-3d` | **off** | 3-D depth fusion through height-filtered SafetyMonitor (default: off — camera at 0.92 m projects near-horizontal views to z ≈ cam_z which exceeds 0.75 m obstacle threshold in empty space; reliable only when cam_z ≤ obstacle_height + 0.1 m) |
+| `--no-cam-depth-3d` | — | Disable 3-D depth fusion (default) |
 | `--cam-height M` | **0.920** | Camera height above ground (m); measured |
 | `--cam-y-fwd M` | **-0.465** | Camera forward offset from LiDAR along robot Y (m); negative = behind LiDAR (measured: 46.5 cm behind) |
 | `--cam-yaw-deg DEG` | **0.0** | Yaw from robot forward axis (degrees). 0 = forward-facing (default). Left cam receives negative value, right cam positive. |
@@ -461,9 +461,11 @@ they face straight ahead, the robot's forward path is roughly at the **image cen
 | Left | −0.88 m (left of robot) | **0.5** | Robot path is ahead — image centre |
 | Right | +0.88 m (right of robot) | **0.5** | Robot path is ahead — image centre |
 
-The primary obstacle path is the **3-D depth fusion** (`--cam-depth-3d`, default on), which
-projects every depth pixel to a robot-frame 3-D point and merges it with the LiDAR cloud.
-The 1-D strip (`col_centre_frac`) is only used with `--no-cam-depth-3d` as a fallback.
+The **3-D depth fusion** (`--cam-depth-3d`, default **off**) is disabled by default because the
+camera at 0.92 m height projects near-horizontal views to z ≈ cam_z ≈ 0.92 m, which exceeds
+the 0.75 m forward obstacle threshold even in empty space, causing persistent false OBSTACLE_WAIT.
+It is reliable only if cam_z ≤ obstacle_height + 0.10 m (i.e., camera mounted ≤ 0.85 m high).
+The 1-D strip (`col_centre_frac`) is not used by default; safety is LiDAR-only when cameras are on.
 
 #### Camera Block Debounce
 
