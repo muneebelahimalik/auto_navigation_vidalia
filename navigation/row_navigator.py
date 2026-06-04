@@ -102,7 +102,7 @@ class RowNavigator:
         acquire_frames: int = 5,
         row_end_conf: float = 0.70,
         row_end_frames: int = 8,
-        row_end_min_dist: float = 3.0,
+        row_end_min_dist: float = 1.5,
         obstacle_clear_secs: float = 1.5,
         buffer_dist: float = 1.5,
         bed_shift: float = 1.5,
@@ -367,7 +367,7 @@ class RowNavigator:
         if st == _S.FOLLOW:
             return self._step_follow(est, dt)
         if st == _S.OBSTACLE_WAIT:
-            return self._step_obstacle(safety)
+            return self._step_obstacle(safety, est)
         if st == _S.ROW_END:
             return self._step_row_end()
         if st in _HEADLAND_STATES:
@@ -438,7 +438,20 @@ class RowNavigator:
             self._row_dist += linear * dt
         return linear, angular
 
-    def _step_obstacle(self, safety) -> tuple[float, float]:
+    def _step_obstacle(self, safety, est) -> tuple[float, float]:
+        # If the crop has ended while waiting for the obstacle to clear,
+        # transition to ROW_END.  This handles the common end-of-row case
+        # where the row terminates at a wall: the obstacle will never clear,
+        # but the crop has already disappeared — the row IS done.
+        if (self._row_dist >= self.row_end_min_dist
+                and est.row_end_confidence >= self.row_end_conf):
+            self._row_end_count += 1
+        else:
+            self._row_end_count = 0
+        if self._row_end_count >= self.row_end_frames:
+            self._enter(_S.ROW_END)
+            return 0.0, 0.0
+
         if safety.blocked:
             self._obstacle_clear_t = None
         else:
