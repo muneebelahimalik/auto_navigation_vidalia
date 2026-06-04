@@ -66,7 +66,10 @@ class PurePursuitController:
         target_y = max(-offset * math.sin(theta) + s * math.cos(theta), 0.5)
 
         # Speed: scale down with weak confidence and large heading error.
-        speed_factor = est.confidence * max(0.25, 1.0 - abs(theta) / 0.60)
+        # Divisor 1.0 rad keeps the robot near half-speed at a typical 22° entry
+        # angle; the old 0.60 bottomed out at 35% (~0.10 m/s) which cut angular
+        # authority so much that lateral correction took 5+ seconds to converge.
+        speed_factor = est.confidence * max(0.25, 1.0 - abs(theta) / 1.0)
         linear = max(self.min_linear, self.max_linear * speed_factor)
 
         # Pure-pursuit curvature; +target_x (row to the right) -> turn right.
