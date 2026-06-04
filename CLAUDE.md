@@ -359,9 +359,9 @@ Applied in `row_navigator.py` after self-filtering, before `detector.update()` a
 | `--cam-block-frames N` | **3** | Consecutive camera-blocked frames required to trigger OBSTACLE_WAIT |
 | `--cam-depth-3d` | **on** | 3-D depth fusion through height-filtered SafetyMonitor (default: on) |
 | `--no-cam-depth-3d` | — | Fall back to legacy 1-D depth strip (no height filtering — triggers on crops) |
-| `--cam-height M` | 0.55 | Camera height above ground (m) for 3-D extrinsic transform |
-| `--cam-yaw-deg DEG` | 35.0 | Inward yaw angle of each camera (degrees) |
-| `--cam-pitch-deg DEG` | 5.0 | Downward pitch of camera mount (degrees) |
+| `--cam-height M` | **0.914** | Camera height above ground (m) = 3 ft; for 3-D extrinsic transform |
+| `--cam-yaw-deg DEG` | **0.0** | Yaw from robot forward axis (degrees). 0 = forward-facing (default). Left cam receives negative value, right cam positive. |
+| `--cam-pitch-deg DEG` | **15.0** | Downward pitch of camera mount (degrees). Matches VLP-16 nose-down tilt. |
 | `--ros2-bridge` | off | Write scan + nav status to `/dev/shm/` at each scan for the Docker ROS 2 bridge |
 | `--debug` | off | Stream LiDAR height histogram + save bird's-eye PNG |
 | `--save-dir DIR` | — | Save raw point-cloud numpy arrays to DIR |
@@ -451,18 +451,18 @@ every ~0.5 s and logs a WARNING each time. Fix applied in `camera/oak_driver.py`
 
 #### Depth Obstacle Strip Geometry
 
-Side-mounted cameras see the robot's forward centreline path at the **inner image edge**,
-not the image centre. The obstacle strip must be shifted accordingly via `col_centre_frac`:
+Both cameras are **forward-facing** at 0° yaw, mounted at 0.914 m (3 ft) height on the left
+and right sides of the robot with a 15° nose-down pitch. Because they face straight ahead, the
+robot's forward path is roughly at the **image centre** of each camera.
 
 | Camera | Position | `col_centre_frac` | Why |
 |---|---|---|---|
-| Left | −0.915 m (left of robot) | **0.80** | Robot path at col ~480 (inner right edge) |
-| Right | +0.915 m (right of robot) | **0.20** | Robot path at col ~160 (inner left edge) |
+| Left | −0.915 m (left of robot) | **0.5** | Robot path is ahead — image centre |
+| Right | +0.915 m (right of robot) | **0.5** | Robot path is ahead — image centre |
 
-At `col_centre_frac=0.5` (image centre), the robot centreline would only become visible at
-≥5.7 m — useless for obstacle detection. The inner-edge strips cover **1.66–5 m forward**.
-
-This fills the LiDAR blind zone (< 1.5 m, removed by self-filter) with meaningful obstacle data.
+The primary obstacle path is the **3-D depth fusion** (`--cam-depth-3d`, default on), which
+projects every depth pixel to a robot-frame 3-D point and merges it with the LiDAR cloud.
+The 1-D strip (`col_centre_frac`) is only used with `--no-cam-depth-3d` as a fallback.
 
 #### Camera Block Debounce
 
@@ -703,7 +703,7 @@ OAK-D defaults: hfov=73°, vfov=54°, 640×400 → scale factor ≈ 0.91.
 | ACQUIRE forever with 15° tilted mount | `h = z_sensor + height` wrong; crop appears at h=0.83 m (above crop band) | Added `tilt_correct_pts()` in `obstacle_filter.py`; wired via `--lidar-tilt` |
 | OBSTACLE_WAIT immediately with 15° tilt | Ground returns appear at h=0.80 m → above obstacle threshold with uncorrected height | Same tilt correction fix |
 | `[oak_driver] X_LINK_DEVICE_NOT_FOUND` | Cameras on PoE switch — `amiga_service` holds exclusive depthai handles | Rewrote `oak_driver.py` to use `EventClient` → localhost:50010 |
-| Obstacle not detected by cameras (`safe=clear`) | Depth strip at image centre; robot centreline appears at col ~480/~160 from side cameras | Added `col_centre_frac=0.80/0.20` to shift strips to inner camera edges |
+| Obstacle not detected by cameras (`safe=clear`) | *(historical)* Depth strip at image centre when cameras were side-facing | N/A — cameras are now forward-facing; `col_centre_frac=0.5` for both |
 | Heading chaos ±70° at row end | PCA on round green blob → arbitrary principal direction → flips ±90° between frames | Added eigenvalue `linearity ≥ 0.30` check in `row_detector_visual.py` |
 | `depth-edge` robot turns right (open room) | `argmax(col_smooth)` found far wall; no right flank for gap validation | Added local-maximum flank validation in `_lateral_from_depth` |
 | `depth-edge` robot turns left (structural lines) | Hough detected warehouse edges without depth confirmation | Changed validity gate: `depth_conf == 0 → side invalid` regardless of Hough |

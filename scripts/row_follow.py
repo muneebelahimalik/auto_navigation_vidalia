@@ -288,7 +288,7 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
                 cam_x=-args.cam_x,
                 cam_y_fwd=args.cam_y_fwd,
                 cam_z=args.cam_height,
-                cam_yaw=-cam_yaw_rad,   # left cam: negative yaw (points right/inward)
+                cam_yaw=-cam_yaw_rad,   # left cam: negative = rotated left of forward axis
                 cam_pitch=cam_pitch_rad,
                 y_max=args.cam_stop_dist + 0.5,
             )
@@ -296,20 +296,22 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
                 cam_x=+args.cam_x,
                 cam_y_fwd=args.cam_y_fwd,
                 cam_z=args.cam_height,
-                cam_yaw=+cam_yaw_rad,   # right cam: positive yaw (points left/inward)
+                cam_yaw=+cam_yaw_rad,   # right cam: positive = rotated right of forward axis
                 cam_pitch=cam_pitch_rad,
                 y_max=args.cam_stop_dist + 0.5,
             )
         else:
             # Legacy 1-D depth strip obstacle detection.
+            # Both cameras face forward: the robot's forward path is at
+            # image centre (col_centre_frac=0.5) for both cameras.
             from camera.depth_obstacle import DepthObstacleDetector
             depth_left = DepthObstacleDetector(
                 stop_dist_m=args.cam_stop_dist,
-                col_centre_frac=0.80,
+                col_centre_frac=0.5,
             )
             depth_right = DepthObstacleDetector(
                 stop_dist_m=args.cam_stop_dist,
-                col_centre_frac=0.20,
+                col_centre_frac=0.5,
             )
 
     if args.ekf:
@@ -496,14 +498,16 @@ def main() -> None:
     parser.add_argument("--no-cam-depth-3d", action="store_false", dest="cam_depth_3d",
                         help="Fall back to legacy 1-D depth strip obstacle detector "
                              "(no height filtering — triggers on crops).")
-    parser.add_argument("--cam-height", type=float, default=0.55, metavar="M",
-                        help="Camera height above ground in metres (default: 0.55). "
+    parser.add_argument("--cam-height", type=float, default=0.914, metavar="M",
+                        help="Camera height above ground in metres (default: 0.914 = 3 ft). "
                              "Used with --cam-depth-3d for extrinsic transform.")
-    parser.add_argument("--cam-yaw-deg", type=float, default=35.0, metavar="DEG",
-                        help="Inward yaw of each camera from the forward axis in degrees "
-                             "(default: 35.0). Left cam is rotated -yaw, right cam +yaw.")
-    parser.add_argument("--cam-pitch-deg", type=float, default=5.0, metavar="DEG",
-                        help="Downward pitch of the camera mount in degrees (default: 5.0).")
+    parser.add_argument("--cam-yaw-deg", type=float, default=0.0, metavar="DEG",
+                        help="Yaw of each camera from the robot forward axis in degrees "
+                             "(default: 0.0 = forward-facing). Positive = rotated right. "
+                             "Left cam receives negative of this value, right cam positive.")
+    parser.add_argument("--cam-pitch-deg", type=float, default=15.0, metavar="DEG",
+                        help="Downward pitch of the camera mount in degrees (default: 15.0 — "
+                             "matches the VLP-16 nose-down tilt).")
     parser.add_argument("--cam-y-fwd", type=float, default=0.30, metavar="M",
                         help="Camera forward offset along robot Y axis in metres (default: 0.30).")
     parser.add_argument("--cam-self-radius", type=float, default=2.0, metavar="M",
