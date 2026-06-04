@@ -354,7 +354,7 @@ Applied in `row_navigator.py` after self-filtering, before `detector.update()` a
 | `--camera` | off | Enable OAK-D stereo cameras |
 | `--cam-left-id S` | "" | Left camera farm-ng service name (default: oak0) |
 | `--cam-right-id S` | "" | Right camera farm-ng service name (default: oak1) |
-| `--cam-x M` | **0.965** | Camera lateral offset from centreline m (half of 1.93 m body width; measured) |
+| `--cam-x M` | **0.88** | Camera lateral offset from centreline m (half of 1.76 m inter-camera span; measured) |
 | `--cam-stop-dist M` | **2.5** | Camera depth obstacle stop distance m |
 | `--cam-block-frames N` | **3** | Consecutive camera-blocked frames required to trigger OBSTACLE_WAIT |
 | `--cam-depth-3d` | **on** | 3-D depth fusion through height-filtered SafetyMonitor (default: on) |
@@ -379,7 +379,7 @@ Applied in `row_navigator.py` after self-filtering, before `detector.update()` a
 | `--detector` | `hsv` | `hsv` = HSV green centroid (default); `depth-edge` = colour-independent |
 | `--cam-left-id S` | "" | Left OAK-D farm-ng service name (default: oak0) |
 | `--cam-right-id S` | "" | Right OAK-D farm-ng service name (default: oak1) |
-| `--cam-x M` | **0.965** | Camera lateral offset from centreline m (measured) |
+| `--cam-x M` | **0.88** | Camera lateral offset from centreline m (half of 1.76 m inter-camera span; measured) |
 | `--cam-stop-dist M` | **2.5** | Depth obstacle stop distance m |
 | `--cam-block-frames N` | **3** | Consecutive camera-blocked frames required to trigger OBSTACLE_WAIT |
 | `--acquire-conf F` | **0.20** | Min visual confidence to leave ACQUIRE |
@@ -458,8 +458,8 @@ they face straight ahead, the robot's forward path is roughly at the **image cen
 
 | Camera | Position | `col_centre_frac` | Why |
 |---|---|---|---|
-| Left | −0.965 m (left of robot) | **0.5** | Robot path is ahead — image centre |
-| Right | +0.965 m (right of robot) | **0.5** | Robot path is ahead — image centre |
+| Left | −0.88 m (left of robot) | **0.5** | Robot path is ahead — image centre |
+| Right | +0.88 m (right of robot) | **0.5** | Robot path is ahead — image centre |
 
 The primary obstacle path is the **3-D depth fusion** (`--cam-depth-3d`, default on), which
 projects every depth pixel to a robot-frame 3-D point and merges it with the LiDAR cloud.

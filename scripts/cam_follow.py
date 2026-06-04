@@ -230,8 +230,8 @@ def main() -> None:
                         help="Left OAK-D farm-ng service name, e.g. oak0 (empty = oak0)")
     parser.add_argument("--cam-right-id", type=str, default="", metavar="SERVICE",
                         help="Right OAK-D farm-ng service name, e.g. oak1 (empty = oak1)")
-    parser.add_argument("--cam-x", type=float, default=0.915, metavar="M",
-                        help="Camera lateral offset from robot centreline (default: 0.915)")
+    parser.add_argument("--cam-x", type=float, default=0.88, metavar="M",
+                        help="Camera lateral offset from robot centreline (default: 0.88 — half of 1.76 m inter-camera span; measured)")
     parser.add_argument("--cam-stop-dist", type=float, default=2.5, metavar="M",
                         help="Depth obstacle stop distance in metres (default: 2.5)")
     parser.add_argument("--cam-block-frames", type=int, default=3, metavar="N",
