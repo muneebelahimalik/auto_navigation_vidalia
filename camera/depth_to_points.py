@@ -233,17 +233,24 @@ class DepthToPoints:
 
         # Apply forward-distance filter.
         # y_min = 0.50 m: excludes the robot's own body / chassis.  The camera
-        # is at cam_y_fwd ≈ 0.30 m; depth returns at 0.10–0.40 m in the camera
-        # (within the robot body volume) project to Y ≈ 0.35–0.70 m.  Without
-        # this floor they land inside the forward safety zone and cause spurious
-        # OBSTACLE_WAIT triggers while the robot is stationary.
+        # is at cam_y_fwd ≈ -0.505 m (behind LiDAR); depth returns at 0.10–0.50 m
+        # from the camera project to Y ≤ 0 m from LiDAR and are dropped here.
         y_fwd = pts_robot[:, 1]
         fwd_valid = (y_fwd >= 0.50) & (y_fwd <= self.y_max)
 
-        # Apply height filter: discard ground and sky.
+        # Apply height filter.
+        # Upper bound: cam_z − 0.05 m (5 cm below camera mount).
+        # Pixels near the horizon crop line (row ≈ v_crop_top) project to
+        # z_robot ≈ cam_z regardless of depth — they are looking approximately
+        # horizontally at the scene, not downward at an obstacle.  Any valid
+        # stereo depth reading at those pixels produces a point at height ≈ cam_z,
+        # which exceeds the 0.75 m obstacle threshold and triggers a false
+        # OBSTACLE_WAIT.  Clamping to < cam_z − 0.05 m removes these artifacts;
+        # genuine obstacles below the camera (boxes, people's legs) are unaffected.
         z_robot = pts_robot[:, 2]
         h_above_ground = z_robot
-        height_valid = (h_above_ground >= 0.05) & (h_above_ground <= 2.5)
+        h_max = self.cam_z - 0.05
+        height_valid = (h_above_ground >= 0.05) & (h_above_ground < h_max)
 
         keep = fwd_valid & height_valid
         if not keep.any():
