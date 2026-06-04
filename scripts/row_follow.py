@@ -329,6 +329,7 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
         tire_obstacle_height=tire_h,
         forward_dist=args.forward_dist,
         forward_half_width=args.forward_half_width,
+        tire_track=args.tire_track,
     )
     controller = PurePursuitController(
         max_linear=args.speed,
@@ -459,6 +460,10 @@ def main() -> None:
     parser.add_argument("--obstacle-height", type=float, default=0.75, metavar="M",
                         help="Min ground-relative height (m) to count as obstacle "
                              "in the FORWARD zone (default: 0.75)")
+    parser.add_argument("--tire-track", type=float, default=0.965, metavar="M",
+                        help="Distance from robot centreline to wheel centre (default: 0.965 — "
+                             "half of 1.93 m body width). Sets the lateral position of the "
+                             "L-TIRE / R-TIRE safety zones.")
     parser.add_argument("--tire-height", type=float, default=0.92, metavar="M",
                         help="Min ground-relative height (m) for TIRE-ZONE obstacles "
                              "(default: 0.92). Above mature onion canopy (h≈0.80–0.90m) "
@@ -480,8 +485,8 @@ def main() -> None:
                         help="Left OAK-D device serial (empty=auto)")
     parser.add_argument("--cam-right-id", type=str, default="", metavar="SERIAL",
                         help="Right OAK-D device serial (empty=auto)")
-    parser.add_argument("--cam-x", type=float, default=0.915, metavar="M",
-                        help="Camera lateral offset from centreline (default: 0.915)")
+    parser.add_argument("--cam-x", type=float, default=0.965, metavar="M",
+                        help="Camera lateral offset from robot centreline (default: 0.965 — half of 1.93 m body width)")
     parser.add_argument("--cam-stop-dist", type=float, default=2.5, metavar="M",
                         help="Camera depth obstacle stop distance in metres (default: 2.5)")
     parser.add_argument("--cam-block-frames", type=int, default=3, metavar="N",
@@ -498,8 +503,8 @@ def main() -> None:
     parser.add_argument("--no-cam-depth-3d", action="store_false", dest="cam_depth_3d",
                         help="Fall back to legacy 1-D depth strip obstacle detector "
                              "(no height filtering — triggers on crops).")
-    parser.add_argument("--cam-height", type=float, default=0.914, metavar="M",
-                        help="Camera height above ground in metres (default: 0.914 = 3 ft). "
+    parser.add_argument("--cam-height", type=float, default=1.000, metavar="M",
+                        help="Camera height above ground in metres (default: 1.000 — measured). "
                              "Used with --cam-depth-3d for extrinsic transform.")
     parser.add_argument("--cam-yaw-deg", type=float, default=0.0, metavar="DEG",
                         help="Yaw of each camera from the robot forward axis in degrees "
@@ -508,13 +513,13 @@ def main() -> None:
     parser.add_argument("--cam-pitch-deg", type=float, default=15.0, metavar="DEG",
                         help="Downward pitch of the camera mount in degrees (default: 15.0 — "
                              "matches the VLP-16 nose-down tilt).")
-    parser.add_argument("--cam-y-fwd", type=float, default=0.30, metavar="M",
-                        help="Camera forward offset along robot Y axis in metres (default: 0.30).")
-    parser.add_argument("--cam-self-radius", type=float, default=2.0, metavar="M",
-                        help="Planar-range self-filter for the 3-D camera depth cloud (default: 2.0 m). "
-                             "Points closer than this are assumed to be the robot's own structure "
-                             "(gantry, delta arm) and are discarded before the safety check. "
-                             "Set larger than --self-radius (1.5 m) to cover the full arm reach.")
+    parser.add_argument("--cam-y-fwd", type=float, default=-0.505, metavar="M",
+                        help="Camera offset from LiDAR along robot Y axis (default: -0.505 — "
+                             "cameras are 50.5 cm behind the LiDAR). Negative = behind LiDAR.")
+    parser.add_argument("--cam-self-radius", type=float, default=1.0, metavar="M",
+                        help="Planar-range self-filter for the 3-D camera depth cloud (default: 1.0 m). "
+                             "Points closer than this to the LiDAR origin are assumed to be the robot's "
+                             "own structure and are discarded before the safety check.")
     parser.add_argument("--ekf", action="store_true", default=True,
                         help="Enable EKF sensor fusion (default: on). Keeps FOLLOW stable through "
                              "VLP-16 alternating empty/full scans — prevents confidence oscillation "
@@ -524,11 +529,9 @@ def main() -> None:
     parser.add_argument("--forward-dist", type=float, default=2.5, metavar="M",
                         help="LiDAR forward safety zone depth (default: 2.5 m). "
                              "Reduce to 1.5 m for indoor or confined-space testing.")
-    parser.add_argument("--forward-half-width", type=float, default=0.60, metavar="M",
-                        help="LiDAR forward safety zone half-width (default: 0.60 m). "
-                             "Robot body is ±0.46 m wide; 0.60 m avoids triggering on "
-                             "adjacent row canopy when slightly off-centre. "
-                             "Raise to 0.95 m for wider obstacle coverage.")
+    parser.add_argument("--forward-half-width", type=float, default=0.97, metavar="M",
+                        help="LiDAR forward safety zone half-width (default: 0.97 m — "
+                             "half of 1.93 m robot body width plus 2 cm margin).")
     parser.add_argument("--lookahead", type=float, default=1.0, metavar="M",
                         help="Pure-pursuit lookahead distance in metres (default: 1.0). "
                              "Smaller = more aggressive lateral correction. "

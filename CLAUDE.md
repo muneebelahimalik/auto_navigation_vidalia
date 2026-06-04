@@ -256,7 +256,7 @@ async for event, message in EventClient(config).subscribe(config.subscriptions[0
 
 - **X** = right, **Y** = forward, **Z** = up (sensor frame, after tilt correction)
 - Ground-relative height: `h = z_corrected + LIDAR_MOUNT_HEIGHT`
-- `LIDAR_MOUNT_HEIGHT = 0.699 m` (defined in `lidar/obstacle_filter.py`)
+- `LIDAR_MOUNT_HEIGHT = 0.705 m` (defined in `lidar/obstacle_filter.py`; measured: ground to VLP-16 drum centre)
 - **LiDAR tilt: 15° forward (nose-down)** — requires tilt correction before any height math
 - Crop geometry: onion canopy h ≈ 0.10–0.60 m; adjacent row canopy h ≈ 0.70–0.85 m
 
@@ -313,10 +313,10 @@ Applied in `row_navigator.py` after self-filtering, before `detector.update()` a
 | Parameter | Value | Rationale |
 |---|---|---|
 | `forward_dist` | 2.5 m | Stopping horizon ahead |
-| `forward_half_width` | 0.95 m | Robot body width + margin |
-| `obstacle_height` (forward) | **0.75 m** | Above LIDAR_MOUNT_HEIGHT (0.699 m); onion plants (h≤0.60) pass; humans/posts stop |
+| `forward_half_width` | **0.97 m** | Half of 1.93 m robot body width + 2 cm margin (measured) |
+| `obstacle_height` (forward) | **0.75 m** | Above LIDAR_MOUNT_HEIGHT (0.705 m); onion plants (h≤0.60) pass; humans/posts stop |
 | `tire_obstacle_height` | **0.85 m** (field default) | Raised above adjacent crop canopy (h≈0.80–0.84 m) to eliminate L-TIRE false positives |
-| `tire_track` | 0.915 m | Half-track width of Amiga |
+| `tire_track` | **0.965 m** | Half of 1.93 m robot body width (measured); sets L/R-TIRE zone positions |
 | `tire_half_width` | 0.25 m | ± corridor around each wheel centreline |
 | `tire_dist` | 2.5 m | Same stopping horizon as forward zone |
 | `near` | 0.20 m | Ignore returns closer than this (sensor artefacts at beam origin) |
@@ -330,7 +330,7 @@ Applied in `row_navigator.py` after self-filtering, before `detector.update()` a
 | `max_linear` | 0.30 m/s | Conservative field speed |
 | `min_linear` | 0.08 m/s | Minimum creep speed when turning hard |
 | `min_confidence` | 0.35 | Zero output below this |
-| Speed formula | `conf × max(0.25, 1.0 − \|θ\|/0.60) × max_linear` | Slows for both low confidence and large heading error |
+| Speed formula | `conf × max(0.25, 1.0 − \|θ\|/1.0) × max_linear` | Slows for both low confidence and large heading error |
 
 ---
 
@@ -354,12 +354,13 @@ Applied in `row_navigator.py` after self-filtering, before `detector.update()` a
 | `--camera` | off | Enable OAK-D stereo cameras |
 | `--cam-left-id S` | "" | Left camera farm-ng service name (default: oak0) |
 | `--cam-right-id S` | "" | Right camera farm-ng service name (default: oak1) |
-| `--cam-x M` | 0.915 | Camera lateral offset from centreline m |
+| `--cam-x M` | **0.965** | Camera lateral offset from centreline m (half of 1.93 m body width; measured) |
 | `--cam-stop-dist M` | **2.5** | Camera depth obstacle stop distance m |
 | `--cam-block-frames N` | **3** | Consecutive camera-blocked frames required to trigger OBSTACLE_WAIT |
 | `--cam-depth-3d` | **on** | 3-D depth fusion through height-filtered SafetyMonitor (default: on) |
 | `--no-cam-depth-3d` | — | Fall back to legacy 1-D depth strip (no height filtering — triggers on crops) |
-| `--cam-height M` | **0.914** | Camera height above ground (m) = 3 ft; for 3-D extrinsic transform |
+| `--cam-height M` | **1.000** | Camera height above ground (m); measured |
+| `--cam-y-fwd M` | **-0.505** | Camera forward offset from LiDAR along robot Y (m); negative = behind LiDAR (measured: 50.5 cm behind) |
 | `--cam-yaw-deg DEG` | **0.0** | Yaw from robot forward axis (degrees). 0 = forward-facing (default). Left cam receives negative value, right cam positive. |
 | `--cam-pitch-deg DEG` | **15.0** | Downward pitch of camera mount (degrees). Matches VLP-16 nose-down tilt. |
 | `--ros2-bridge` | off | Write scan + nav status to `/dev/shm/` at each scan for the Docker ROS 2 bridge |
@@ -378,7 +379,7 @@ Applied in `row_navigator.py` after self-filtering, before `detector.update()` a
 | `--detector` | `hsv` | `hsv` = HSV green centroid (default); `depth-edge` = colour-independent |
 | `--cam-left-id S` | "" | Left OAK-D farm-ng service name (default: oak0) |
 | `--cam-right-id S` | "" | Right OAK-D farm-ng service name (default: oak1) |
-| `--cam-x M` | 0.915 | Camera lateral offset from centreline m |
+| `--cam-x M` | **0.965** | Camera lateral offset from centreline m (measured) |
 | `--cam-stop-dist M` | **2.5** | Depth obstacle stop distance m |
 | `--cam-block-frames N` | **3** | Consecutive camera-blocked frames required to trigger OBSTACLE_WAIT |
 | `--acquire-conf F` | **0.20** | Min visual confidence to leave ACQUIRE |
@@ -451,14 +452,14 @@ every ~0.5 s and logs a WARNING each time. Fix applied in `camera/oak_driver.py`
 
 #### Depth Obstacle Strip Geometry
 
-Both cameras are **forward-facing** at 0° yaw, mounted at 0.914 m (3 ft) height on the left
-and right sides of the robot with a 15° nose-down pitch. Because they face straight ahead, the
-robot's forward path is roughly at the **image centre** of each camera.
+Both cameras are **forward-facing** at 0° yaw, mounted at 1.000 m height on the left
+and right sides of the robot with a 15° nose-down pitch, 50.5 cm behind the LiDAR. Because
+they face straight ahead, the robot's forward path is roughly at the **image centre** of each camera.
 
 | Camera | Position | `col_centre_frac` | Why |
 |---|---|---|---|
-| Left | −0.915 m (left of robot) | **0.5** | Robot path is ahead — image centre |
-| Right | +0.915 m (right of robot) | **0.5** | Robot path is ahead — image centre |
+| Left | −0.965 m (left of robot) | **0.5** | Robot path is ahead — image centre |
+| Right | +0.965 m (right of robot) | **0.5** | Robot path is ahead — image centre |
 
 The primary obstacle path is the **3-D depth fusion** (`--cam-depth-3d`, default on), which
 projects every depth pixel to a robot-frame 3-D point and merges it with the LiDAR cloud.
@@ -573,7 +574,7 @@ journalctl --user -u vidalia-ros2-bridge -f
 | Topic | Type | Notes |
 |---|---|---|
 | `/velodyne_points` | `sensor_msgs/PointCloud2` | xyz + intensity (height-relative); frame `velodyne` |
-| `/tf_static` | TF | `base_link → velodyne`: x=0.959 m, z=0.699 m, pitch=−15° (tilt corrected) |
+| `/tf_static` | TF | `base_link → velodyne`: z=0.705 m, pitch=−15° (tilt corrected) |
 | `/row_viz` | `visualization_msgs/MarkerArray` | Arrow = row direction; green line = lateral offset |
 | `/safety_viz` | `visualization_msgs/MarkerArray` | Wireframe boxes: forward zone + tire zones; green = clear, red = blocked |
 | `/cmd_vel` | `geometry_msgs/Twist` | Current commanded velocity (linear.x, angular.z) |

@@ -39,7 +39,7 @@ from lidar.lidar_driver import LidarDriver, VelodynePoint
 # ---------------------------------------------------------------------------
 # Mount geometry — must match URDF and tf_static_base_to_velodyne.launch.py
 # ---------------------------------------------------------------------------
-LIDAR_MOUNT_HEIGHT = 0.699   # metres (z component base_link → velodyne; 27.5 in)
+LIDAR_MOUNT_HEIGHT = 0.705   # metres — measured: ground to VLP-16 drum centre
 
 
 def tilt_correct_pts(pts: np.ndarray, tilt_rad: float) -> np.ndarray:
