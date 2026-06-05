@@ -218,12 +218,12 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
         cam_tasks.append(asyncio.ensure_future(odometry.run()))
 
     # Wait for first frames, then verify at least one camera came up.
-    await asyncio.sleep(2.5)
+    await asyncio.sleep(5.0)
     left_ok = left_cam.get_latest() is not None
     right_ok = right_cam.get_latest() is not None
     if not left_ok and not right_ok:
         print(
-            "\n[cam_follow] ERROR: no frames received from either camera after 2.5 s.\n"
+            "\n[cam_follow] ERROR: no frames received from either camera after 5.0 s.\n"
             "  Check that the OAK-D devices are physically connected (USB 3.0 required)\n"
             "  and detected by the OS:\n"
             "    lsusb | grep -iE 'movidius|luxonis|03e7'\n"
