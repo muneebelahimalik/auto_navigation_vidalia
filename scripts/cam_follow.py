@@ -123,17 +123,22 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
             green_s_lo=args.hsv_s_lo,
             green_v_lo=args.hsv_v_lo,
         )
-    # Left camera is at -cam_x (left of robot). It looks forward, so the robot's
-    # forward centreline path appears at the INNER (right) edge of its image, col~480.
-    # Right camera is at +cam_x, so the path appears at the LEFT edge, col~160.
-    depth_left = DepthObstacleDetector(
-        stop_dist_m=args.cam_stop_dist,
-        col_centre_frac=0.80,
-    )
-    depth_right = DepthObstacleDetector(
-        stop_dist_m=args.cam_stop_dist,
-        col_centre_frac=0.20,
-    )
+    # In dual-row soybean mode the crop rows themselves are always within 2.5 m of
+    # the forward-facing cameras; depth obstacle checking would permanently block.
+    # Disable it — safety comes from slow speed and user supervision.
+    # In single-row mode, both cameras are forward-facing so col_centre_frac=0.5.
+    if args.dual_row:
+        depth_left = None
+        depth_right = None
+    else:
+        depth_left = DepthObstacleDetector(
+            stop_dist_m=args.cam_stop_dist,
+            col_centre_frac=0.5,
+        )
+        depth_right = DepthObstacleDetector(
+            stop_dist_m=args.cam_stop_dist,
+            col_centre_frac=0.5,
+        )
 
     # Camera-only confidence range is lower than LiDAR, so min_confidence is tuned down.
     controller = PurePursuitController(
@@ -304,11 +309,11 @@ def main() -> None:
                              "use ~10 for brown/cardboard, ~100 for blue)")
     parser.add_argument("--hsv-h-hi", type=int, default=85, metavar="H",
                         help="HSV hue upper bound 0-180 (default: 85)")
-    parser.add_argument("--hsv-s-lo", type=int, default=40, metavar="S",
-                        help="HSV saturation lower bound 0-255 (default: 40; "
-                             "lower to ~25 for pale/cardboard colours)")
-    parser.add_argument("--hsv-v-lo", type=int, default=40, metavar="V",
-                        help="HSV value lower bound 0-255 (default: 40)")
+    parser.add_argument("--hsv-s-lo", type=int, default=25, metavar="S",
+                        help="HSV saturation lower bound 0-255 (default: 25; "
+                             "lower for pale/young soybean seedlings)")
+    parser.add_argument("--hsv-v-lo", type=int, default=30, metavar="V",
+                        help="HSV value lower bound 0-255 (default: 30)")
     args = parser.parse_args()
 
     import logging
