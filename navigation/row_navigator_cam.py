@@ -28,6 +28,7 @@ from typing import Optional
 from canbus.canbus_interface import CanbusInterface
 from camera.depth_obstacle import DepthObstacleDetector
 from camera.row_detector_visual import VisualRowDetector, VisualRowEstimate
+from navigation.headland import HeadlandTurn
 from navigation.row_controller import PurePursuitController
 from navigation.row_perception import RowEstimate
 
@@ -37,14 +38,11 @@ class _S:
     FOLLOW = "FOLLOW"
     ROW_END = "ROW_END"
     OBSTACLE_WAIT = "OBSTACLE_WAIT"
-    HL_ADVANCE = "HL_ADVANCE"
-    HL_TURN1 = "HL_TURN1"
-    HL_SHIFT = "HL_SHIFT"
-    HL_TURN2 = "HL_TURN2"
+    HEADLAND = "HEADLAND"
     DONE = "DONE"
 
 
-_HEADLAND_STATES = (_S.HL_ADVANCE, _S.HL_TURN1, _S.HL_SHIFT, _S.HL_TURN2)
+_HEADLAND_STATES = (_S.HEADLAND,)
 
 
 def _vis_to_row(vis: VisualRowEstimate) -> RowEstimate:
@@ -82,12 +80,14 @@ class CamRowNavigator:
         row_end_frames: int = 10,
         row_end_min_dist: float = 2.0,
         obstacle_clear_secs: float = 1.5,
-        buffer_dist: float = 1.5,
-        bed_shift: float = 1.5,
-        headland_speed: float = 0.10,
-        headland_turn_rate: float = 0.25,
+        row_spacing: float = 0.76,
+        headland_exit_dist: float = 1.0,
+        first_turn_sign: float = 1.0,
+        headland_speed: float = 0.12,
+        headland_turn_rate: float = 0.35,
         poll_hz: float = 20.0,
         cam_block_frames: int = 3,
+        odometry=None,
     ) -> None:
         self.canbus = canbus
         self.left_cam = left_cam
@@ -107,11 +107,13 @@ class CamRowNavigator:
         self.row_end_frames = row_end_frames
         self.row_end_min_dist = row_end_min_dist
         self.obstacle_clear_secs = obstacle_clear_secs
-        self.buffer_dist = buffer_dist
-        self.bed_shift = bed_shift
+        self.row_spacing = row_spacing
+        self.headland_exit_dist = headland_exit_dist
+        self.first_turn_sign = 1.0 if first_turn_sign >= 0 else -1.0
         self.headland_speed = headland_speed
         self.headland_turn_rate = headland_turn_rate
         self._poll_interval = 1.0 / max(poll_hz, 1.0)
+        self.odometry = odometry
 
         self.state = _S.ACQUIRE
         self.cmd = (0.0, 0.0)
@@ -123,9 +125,22 @@ class CamRowNavigator:
         self._obstacle_clear_t: Optional[float] = None
         self.cam_block_frames = cam_block_frames
         self._cam_block_count: int = 0
-        self._hl_progress = 0.0
         self._turn_sign = 1.0
         self._t_prev = time.monotonic()
+
+        # Closed-loop headland U-turn (odometry feedback).  The camera-only
+        # stack typically has no canbus wheel telemetry, so WheelOdometry
+        # dead-reckons from commanded velocity — still far more accurate than
+        # the previous fixed-time open-loop manoeuvre.
+        self._headland_turn = None
+        if self.odometry is not None:
+            self._headland_turn = HeadlandTurn(
+                self.odometry,
+                row_spacing=row_spacing,
+                exit_dist=headland_exit_dist,
+                speed=headland_speed,
+                turn_rate=headland_turn_rate,
+            )
 
     # ------------------------------------------------------------------
     async def run(self) -> None:
@@ -149,6 +164,17 @@ class CamRowNavigator:
 
             linear, angular = self._step(vis, blocked, dt)
             self.cmd = (linear, angular)
+
+            # Centralised odometry integration (one tick per cycle).  FOLLOW
+            # accrues row distance; HEADLAND reads odometry for turn feedback.
+            if self.odometry is not None:
+                d_before = self.odometry.distance
+                self.odometry.tick(linear, angular, dt)
+                if self.state == _S.FOLLOW:
+                    self._row_dist += max(0.0, self.odometry.distance - d_before)
+            elif self.state == _S.FOLLOW:
+                self._row_dist += max(0.0, linear * dt)
+
             await self._drive(linear, angular)
             self._print_status(vis, blocked, cam_reason, linear, angular)
 
@@ -203,7 +229,7 @@ class CamRowNavigator:
             return self._step_obstacle(blocked)
         if st == _S.ROW_END:
             return self._step_row_end()
-        if st in _HEADLAND_STATES:
+        if st == _S.HEADLAND:
             return self._step_headland(dt)
         return 0.0, 0.0  # DONE
 
@@ -232,9 +258,8 @@ class CamRowNavigator:
             self._acq_count = 0
             return 0.0, 0.0
 
-        linear, angular = self.controller.compute(_vis_to_row(vis))
-        self._row_dist += linear * dt
-        return linear, angular
+        # Row distance is integrated centrally in run() from odometry.
+        return self.controller.compute(_vis_to_row(vis))
 
     def _step_obstacle(self, blocked: bool):
         if blocked:
@@ -249,41 +274,30 @@ class CamRowNavigator:
 
     def _step_row_end(self):
         self._rows_done += 1
-        if self.headland and self._rows_done < self.rows:
-            self._turn_sign = 1.0 if self._rows_done % 2 == 1 else -1.0
-            self._hl_progress = 0.0
-            self._enter(_S.HL_ADVANCE)
+        if (self.headland and self._rows_done < self.rows
+                and self._headland_turn is not None):
+            # Serpentine coverage: alternate turn direction each row, starting
+            # from first_turn_sign (+1 = right).
+            self._turn_sign = self.first_turn_sign * (
+                1.0 if self._rows_done % 2 == 1 else -1.0)
+            self._headland_turn.begin(self._turn_sign)
+            self._enter(_S.HEADLAND)
         else:
             self._enter(_S.DONE)
         return 0.0, 0.0
 
     def _step_headland(self, dt: float):
-        creep = self.headland_speed
-        turn = self.headland_turn_rate * self._turn_sign
-        if self.state == _S.HL_ADVANCE:
-            self._hl_progress += creep * dt
-            if self._hl_progress >= self.buffer_dist:
-                self._hl_progress = 0.0
-                self._enter(_S.HL_TURN1)
-            return creep, 0.0
-        if self.state == _S.HL_TURN1:
-            self._hl_progress += abs(turn) * dt
-            if self._hl_progress >= math.pi / 2.0:
-                self._hl_progress = 0.0
-                self._enter(_S.HL_SHIFT)
-            return 0.0, turn
-        if self.state == _S.HL_SHIFT:
-            self._hl_progress += creep * dt
-            if self._hl_progress >= self.bed_shift:
-                self._hl_progress = 0.0
-                self._enter(_S.HL_TURN2)
-            return creep, 0.0
-        # HL_TURN2
-        self._hl_progress += abs(turn) * dt
-        if self._hl_progress >= math.pi / 2.0:
+        """Closed-loop headland U-turn (odometry feedback via HeadlandTurn)."""
+        if self._headland_turn is None:
+            self._enter(_S.DONE)
+            return 0.0, 0.0
+        linear, angular = self._headland_turn.step(dt)
+        if self._headland_turn.done:
             self._acq_count = 0
+            self._row_dist = 0.0
             self._enter(_S.ACQUIRE)
-        return 0.0, turn
+            return 0.0, 0.0
+        return linear, angular
 
     # ------------------------------------------------------------------
     def _enter(self, state: str) -> None:

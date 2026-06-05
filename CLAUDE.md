@@ -251,21 +251,92 @@ async for event, message in EventClient(config).subscribe(config.subscriptions[0
 |---|---|
 | `scripts/row_follow.py` | CLI entry point; parses flags, wires tasks, asyncio loop |
 | `scripts/cam_follow.py` | Camera-only entry point |
-| `navigation/row_navigator.py` | State machine: ACQUIRE → FOLLOW → ROW_END / OBSTACLE_WAIT; `/dev/shm` bridge writer |
-| `navigation/row_navigator_cam.py` | Camera-only state machine |
-| `navigation/row_perception.py` | PCA-based LiDAR row detector; EMA-smoothed RowEstimate |
+| `navigation/row_navigator.py` | State machine: ACQUIRE → FOLLOW → ROW_END → HEADLAND / OBSTACLE_WAIT; `/dev/shm` bridge writer |
+| `navigation/row_navigator_cam.py` | Camera-only state machine (same states + closed-loop headland) |
+| `navigation/row_perception.py` | PCA-based LiDAR row detector; single-row + dual-row (midpoint) modes |
+| `navigation/headland.py` | **Closed-loop U-turn** driver (odometry feedback); EXIT→TURN_A→SHIFT→TURN_B |
+| `navigation/odometry.py` | Wheel odometry (measured AmigaTpdo1 speed; commanded-velocity fallback) |
 | `navigation/row_safety.py` | Three-zone obstacle monitor (forward + left/right tire tracks) |
 | `navigation/row_controller.py` | Pure-pursuit speed/steering controller |
 | `lidar/lidar_driver.py` | Async UDP VLP-16 driver; vectorised numpy scan_stream_np() |
 | `lidar/obstacle_filter.py` | `tilt_correct_pts()` + `LIDAR_MOUNT_HEIGHT`; self-filter logic |
 | `camera/oak_driver.py` | Async OAK-D driver via farm-ng EventClient (localhost:50010) |
 | `camera/depth_obstacle.py` | Depth-frame inner-edge obstacle detector (`col_centre_frac`) |
-| `camera/row_detector_visual.py` | HSV green-centroid + linearity-gated PCA heading |
+| `camera/soybean_row_tracker.py` | **Dual-camera flanking-row tracker** — each OAK-D tracks its own side's soybean row; residue centre = midpoint |
+| `camera/row_detector_visual.py` | HSV green-centroid + linearity-gated PCA heading (single-row/onion) |
 | `camera/row_detector_depth_edge.py` | Colour-independent Canny/Hough + depth-gap lateral detector |
 | `ros2_bridge/Dockerfile` | L4T-optimised ROS2 Foxy image: `dustynv/ros:foxy-ros-base-l4t-r35.2.1` |
 | `ros2_bridge/vidalia_node.py` | ROS2 Python node: reads `/dev/shm/`, publishes 5 topics at 12 Hz |
 | `ros2_bridge/start.sh` | Build + run container with `--runtime nvidia` + `/dev/shm` bind mount |
 | `ros2_bridge/install_autostart.sh` | Installs `~/.config/systemd/user/vidalia-ros2-bridge.service` |
+
+---
+
+### Soybean Field Autonomy — Full Pipeline
+
+The soybean field is a **centre-residue strip** layout: the robot straddles a
+dark strip of crop residue, with a soybean row flanking it on each side and the
+wheels running in the furrows.  The control target is the **centre of the
+residue strip**, tracked from three independent sources and fused.
+
+```
+                LEFT soybean row     centre residue strip     RIGHT soybean row
+                       │              (tracking target)              │
+   left OAK-D ─────────┘                     ▲                       └───────── right OAK-D
+   (tracks LEFT row)                         │                       (tracks RIGHT row)
+                                  VLP-16 LiDAR dual-row
+                              (midpoint of L+R crop peaks)
+```
+
+**Three estimators of the same residue-strip centre:**
+
+1. **LiDAR dual-row** (`RowDetector(dual_row=True)`) — histograms the crop-band
+   cross-row coordinate, takes the **midpoint** of the nearest left and right
+   peaks (`_midpoint_peaks`).  Primary source (full 0–1 confidence).
+2. **Dual-camera flanking rows** (`DualCameraRowTracker`) — each OAK-D locks onto
+   the dominant green row band on **its own side**; the residue centre is the
+   **midpoint** of the two detected rows (camera-capped 0–0.5 confidence).
+3. **Fusion** — EKF (`--ekf`) or confidence-weighted average folds the camera
+   midpoint into the LiDAR midpoint; camera weight is capped at half the LiDAR
+   weight.
+
+**Why two cameras (not a redundant stereo pair):** each camera is assigned to the
+row on its own side, so the pair forms a *differential* centring sensor —
+drifting right brings the right row nearer and the left row farther, shifting the
+midpoint immediately.  Benefits: common-mode rejection (shared lighting errors
+cancel), direct proportional centring signal, graceful degradation (one row
+occluded → fall back to the visible row ± half the row spacing), and √2 heading
+noise reduction from averaging two parallel-row estimates.
+
+**End-of-row U-turn** (`HeadlandTurn`, closed-loop on wheel odometry):
+
+```
+ROW_END ─► HEADLAND ─────────────────────────────────────► ACQUIRE (next row)
+            EXIT  (drive exit_dist straight, clear last plants)
+            TURN_A(pivot 90° toward next row — odometry heading feedback)
+            SHIFT (drive row_spacing straight to the adjacent strip)
+            TURN_B(pivot 90° same direction — now aligned down next row)
+```
+
+Turn direction alternates each row for **serpentine coverage** (right, left,
+right, …), starting from `--turn-dir` (default right).  The loop repeats until
+`--rows N` rows are complete, then DONE.  Odometry uses **measured** wheel speed
+(AmigaTpdo1) when the canbus telemetry is available, falling back to
+commanded-velocity dead-reckoning — both far more accurate than the previous
+fixed-time open-loop manoeuvre.
+
+**Run it:**
+```bash
+# Perception-only (verify L/R row detection + midpoint before moving):
+python3 scripts/row_follow.py --dual-row --camera
+
+# Single row, autonomous, LiDAR + dual cameras:
+python3 scripts/row_follow.py --auto --dual-row --camera
+
+# Multi-row serpentine coverage with closed-loop U-turns:
+python3 scripts/row_follow.py --auto --dual-row --camera --rows 6 --headland \
+    --row-spacing 0.76 --turn-dir right
+```
 
 ---
 
@@ -362,8 +433,13 @@ Applied in `row_navigator.py` after self-filtering, before `detector.update()` a
 | Flag | Default | Description |
 |---|---|---|
 | `--auto` | off | Enable canbus and send velocity commands to wheels |
-| `--rows N` | 1 | Stop after N rows completed |
-| `--headland` | off | Perform open-loop headland turns between rows |
+| `--rows N` | 1 | Stop after N rows completed (serpentine when combined with `--headland`) |
+| `--headland` | off | **Closed-loop** headland U-turns between rows (odometry feedback) |
+| `--row-spacing M` | **0.76** | Lateral distance to the next strip after a turn; also dual-camera single-row fallback spacing |
+| `--turn-dir D` | **right** | Direction of the first U-turn (`right`/`left`); subsequent turns alternate |
+| `--headland-exit M` | **1.0** | Straight distance driven past the row end before the first pivot |
+| `--headland-speed M` | **0.15** | Forward speed during straight headland phases (m/s) |
+| `--headland-turn-rate R` | **0.35** | Pivot rate during the two 90° turns (rad/s) |
 | `--slam` | off | Enable SLAM odometry integration (currently no-op) |
 | `--speed M` | 0.30 | Max forward speed m/s |
 | `--lidar-tilt DEG` | **15.0** | Forward (nose-down) LiDAR tilt in degrees — **must match physical mount** |
@@ -398,7 +474,13 @@ Applied in `row_navigator.py` after self-filtering, before `detector.update()` a
 |---|---|---|
 | `--auto` | off | Enable motion (default: perception-only) |
 | `--rows N` | 1 | Number of rows to cover |
-| `--headland` | off | Perform open-loop headland turns between rows |
+| `--headland` | off | **Closed-loop** headland U-turns between rows (odometry feedback) |
+| `--dual-row` | off | Soybean mode: dual-camera flanking-row tracker (overrides `--detector`) |
+| `--row-spacing M` | **0.76** | Soybean row spacing / next-strip distance |
+| `--turn-dir D` | **right** | First U-turn direction (`right`/`left`); subsequent alternate |
+| `--headland-exit M` | **1.0** | Straight distance past row end before first pivot |
+| `--headland-speed M` | **0.12** | Forward speed during straight headland phases |
+| `--headland-turn-rate R` | **0.35** | Pivot rate during 90° turns (rad/s) |
 | `--speed M` | **0.20** | Max forward speed m/s (lower than LiDAR due to camera latency) |
 | `--detector` | `hsv` | `hsv` = HSV green centroid (default); `depth-edge` = colour-independent |
 | `--cam-left-id S` | "" | Left OAK-D farm-ng service name (default: oak0) |
@@ -420,22 +502,32 @@ Applied in `row_navigator.py` after self-filtering, before `detector.update()` a
 
 ```
          ┌──────────────────┐
-    boot  │     ACQUIRE      │  confidence ≥ acquire_conf (0.45)
+    boot  │     ACQUIRE      │  confidence ≥ acquire_conf (0.35)
   ───────>│  5 consecutive   │────────────────────────────────────►┐
-          │  frames needed   │                                      │
-          └──────────────────┘                                      │
-                   ▲ obstacle clears (1.5 s consecutive)           ▼
-                   │                                       ┌──────────────┐
-          ┌──────────────────┐   obstacle detected         │    FOLLOW    │
-          │  OBSTACLE_WAIT   │◄────────────────────────────│  pure-pursuit│
-          └──────────────────┘                             │  cmd sent    │
-                                                           └──────┬───────┘
-                                                                  │ row end
-                                                                  ▼
-                                                           ┌──────────────┐
-                                                           │   ROW_END    │
-                                                           └──────────────┘
+       ┌─>│  frames needed   │                                      │
+       │  └──────────────────┘                                      │
+       │           ▲ obstacle clears (1.5 s consecutive)           ▼
+       │           │                                       ┌──────────────┐
+       │  ┌──────────────────┐   obstacle detected         │    FOLLOW    │
+       │  │  OBSTACLE_WAIT   │◄────────────────────────────│  pure-pursuit│
+       │  └──────────────────┘                             │  cmd sent    │
+       │                                                   └──────┬───────┘
+       │                                                          │ row end
+       │  U-turn complete                                         ▼
+       │  ┌──────────────────┐   more rows + --headland    ┌──────────────┐
+       └──│     HEADLAND     │◄────────────────────────────│   ROW_END    │
+          │ EXIT→TURN_A→     │                             └──────┬───────┘
+          │ SHIFT→TURN_B     │   last row (no --headland)         │
+          │ (odometry loop)  │                                    ▼
+          └──────────────────┘                            ┌──────────────┐
+                                                          │     DONE     │
+                                                          └──────────────┘
 ```
+
+ROW_END requires: row_dist ≥ row_end_min_dist **and** LiDAR crop-band sparse
+(row_end_confidence high) **and** (cameras off **or** green fraction low) — the
+camera cross-check stops a single sparse VLP-16 scan from faking a row end while
+soybean foliage is still clearly in view.
 
 ---
 

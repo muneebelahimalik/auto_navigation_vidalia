@@ -277,13 +277,25 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
     if args.camera:
         import math as _math2
         from camera.oak_driver import OakDriver
-        from camera.row_detector_visual import VisualRowDetector
         left_cam = OakDriver(side="left", device_id=args.cam_left_id)
         right_cam = OakDriver(side="right", device_id=args.cam_right_id)
-        vis_detector = VisualRowDetector(
-            cam_x_left=-args.cam_x,
-            cam_x_right=args.cam_x,
-        )
+
+        if args.dual_row:
+            # Soybean centre-residue mode: each camera tracks the flanking row
+            # on its own side; the residue-strip centre is their midpoint.
+            from camera.soybean_row_tracker import DualCameraRowTracker
+            vis_detector = DualCameraRowTracker(
+                cam_x_left=-args.cam_x,
+                cam_x_right=args.cam_x,
+                row_spacing=args.row_spacing,
+            )
+        else:
+            # Single-row mode: forward green-centroid detector (onion / raised bed).
+            from camera.row_detector_visual import VisualRowDetector
+            vis_detector = VisualRowDetector(
+                cam_x_left=-args.cam_x,
+                cam_x_right=args.cam_x,
+            )
 
         if args.cam_depth_3d:
             # Full 3-D depth fusion: project camera depth images to LiDAR-convention
@@ -326,6 +338,14 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
         from navigation.ekf_estimator import RowEKF
         ekf = RowEKF()
 
+    # Wheel odometry: drives accurate FOLLOW row-distance and closed-loop
+    # headland turns.  Reuses the canbus EventServiceConfig to subscribe to
+    # measured wheel speed (AmigaTpdo1); falls back to commanded-velocity
+    # dead-reckoning when telemetry is unavailable (e.g. perception-only).
+    from navigation.odometry import WheelOdometry
+    canbus_config = canbus.config if canbus is not None else None
+    odometry = WheelOdometry(canbus_config)
+
     detector = RowDetector(
         roi_x_half=args.roi_x,
         crop_h_min=args.crop_min,
@@ -352,6 +372,11 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
         self_radius=args.self_radius,
         acquire_conf=args.acquire_conf,
         row_end_min_dist=args.row_end_min_dist,
+        row_spacing=args.row_spacing,
+        headland_exit_dist=args.headland_exit,
+        first_turn_sign=(1.0 if args.turn_dir == "right" else -1.0),
+        headland_speed=args.headland_speed,
+        headland_turn_rate=args.headland_turn_rate,
         align_heading=args.align_heading,
         align_rate=args.align_speed,
         left_cam=left_cam,
@@ -376,6 +401,10 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
     print(f"  Autonomous crop-row follower  [{det_mode}]")
     print(f"  mode    : {'AUTONOMOUS — robot WILL move' if args.auto else 'perception-only (no motion)'}")
     print(f"  rows    : {args.rows}   headland turns: {'on' if args.headland else 'off'}")
+    if args.headland:
+        print(f"  headland: U-turn first={args.turn_dir} (then alternating)  "
+              f"row_spacing={args.row_spacing:.2f}m  exit={args.headland_exit:.2f}m  "
+              f"speed={args.headland_speed:.2f}m/s  turn={args.headland_turn_rate:.2f}rad/s")
     print(f"  speed   : {args.speed:.2f} m/s max   SLAM map: {'on' if args.slam else 'off'}")
     print(f"  crop    : h=[{args.crop_min:.2f},{args.crop_max:.2f}]m  roi_x=±{args.roi_x:.2f}m")
     print(f"  safety  : fwd_h={args.obstacle_height:.2f}m  tire_h={tire_h:.2f}m  "
@@ -384,7 +413,8 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
     align_str = f"align={args.align_speed:.2f}rad/s (on)" if args.align_heading else "align=off"
     print(f"  control : lookahead={args.lookahead:.1f}m  max_angular={args.max_angular:.2f}rad/s  {align_str}")
     if args.camera:
-        cam_mode = "OAK-D left+right"
+        row_mode = "dual-flanking-row tracker" if args.dual_row else "green-centroid tracker"
+        cam_mode = f"OAK-D left+right ({row_mode})"
         if args.cam_depth_3d:
             cam_mode += f"  3D-fusion(h={args.cam_height}m yaw={args.cam_yaw_deg}° pitch={args.cam_pitch_deg}° self_r={args.cam_self_radius:.1f}m)"
         else:
@@ -425,6 +455,9 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
         if args.camera:
             cam_tasks.append(asyncio.ensure_future(left_cam.run()))
             cam_tasks.append(asyncio.ensure_future(right_cam.run()))
+        # Background wheel-odometry subscription (no-op if telemetry unavailable).
+        if odometry is not None and canbus_config is not None:
+            cam_tasks.append(asyncio.ensure_future(odometry.run()))
         try:
             await navigator.run(lidar)
         finally:
@@ -450,7 +483,26 @@ def main() -> None:
     parser.add_argument("--rows", type=int, default=1, metavar="N",
                         help="Number of rows to cover (default: 1)")
     parser.add_argument("--headland", action="store_true",
-                        help="Perform open-loop headland turns between rows")
+                        help="Perform closed-loop headland U-turns between rows "
+                             "(odometry feedback). Combine with --rows N to cover "
+                             "multiple rows in a serpentine pattern.")
+    parser.add_argument("--row-spacing", type=float, default=0.76, metavar="M",
+                        help="Lateral distance (m) to the adjacent strip the robot "
+                             "straddles after a headland turn (default: 0.76). Also "
+                             "used by the dual-camera tracker as the soybean row "
+                             "spacing for single-row fallback.")
+    parser.add_argument("--turn-dir", choices=["right", "left"], default="right",
+                        help="Direction of the FIRST headland U-turn (default: right). "
+                             "Subsequent turns alternate for serpentine coverage.")
+    parser.add_argument("--headland-exit", type=float, default=1.0, metavar="M",
+                        help="Straight distance (m) driven past the row end before the "
+                             "first pivot, to clear the body of the last plants (default: 1.0).")
+    parser.add_argument("--headland-speed", type=float, default=0.15, metavar="M",
+                        help="Forward speed (m/s) during the straight headland phases "
+                             "(default: 0.15).")
+    parser.add_argument("--headland-turn-rate", type=float, default=0.35, metavar="R",
+                        help="Pivot rate (rad/s) during the two 90° headland turns "
+                             "(default: 0.35).")
     parser.add_argument("--slam", action="store_true",
                         help="Build an occupancy-grid map in the background")
     parser.add_argument("--speed", type=float, default=0.30, metavar="M",

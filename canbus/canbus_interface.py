@@ -51,6 +51,11 @@ class CanbusInterface:
         self._max_linear = max_linear
         self._max_angular = max_angular
 
+    @property
+    def config(self) -> EventServiceConfig:
+        """The EventServiceConfig this interface drives (for odometry reuse)."""
+        return self._config
+
     async def send_twist(self, linear_x: float, angular_z: float) -> None:
         """Send a velocity command to the Amiga robot.
 

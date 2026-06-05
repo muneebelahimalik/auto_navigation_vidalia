@@ -34,6 +34,7 @@ import numpy as np
 from canbus.canbus_interface import CanbusInterface
 from lidar.lidar_driver import LidarDriver
 from lidar.obstacle_filter import tilt_correct_pts
+from navigation.headland import HeadlandTurn
 from navigation.row_controller import PurePursuitController
 from navigation.row_perception import RowDetector, RowEstimate
 from navigation.row_safety import SafetyMonitor
@@ -73,14 +74,11 @@ class _S:
     FOLLOW = "FOLLOW"
     ROW_END = "ROW_END"
     OBSTACLE_WAIT = "OBSTACLE_WAIT"
-    HL_ADVANCE = "HL_ADVANCE"
-    HL_TURN1 = "HL_TURN1"
-    HL_SHIFT = "HL_SHIFT"
-    HL_TURN2 = "HL_TURN2"
+    HEADLAND = "HEADLAND"
     DONE = "DONE"
 
 
-_HEADLAND_STATES = (_S.HL_ADVANCE, _S.HL_TURN1, _S.HL_SHIFT, _S.HL_TURN2)
+_HEADLAND_STATES = (_S.HEADLAND,)
 
 
 class RowNavigator:
@@ -104,10 +102,12 @@ class RowNavigator:
         row_end_frames: int = 8,
         row_end_min_dist: float = 1.5,
         obstacle_clear_secs: float = 1.5,
-        buffer_dist: float = 1.5,
-        bed_shift: float = 1.5,
+        row_end_green: float = 0.04,
+        row_spacing: float = 0.76,
+        headland_exit_dist: float = 1.0,
+        first_turn_sign: float = 1.0,
         headland_speed: float = 0.15,
-        headland_turn_rate: float = 0.30,
+        headland_turn_rate: float = 0.35,
         align_heading: bool = False,
         align_thresh: float = 0.14,
         align_rate: float = 0.20,
@@ -159,10 +159,25 @@ class RowNavigator:
         self.row_end_frames = row_end_frames
         self.row_end_min_dist = row_end_min_dist
         self.obstacle_clear_secs = obstacle_clear_secs
-        self.buffer_dist = buffer_dist
-        self.bed_shift = bed_shift
+        self.row_end_green = row_end_green
+        self.row_spacing = row_spacing
+        self.headland_exit_dist = headland_exit_dist
+        self.first_turn_sign = 1.0 if first_turn_sign >= 0 else -1.0
         self.headland_speed = headland_speed
         self.headland_turn_rate = headland_turn_rate
+
+        # Closed-loop headland U-turn driver (odometry feedback).  Built only
+        # when an odometry source is available; otherwise headland turns are
+        # disabled and ROW_END goes straight to DONE.
+        self._headland_turn = None
+        if self.odometry is not None:
+            self._headland_turn = HeadlandTurn(
+                self.odometry,
+                row_spacing=row_spacing,
+                exit_dist=headland_exit_dist,
+                speed=headland_speed,
+                turn_rate=headland_turn_rate,
+            )
         self.align_heading = align_heading
         self.align_thresh = align_thresh
         self.align_rate = align_rate
@@ -180,8 +195,8 @@ class RowNavigator:
         self._cam_cloud_buf: list = []   # rolling 3-frame camera depth buffer
         self._follow_miss_count: int = 0  # consecutive low-conf scans while in FOLLOW
         self._acq_miss_count: int = 0     # consecutive low-conf scans while in ACQUIRE
-        self._hl_progress = 0.0
-        self._turn_sign = 1.0
+        self._last_green: Optional[float] = None  # latest camera green fraction (row-end cross-check)
+        self._turn_sign = 1.0             # last headland turn direction (for status)
         self._t_prev = time.monotonic()
 
     # ------------------------------------------------------------------
@@ -325,6 +340,12 @@ class RowNavigator:
                     safety.cam_blocked = True
                     safety.cam_reason = cam_raw_reason
 
+            # Camera green fraction — corroborates LiDAR row-end so a single
+            # sparse VLP-16 scan mid-row cannot trigger a false ROW_END while
+            # the crop is still clearly visible to the cameras.
+            self._last_green = (float(getattr(vis_est, "green_fraction", 0.0))
+                                if vis_est is not None else None)
+
             # --- Sensor fusion: EKF or weighted average ---
             if self.ekf is not None:
                 prev_v, prev_w = self.cmd   # commanded last scan — best motion estimate
@@ -338,6 +359,19 @@ class RowNavigator:
 
             linear, angular = self._step(est, safety, dt)
             self.cmd = (linear, angular)
+
+            # Centralised odometry integration: one tick per scan with the
+            # command just issued.  FOLLOW accrues row distance from the
+            # measured (or commanded-fallback) odometry delta; HEADLAND turns
+            # read odometry directly for their closed-loop feedback.
+            if self.odometry is not None:
+                d_before = self.odometry.distance
+                self.odometry.tick(linear, angular, dt)
+                if self.state == _S.FOLLOW:
+                    self._row_dist += max(0.0, self.odometry.distance - d_before)
+            elif self.state == _S.FOLLOW:
+                self._row_dist += max(0.0, linear * dt)
+
             await self._drive(linear, angular)
             self._print_status(est, safety, linear, angular)
             if self.ros2_bridge:
@@ -376,9 +410,26 @@ class RowNavigator:
             return self._step_obstacle(safety, est)
         if st == _S.ROW_END:
             return self._step_row_end()
-        if st in _HEADLAND_STATES:
+        if st == _S.HEADLAND:
             return self._step_headland(dt)
         return 0.0, 0.0   # DONE
+
+    # ------------------------------------------------------------------
+    def _row_end_reached(self, est) -> bool:
+        """True when the crop has run out ahead.
+
+        Requires the LiDAR crop-band to be sparse (high row_end_confidence) and,
+        when cameras are active, the green fraction to also be low — so a single
+        sparse VLP-16 scan mid-row cannot trigger a false ROW_END while soybean
+        foliage is still clearly in view.
+        """
+        if self._row_dist < self.row_end_min_dist:
+            return False
+        if est.row_end_confidence < self.row_end_conf:
+            return False
+        if self._last_green is not None and self._last_green >= self.row_end_green:
+            return False
+        return True
 
     # ------------------------------------------------------------------
     def _step_acquire(self, est) -> tuple[float, float]:
@@ -426,8 +477,7 @@ class RowNavigator:
         return 0.0, 0.0
 
     def _step_follow(self, est, dt: float) -> tuple[float, float]:
-        if (self._row_dist >= self.row_end_min_dist
-                and est.row_end_confidence >= self.row_end_conf):
+        if self._row_end_reached(est):
             self._row_end_count += 1
         else:
             self._row_end_count = 0
@@ -461,20 +511,15 @@ class RowNavigator:
             return 0.0, 0.0
         self._follow_miss_count = 0
 
-        linear, angular = self.controller.compute(est)
-        if self.odometry is not None:
-            self._row_dist += abs(self.odometry.tick(linear, angular, dt))
-        else:
-            self._row_dist += linear * dt
-        return linear, angular
+        # Row distance is integrated centrally in run() from odometry.
+        return self.controller.compute(est)
 
     def _step_obstacle(self, safety, est) -> tuple[float, float]:
         # If the crop has ended while waiting for the obstacle to clear,
         # transition to ROW_END.  This handles the common end-of-row case
         # where the row terminates at a wall: the obstacle will never clear,
         # but the crop has already disappeared — the row IS done.
-        if (self._row_dist >= self.row_end_min_dist
-                and est.row_end_confidence >= self.row_end_conf):
+        if self._row_end_reached(est):
             self._row_end_count += 1
         else:
             self._row_end_count = 0
@@ -494,42 +539,31 @@ class RowNavigator:
 
     def _step_row_end(self) -> tuple[float, float]:
         self._rows_done += 1
-        if self.headland and self._rows_done < self.rows:
-            self._turn_sign = 1.0 if self._rows_done % 2 == 1 else -1.0
-            self._hl_progress = 0.0
-            self._enter(_S.HL_ADVANCE)
+        if (self.headland and self._rows_done < self.rows
+                and self._headland_turn is not None):
+            # Serpentine coverage: alternate turn direction each row, starting
+            # from first_turn_sign (+1 = right).  rows_done is now 1 after the
+            # first row → odd → first_turn_sign; 2 → even → opposite; …
+            self._turn_sign = self.first_turn_sign * (
+                1.0 if self._rows_done % 2 == 1 else -1.0)
+            self._headland_turn.begin(self._turn_sign)
+            self._enter(_S.HEADLAND)
         else:
             self._enter(_S.DONE)
         return 0.0, 0.0
 
     def _step_headland(self, dt: float) -> tuple[float, float]:
-        """Open-loop headland maneuver (dead-reckoned from commanded speed)."""
-        creep = self.headland_speed
-        turn = self.headland_turn_rate * self._turn_sign
-        if self.state == _S.HL_ADVANCE:
-            self._hl_progress += creep * dt
-            if self._hl_progress >= self.buffer_dist:
-                self._hl_progress = 0.0
-                self._enter(_S.HL_TURN1)
-            return creep, 0.0
-        if self.state == _S.HL_TURN1:
-            self._hl_progress += abs(turn) * dt
-            if self._hl_progress >= math.pi / 2.0:
-                self._hl_progress = 0.0
-                self._enter(_S.HL_SHIFT)
-            return 0.0, turn
-        if self.state == _S.HL_SHIFT:
-            self._hl_progress += creep * dt
-            if self._hl_progress >= self.bed_shift:
-                self._hl_progress = 0.0
-                self._enter(_S.HL_TURN2)
-            return creep, 0.0
-        # HL_TURN2
-        self._hl_progress += abs(turn) * dt
-        if self._hl_progress >= math.pi / 2.0:
+        """Closed-loop headland U-turn (odometry feedback via HeadlandTurn)."""
+        if self._headland_turn is None:
+            self._enter(_S.DONE)
+            return 0.0, 0.0
+        linear, angular = self._headland_turn.step(dt)
+        if self._headland_turn.done:
             self._acq_count = 0
+            self._row_dist = 0.0
             self._enter(_S.ACQUIRE)
-        return 0.0, turn
+            return 0.0, 0.0
+        return linear, angular
 
     # ------------------------------------------------------------------
     def _enter(self, state: str) -> None:
@@ -667,6 +701,9 @@ class RowNavigator:
                            f"({math.degrees(est.heading_error):+.1f}°)")
             else:
                 acq_str = f" acq={self._acq_count}/{self.acquire_frames}"
+        elif self.state == _S.HEADLAND and self._headland_turn is not None:
+            turn_dir = "R" if self._headland_turn.turn_sign >= 0 else "L"
+            acq_str = f" {turn_dir}-UTURN:{self._headland_turn.phase}"
         else:
             acq_str = ""
         line = (

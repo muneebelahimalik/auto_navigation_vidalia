@@ -96,7 +96,20 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
     left_cam = OakDriver(side="left", device_id=args.cam_left_id, fps=args.fps)
     right_cam = OakDriver(side="right", device_id=args.cam_right_id, fps=args.fps)
 
-    if args.detector == "depth-edge":
+    if args.dual_row:
+        # Soybean centre-residue mode: each camera tracks the flanking row on
+        # its own side; the residue-strip centre is their midpoint.
+        from camera.soybean_row_tracker import DualCameraRowTracker
+        vis_detector = DualCameraRowTracker(
+            cam_x_left=-args.cam_x,
+            cam_x_right=args.cam_x,
+            row_spacing=args.row_spacing,
+            green_h_lo=args.hsv_h_lo,
+            green_h_hi=args.hsv_h_hi,
+            green_s_lo=args.hsv_s_lo,
+            green_v_lo=args.hsv_v_lo,
+        )
+    elif args.detector == "depth-edge":
         vis_detector = DepthEdgeRowDetector(
             cam_x_left=-args.cam_x,
             cam_x_right=args.cam_x,
@@ -128,6 +141,13 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
         min_confidence=0.12,
     )
 
+    # Wheel odometry for accurate row distance + closed-loop headland turns.
+    # Reuses the canbus config for measured wheel speed when present; otherwise
+    # dead-reckons from commanded velocity.
+    from navigation.odometry import WheelOdometry
+    canbus_config = canbus.config if canbus is not None else None
+    odometry = WheelOdometry(canbus_config)
+
     navigator = CamRowNavigator(
         canbus=canbus,
         left_cam=left_cam,
@@ -143,15 +163,25 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
         acquire_green=args.acquire_green,
         poll_hz=float(args.fps) * 2,
         cam_block_frames=args.cam_block_frames,
+        row_spacing=args.row_spacing,
+        headland_exit_dist=args.headland_exit,
+        first_turn_sign=(1.0 if args.turn_dir == "right" else -1.0),
+        headland_speed=args.headland_speed,
+        headland_turn_rate=args.headland_turn_rate,
+        odometry=odometry,
     )
     nav_ref.append(navigator)
 
     print()
     print("=" * 68)
-    print("  Camera-only onion-row follower  (no LiDAR)")
+    print("  Camera-only crop-row follower  (no LiDAR)")
     print(f"  mode     : {'AUTONOMOUS — robot WILL move' if args.auto else 'perception-only (no motion)'}")
-    print(f"  detector : {args.detector}")
+    det_str = "dual-flanking-row (soybean)" if args.dual_row else args.detector
+    print(f"  detector : {det_str}")
     print(f"  rows     : {args.rows}   headland turns: {'on' if args.headland else 'off'}")
+    if args.headland:
+        print(f"  headland : U-turn first={args.turn_dir}  row_spacing={args.row_spacing:.2f}m  "
+              f"exit={args.headland_exit:.2f}m")
     print(f"  speed    : {args.speed:.2f} m/s max")
     print(f"  cameras  : left={args.cam_left_id or 'auto'}  right={args.cam_right_id or 'auto'}")
     print(f"  cam fps  : {args.fps}   lateral offset: ±{args.cam_x:.3f} m")
@@ -179,6 +209,8 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
         asyncio.ensure_future(left_cam.run()),
         asyncio.ensure_future(right_cam.run()),
     ]
+    if canbus_config is not None:
+        cam_tasks.append(asyncio.ensure_future(odometry.run()))
 
     # Wait for first frames, then verify at least one camera came up.
     await asyncio.sleep(2.5)
@@ -222,7 +254,22 @@ def main() -> None:
     parser.add_argument("--rows", type=int, default=1, metavar="N",
                         help="Number of rows to cover (default: 1)")
     parser.add_argument("--headland", action="store_true",
-                        help="Perform open-loop headland turns between rows")
+                        help="Perform closed-loop headland U-turns between rows")
+    parser.add_argument("--dual-row", action="store_true", default=False,
+                        help="Soybean centre-residue mode: each camera tracks the "
+                             "flanking row on its own side; the residue-strip centre "
+                             "is their midpoint (overrides --detector).")
+    parser.add_argument("--row-spacing", type=float, default=0.76, metavar="M",
+                        help="Soybean row spacing / next-strip lateral distance (default: 0.76).")
+    parser.add_argument("--turn-dir", choices=["right", "left"], default="right",
+                        help="Direction of the first headland U-turn (default: right; "
+                             "subsequent turns alternate).")
+    parser.add_argument("--headland-exit", type=float, default=1.0, metavar="M",
+                        help="Straight distance (m) past the row end before the first pivot (default: 1.0).")
+    parser.add_argument("--headland-speed", type=float, default=0.12, metavar="M",
+                        help="Forward speed (m/s) during straight headland phases (default: 0.12).")
+    parser.add_argument("--headland-turn-rate", type=float, default=0.35, metavar="R",
+                        help="Pivot rate (rad/s) during the 90° headland turns (default: 0.35).")
     parser.add_argument("--speed", type=float, default=0.20, metavar="M",
                         help="Max forward speed m/s (default: 0.20 — "
                              "lower than LiDAR mode, camera perception has more latency)")
