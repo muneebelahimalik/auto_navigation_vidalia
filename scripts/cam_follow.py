@@ -204,15 +204,10 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
             await asyncio.wait_for(canbus.stop(), timeout=4.0)
             print("[cam_follow] canbus link OK (sent zero twist).")
         except asyncio.TimeoutError:
-            print("[cam_follow] canbus check timed out (no response in 4 s).")
-            if args.auto:
-                print("[cam_follow] cannot drive — switching to perception-only.")
-                navigator.auto = False
+            print("[cam_follow] canbus check timed out — will still attempt auto drive.")
+            print("[cam_follow] Ensure the Amiga is in auto/drive mode on the tablet.")
         except Exception as exc:
-            print(f"[cam_follow] canbus unreachable: {exc}")
-            if args.auto:
-                print("[cam_follow] cannot drive — switching to perception-only.")
-                navigator.auto = False
+            print(f"[cam_follow] canbus check warning: {exc} — will still attempt auto drive.")
 
     print("[cam_follow] starting OAK-D cameras …")
     cam_tasks = [
