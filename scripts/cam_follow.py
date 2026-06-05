@@ -191,7 +191,7 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
     print(f"  cameras  : left={args.cam_left_id or 'auto'}  right={args.cam_right_id or 'auto'}")
     print(f"  cam fps  : {args.fps}   lateral offset: ±{args.cam_x:.3f} m")
     print(f"  stop     : depth obstacle at {args.cam_stop_dist:.1f} m")
-    print(f"  acquire  : conf ≥ {args.acquire_conf:.2f}  green ≥ {args.acquire_green:.3f}")
+    print(f"  acquire  : conf ≥ {args.acquire_conf:.2f}  green ≥ {args.acquire_green:.3f}  frames=5")
     if args.detector == "hsv":
         print(f"  HSV      : h=[{args.hsv_h_lo},{args.hsv_h_hi}] s≥{args.hsv_s_lo} v≥{args.hsv_v_lo}")
     print("  Press Ctrl+C to stop the robot immediately.")
@@ -296,8 +296,8 @@ def main() -> None:
                              "OBSTACLE_WAIT (default: 3)")
     parser.add_argument("--acquire-conf", type=float, default=0.20, metavar="F",
                         help="Min visual confidence to leave ACQUIRE (default: 0.20)")
-    parser.add_argument("--acquire-green", type=float, default=0.08, metavar="F",
-                        help="Min green fraction to leave ACQUIRE (default: 0.08)")
+    parser.add_argument("--acquire-green", type=float, default=0.05, metavar="F",
+                        help="Min green fraction to leave ACQUIRE (default: 0.05)")
     parser.add_argument("--fps", type=int, default=10, metavar="N",
                         help="OAK-D capture frame rate (default: 10)")
     parser.add_argument("--detector", choices=["hsv", "depth-edge"], default="hsv",
