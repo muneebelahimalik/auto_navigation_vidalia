@@ -304,13 +304,13 @@ def main() -> None:
                         help="Row detection algorithm: 'hsv' = HSV green-centroid (default), "
                              "'depth-edge' = Canny/Hough heading + stereo-depth gap lateral "
                              "(colour-independent, works in any lighting)")
-    parser.add_argument("--hsv-h-lo", type=int, default=35, metavar="H",
-                        help="HSV hue lower bound 0-180 (default: 35 = green; "
+    parser.add_argument("--hsv-h-lo", type=int, default=25, metavar="H",
+                        help="HSV hue lower bound 0-180 (default: 25; "
                              "use ~10 for brown/cardboard, ~100 for blue)")
-    parser.add_argument("--hsv-h-hi", type=int, default=85, metavar="H",
-                        help="HSV hue upper bound 0-180 (default: 85)")
-    parser.add_argument("--hsv-s-lo", type=int, default=25, metavar="S",
-                        help="HSV saturation lower bound 0-255 (default: 25; "
+    parser.add_argument("--hsv-h-hi", type=int, default=100, metavar="H",
+                        help="HSV hue upper bound 0-180 (default: 100)")
+    parser.add_argument("--hsv-s-lo", type=int, default=15, metavar="S",
+                        help="HSV saturation lower bound 0-255 (default: 15; "
                              "lower for pale/young soybean seedlings)")
     parser.add_argument("--hsv-v-lo", type=int, default=30, metavar="V",
                         help="HSV value lower bound 0-255 (default: 30)")
