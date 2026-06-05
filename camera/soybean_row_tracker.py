@@ -207,7 +207,22 @@ class DualCameraRowTracker:
         ksize = max(3, (w // 40) | 1)
         kernel = np.ones(ksize, dtype=np.float64) / ksize
         col_smooth = np.convolve(col_density, kernel, mode="same")
-        peak_col = int(np.argmax(col_smooth))
+
+        # The flanking soybean row always appears in the INNER half of each
+        # camera's image (the half facing toward the residue strip centre),
+        # because the row is between the camera and the strip.  Restricting
+        # the peak search to that half prevents locking onto outer rows
+        # (farther from centre) which are often denser and would otherwise
+        # dominate the argmax.
+        #   right camera (cam_x > 0): inner half = LEFT columns (0 … w*0.6)
+        #   left  camera (cam_x < 0): inner half = RIGHT columns (w*0.4 … w)
+        # The 60/40 split (not 50/50) gives ±0.5 m of robot offset headroom.
+        if cam_x > 0:
+            search_hi = int(w * 0.60)
+            peak_col = int(np.argmax(col_smooth[:search_hi]))
+        else:
+            search_lo = int(w * 0.40)
+            peak_col = int(np.argmax(col_smooth[search_lo:])) + search_lo
 
         band = max(8, w // 12)
         lo = max(0, peak_col - band)
@@ -262,13 +277,21 @@ class DualCameraRowTracker:
 
     # ------------------------------------------------------------------
     def _median_depth(self, depth: Optional[np.ndarray]) -> float:
+        """Estimate depth to the flanking crop row.
+
+        Using the full-frame median gives 3–4 m (dominated by far ground),
+        which is 2–3× the actual plant distance (~1–1.5 m) and amplifies
+        the world_x error proportionally.  Instead take the 25th percentile
+        of the lower 40 % of the depth frame (close-range ground + plants).
+        """
         if depth is None:
-            return 1.0
+            return 1.5
         d = depth.astype(np.float32) / 1000.0
-        valid = d[(d >= 0.3) & (d <= 10.0)]
+        roi = d[int(d.shape[0] * 0.60):, :]   # lower 40 % = nearest scene
+        valid = roi[(roi >= 0.3) & (roi <= 4.0)]
         if len(valid) == 0:
-            return 1.0
-        return float(np.median(valid))
+            return 1.5
+        return float(np.percentile(valid, 25))  # 25th pct ≈ nearest objects
 
     # ------------------------------------------------------------------
     def _smooth(self, fresh: DualRowEstimate) -> DualRowEstimate:
