@@ -22,6 +22,7 @@ to validate detection before letting the robot move.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import math
 import os
@@ -593,6 +594,8 @@ class RowNavigator:
             return
         try:
             await self.canbus.send_twist(linear, angular)
+        except asyncio.TimeoutError:
+            pass  # canbus not responding yet; will retry next cycle
         except Exception as exc:
             print(f"\n[navigator] twist send failed: {exc}")
 

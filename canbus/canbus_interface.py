@@ -56,12 +56,20 @@ class CanbusInterface:
         """The EventServiceConfig this interface drives (for odometry reuse)."""
         return self._config
 
-    async def send_twist(self, linear_x: float, angular_z: float) -> None:
+    async def send_twist(
+        self,
+        linear_x: float,
+        angular_z: float,
+        timeout: float = 0.5,
+    ) -> None:
         """Send a velocity command to the Amiga robot.
 
         Args:
             linear_x:  Forward velocity in m/s.  Positive = forward.
             angular_z: Turn rate in rad/s.  Positive = counter-clockwise.
+            timeout:   Max seconds to wait for a gRPC reply (default 0.5 s).
+                       Raises asyncio.TimeoutError if the canbus service does
+                       not respond (e.g. Amiga not yet in auto/drive mode).
         """
         twist = Twist2d()
         twist.linear_velocity_x = max(
@@ -70,8 +78,10 @@ class CanbusInterface:
         twist.angular_velocity = max(
             -self._max_angular, min(self._max_angular, angular_z)
         )
-        await self._client.request_reply("/twist", twist)
+        await asyncio.wait_for(
+            self._client.request_reply("/twist", twist), timeout=timeout
+        )
 
-    async def stop(self) -> None:
+    async def stop(self, timeout: float = 0.5) -> None:
         """Send a zero-velocity command to bring the robot to a halt."""
-        await self.send_twist(0.0, 0.0)
+        await self.send_twist(0.0, 0.0, timeout=timeout)

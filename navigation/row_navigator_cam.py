@@ -310,6 +310,8 @@ class CamRowNavigator:
             return
         try:
             await self.canbus.send_twist(linear, angular)
+        except asyncio.TimeoutError:
+            pass  # canbus not responding yet; will retry next cycle
         except Exception as exc:
             print(f"\n[cam_nav] twist send failed: {exc}")
 
