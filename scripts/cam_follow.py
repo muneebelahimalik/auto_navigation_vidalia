@@ -196,8 +196,13 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
     # Confirm canbus link before starting cameras.
     if canbus is not None:
         try:
-            await canbus.stop()
+            await asyncio.wait_for(canbus.stop(), timeout=4.0)
             print("[cam_follow] canbus link OK (sent zero twist).")
+        except asyncio.TimeoutError:
+            print("[cam_follow] canbus check timed out (no response in 4 s).")
+            if args.auto:
+                print("[cam_follow] cannot drive — switching to perception-only.")
+                navigator.auto = False
         except Exception as exc:
             print(f"[cam_follow] canbus unreachable: {exc}")
             if args.auto:
