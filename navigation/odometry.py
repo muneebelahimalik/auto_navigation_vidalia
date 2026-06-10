@@ -161,10 +161,17 @@ class WheelOdometry:
     # ------------------------------------------------------------------
 
     def _integrate(self, speed: float, angular: float, dt: float) -> float:
-        """Euler integration of differential-drive kinematics. Returns dist delta."""
+        """Midpoint integration of differential-drive kinematics. Returns dist delta.
+
+        Position is advanced along the heading at the middle of the step
+        (2nd-order accurate) instead of the end-of-step heading, which biases
+        the pose inward during sustained turns — exactly the regime the
+        closed-loop headland U-turn depends on.
+        """
         dist = speed * dt
         self.distance += abs(dist)
+        theta_mid = self.theta + 0.5 * angular * dt
         self.theta += angular * dt
-        self.x += speed * math.cos(self.theta) * dt
-        self.y += speed * math.sin(self.theta) * dt
+        self.x += speed * math.cos(theta_mid) * dt
+        self.y += speed * math.sin(theta_mid) * dt
         return dist

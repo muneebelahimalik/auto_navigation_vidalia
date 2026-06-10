@@ -55,6 +55,10 @@ class VisualRowDetector:
         self.ema_alpha = ema_alpha
         self._est = VisualRowEstimate()
 
+    def reset(self) -> None:
+        """Forget the smoothed estimate (call when starting a new row)."""
+        self._est = VisualRowEstimate()
+
     def update(
         self,
         rgb_left: Optional[np.ndarray],

@@ -83,6 +83,22 @@ source /farm_ng_image/venv/bin/activate
 cd ~/auto_navigation_vidalia
 ```
 
+### Unit tests (any machine — no hardware, no farm-ng SDK required)
+
+```bash
+pip install numpy pytest
+python3 -m pytest tests/ -q
+```
+
+Covers: dual-row midpoint geometry, single-side fallback and row-spacing prior
+(`test_row_perception.py`), EKF motion-model signs and measurement gates
+(`test_ekf_estimator.py`), pure-pursuit sign conventions plus a closed-loop
+convergence simulation (`test_row_controller.py`), the three safety zones
+(`test_row_safety.py`), the headland U-turn and wheel odometry
+(`test_headland_odometry.py`), LiDAR tilt correction and dual-camera fusion
+(`test_tilt_and_camera_fusion.py`).  Run after touching perception, control,
+or fusion code, before any field deployment.
+
 ### LiDAR Row Follow — Soybean Field (centre-residue strip, primary)
 
 ```bash
@@ -435,7 +451,7 @@ Applied in `row_navigator.py` after self-filtering, before `detector.update()` a
 | `--auto` | off | Enable canbus and send velocity commands to wheels |
 | `--rows N` | 1 | Stop after N rows completed (serpentine when combined with `--headland`) |
 | `--headland` | off | **Closed-loop** headland U-turns between rows (odometry feedback) |
-| `--row-spacing M` | **0.76** | Lateral distance to the next strip after a turn; also dual-camera single-row fallback spacing |
+| `--row-spacing M` | **0.76** | Lateral distance to the next strip after a turn; also the LiDAR dual-row peak-pairing prior + single-side fallback spacing, and the dual-camera single-row fallback spacing |
 | `--turn-dir D` | **right** | Direction of the first U-turn (`right`/`left`); subsequent turns alternate |
 | `--headland-exit M` | **1.0** | Straight distance driven past the row end before the first pivot |
 | `--headland-speed M` | **0.15** | Forward speed during straight headland phases (m/s) |
@@ -832,6 +848,13 @@ OAK-D defaults: hfov=73°, vfov=54°, 640×400 → scale factor ≈ 0.91.
 | `\r` terminal shows only "clear" | Carriage-return overwrites intermediate blocked frames | Use `--debug` to see every frame; transitions always print with `\n` |
 | Rapid FOLLOW→ACQUIRE→FOLLOW cycling | VLP-16 produces 1–3 empty crop-ROI scans/s; 0.5 decay factor crossed 0.35 threshold in 2 scans | Decay factor 0.5→**0.75**; `follow_miss_thresh=4` consecutive misses required to drop to ACQUIRE |
 | Heading oscillating ±50° (cardboard/sparse row) | PCA direction flips on nearly-round clusters; EMA alone insufficient to damp | Added 30° outlier gate in `_smooth()` — clamps fresh heading to ≤30° from smoothed when conf>0.30 |
+| EKF (`--ekf`) destabilised the loop / added lag | `predict()` motion-model signs were FLIPPED for both lateral (`−v·sinθ`) and heading (`−ω`); every predict step pushed the state away from the robot's actual motion | Corrected to `+v·sinθ·dt` and `+ω·dt`; regression-locked in `tests/test_ekf_estimator.py` |
+| Dual-row: robot steers onto the visible soybean row when one side is occluded | `_midpoint_peaks` single-side fallback returned the row peak itself as the target | Fallback now offsets ±`row_spacing/2` inward (mirrors the dual-camera tracker); `--row-spacing` is wired into `RowDetector` |
+| Dual-row midpoint dragged off-centre by weeds near the centreline | Innermost-peak pairing locked onto any clutter peak inside the strip | Row-spacing prior: the L/R peak pair whose separation best matches `row_spacing` wins; off-spacing pairs lower confidence |
+| Lateral estimate snaps ±half spacing in one scan | Peak pairing changes when a row drops out for one scan; EMA follows the jump | Lateral outlier gate in `_smooth()` — per-scan jump clamped to 0.30 m (mirrors the heading gate) |
+| Robot keeps driving on last twist if LiDAR dies mid-row | `run()` blocked forever inside `async for`; no further commands sent | Scan-stall watchdog: no scan for 0.5 s → actively command zero velocity until the stream recovers |
+| Dead camera stream freezes fusion + blocks ROW_END | `get_latest()` returns the final frame forever; frozen green fraction vetoes ROW_END indefinitely | Staleness gate (1.5 s) in both navigators treats old frames as "no camera" |
+| Stale EMA from previous row fights re-acquisition after U-turn | Detector EMA accumulates garbage while the ROI sweeps the headland; outlier gates then clamp genuine detections of the next row | `RowDetector.reset()` / tracker `reset()` called on HEADLAND→ACQUIRE |
 
 ---
 

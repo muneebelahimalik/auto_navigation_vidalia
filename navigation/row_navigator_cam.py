@@ -88,6 +88,7 @@ class CamRowNavigator:
         poll_hz: float = 20.0,
         cam_block_frames: int = 3,
         odometry=None,
+        cam_stale_secs: float = 1.5,
     ) -> None:
         self.canbus = canbus
         self.left_cam = left_cam
@@ -114,6 +115,7 @@ class CamRowNavigator:
         self.headland_turn_rate = headland_turn_rate
         self._poll_interval = 1.0 / max(poll_hz, 1.0)
         self.odometry = odometry
+        self.cam_stale_secs = cam_stale_secs
 
         self.state = _S.ACQUIRE
         self.cmd = (0.0, 0.0)
@@ -153,6 +155,14 @@ class CamRowNavigator:
 
             frame_l = self.left_cam.get_latest() if self.left_cam is not None else None
             frame_r = self.right_cam.get_latest() if self.right_cam is not None else None
+            # Staleness gate: a dead camera stream keeps returning its last
+            # frame forever, freezing the visual estimate (and green fraction)
+            # at the moment of failure.  Treat old frames as "no camera" so
+            # confidence decays and the state machine stops the robot.
+            if frame_l is not None and now - frame_l.timestamp > self.cam_stale_secs:
+                frame_l = None
+            if frame_r is not None and now - frame_r.timestamp > self.cam_stale_secs:
+                frame_r = None
             rgb_l = frame_l.rgb if frame_l is not None else None
             dep_l = frame_l.depth if frame_l is not None else None
             rgb_r = frame_r.rgb if frame_r is not None else None
@@ -295,6 +305,10 @@ class CamRowNavigator:
         if self._headland_turn.done:
             self._acq_count = 0
             self._row_dist = 0.0
+            # New row: the EMA accumulated while turning across the headland
+            # is garbage — reset so the next row is acquired from scratch.
+            if hasattr(self.vis_detector, "reset"):
+                self.vis_detector.reset()
             self._enter(_S.ACQUIRE)
             return 0.0, 0.0
         return linear, angular

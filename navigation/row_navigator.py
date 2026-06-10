@@ -128,6 +128,8 @@ class RowNavigator:
         ros2_bridge: bool = False,
         follow_miss_thresh: int = 4,
         acq_miss_thresh: int = 2,
+        scan_timeout: float = 0.5,
+        cam_stale_secs: float = 1.5,
     ) -> None:
         self.canbus = canbus
         self.detector = detector
@@ -153,6 +155,8 @@ class RowNavigator:
         self.ros2_bridge = ros2_bridge
         self.follow_miss_thresh = follow_miss_thresh
         self.acq_miss_thresh = acq_miss_thresh
+        self.scan_timeout = scan_timeout
+        self.cam_stale_secs = cam_stale_secs
 
         self.acquire_conf = acquire_conf
         self.acquire_frames = acquire_frames
@@ -218,7 +222,12 @@ class RowNavigator:
         fused_offset = lidar_w * lidar_est.lateral_offset + cam_w_norm * vis_est.lateral_offset
         fused_heading = (lidar_w * lidar_est.heading_error
                          + cam_w_norm * vis_est.heading_error)
-        fused_conf = min(1.0, lidar_conf + vis_conf * 0.3)
+        # Confidence boost is scaled by cross-sensor agreement: two sensors
+        # that AGREE corroborate each other; a camera that disagrees with the
+        # LiDAR by 0.30 m should not make the fused estimate MORE confident.
+        agreement = max(0.0, 1.0 - abs(vis_est.lateral_offset
+                                       - lidar_est.lateral_offset) / 0.30)
+        fused_conf = min(1.0, lidar_conf + vis_conf * 0.3 * agreement)
 
         return RowEstimate(
             heading_error=fused_heading,
@@ -231,11 +240,37 @@ class RowNavigator:
 
     # ------------------------------------------------------------------
     async def run(self, lidar: LidarDriver) -> None:
-        """Consume the LiDAR scan stream and drive the state machine."""
+        """Consume the LiDAR scan stream and drive the state machine.
+
+        A scan-stall watchdog guards the loop: if no scan arrives within
+        ``scan_timeout`` seconds (cable pulled, power loss, network drop) the
+        navigator actively commands zero velocity while it waits, instead of
+        silently blocking with the last non-zero twist still in effect.
+        """
         self._t_prev = time.monotonic()
-        async for pts in lidar.scan_stream_np():
-            if self._stop:
+        stream = lidar.scan_stream_np()
+        next_scan = None       # pending __anext__ task (survives watchdog timeouts)
+        stall_warned = False
+        while not self._stop:
+            if next_scan is None:
+                next_scan = asyncio.ensure_future(stream.__anext__())
+            done, _pending = await asyncio.wait({next_scan}, timeout=self.scan_timeout)
+            if not done:
+                if not stall_warned:
+                    stall_warned = True
+                    print(f"\n[navigator] LiDAR stall — no scan for "
+                          f"{self.scan_timeout:.1f}s; holding zero velocity")
+                self.cmd = (0.0, 0.0)
+                await self._drive(0.0, 0.0)
+                continue
+            task, next_scan = next_scan, None
+            try:
+                pts = task.result()
+            except StopAsyncIteration:
                 break
+            if stall_warned:
+                stall_warned = False
+                print("\n[navigator] LiDAR stream recovered")
 
             now = time.monotonic()
             dt = min(max(now - self._t_prev, 1e-3), 0.5)
@@ -259,6 +294,17 @@ class RowNavigator:
             if self.vis_detector is not None or self.depth_pts_left is not None or self.depth_pts_right is not None:
                 frame_l = self.left_cam.get_latest() if self.left_cam is not None else None
                 frame_r = self.right_cam.get_latest() if self.right_cam is not None else None
+                # Staleness gate: a camera whose stream died keeps returning
+                # its last frame forever.  Fusing a frozen frame holds the
+                # visual lateral estimate and green fraction constant — the
+                # green-fraction row-end veto in particular would then block
+                # ROW_END indefinitely.  Treat old frames as "no camera".
+                if (frame_l is not None
+                        and now - frame_l.timestamp > self.cam_stale_secs):
+                    frame_l = None
+                if (frame_r is not None
+                        and now - frame_r.timestamp > self.cam_stale_secs):
+                    frame_r = None
                 dep_l = frame_l.depth if frame_l is not None else None
                 dep_r = frame_r.depth if frame_r is not None else None
                 rgb_l = frame_l.rgb if frame_l is not None else None
@@ -383,6 +429,8 @@ class RowNavigator:
             if self.state == _S.DONE:
                 break
 
+        if next_scan is not None:
+            next_scan.cancel()
         await self.stop()
 
     # ------------------------------------------------------------------
@@ -586,6 +634,14 @@ class RowNavigator:
                 # noisy +31° measurement, sending the robot into a spiral).
                 if prev_state != _S.OBSTACLE_WAIT:
                     self.ekf.reset()
+            if state == _S.ACQUIRE and prev_state == _S.HEADLAND:
+                # New row: the smoothed estimates accumulated while the ROI
+                # swept across the headland are garbage; without a reset their
+                # outlier gates fight the first detections of the next row.
+                if hasattr(self.detector, "reset"):
+                    self.detector.reset()
+                if self.vis_detector is not None and hasattr(self.vis_detector, "reset"):
+                    self.vis_detector.reset()
         self.state = state
 
     async def _drive(self, linear: float, angular: float) -> None:

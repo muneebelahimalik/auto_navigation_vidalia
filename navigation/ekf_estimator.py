@@ -97,18 +97,27 @@ class RowEKF:
     def predict(self, linear_vel: float = 0.0, angular_vel: float = 0.0, dt: float = 0.1) -> None:
         """Prediction step: propagate state with commanded velocity, then grow covariance.
 
-        Velocity-informed model (Euler integration):
-          d(lateral_offset)/dt  ≈ −linear_vel × sin(heading_error)
-            — robot drifts across the row when misaligned
-          d(heading_error)/dt   ≈ −angular_vel
-            — robot turns reduce (or increase) misalignment with row direction
+        Velocity-informed model (Euler integration), in the perception sign
+        convention (heading_error +ve = row angled to robot's right;
+        lateral_offset +ve = row centre to the robot's right; angular_vel
+        +ve = CCW/left turn):
+
+          d(lateral_offset)/dt  ≈ +linear_vel × sin(heading_error)
+            Driving forward while the row is angled to the right (θ>0)
+            makes the row centreline pull further to the right of the robot
+            path: x_row(t) = x₀ + v·t·tanθ.
+          d(heading_error)/dt   ≈ +angular_vel
+            Turning left (CCW, ω>0) rotates the row direction toward the
+            robot's right in the robot frame, increasing heading_error;
+            equivalently the controller's right-turn command (ω<0) drives
+            a positive heading_error back to zero.
 
         Falls back to pure Brownian-motion prediction (P += Q only) when
         called with defaults (linear_vel=0, angular_vel=0, dt=0.1).
         """
         if self._initialised and dt > 0.0 and (linear_vel != 0.0 or angular_vel != 0.0):
-            self._x[0] -= linear_vel * math.sin(self._x[1]) * dt
-            self._x[1] -= angular_vel * dt
+            self._x[0] += linear_vel * math.sin(self._x[1]) * dt
+            self._x[1] += angular_vel * dt
         self._P = self._P + self._Q
 
     # ------------------------------------------------------------------
@@ -145,6 +154,9 @@ class RowEKF:
             gate = 3.0 * self.std_lateral + 0.15
             if abs(z[0] - self._x[0]) > gate:
                 return  # outlier — skip this measurement
+            hdg_gate = 3.0 * self.std_heading + math.radians(15.0)
+            if abs(z[1] - self._x[1]) > hdg_gate:
+                return  # heading outlier (PCA flip on round blob) — skip
         conf2 = max(vis_est.confidence ** 2, _CONF_EPS)
         R = self._R_cam_base / conf2
         self._kf_update(z, R)

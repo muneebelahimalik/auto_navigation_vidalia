@@ -76,6 +76,8 @@ class RowDetector:
         row_end_density: float = 70.0,
         ema_alpha: float = 0.35,
         dual_row: bool = False,
+        row_spacing: float = 0.76,
+        max_lateral_jump: float = 0.30,
     ) -> None:
         self.roi_y_min = roi_y_min
         self.roi_y_max = roi_y_max
@@ -89,7 +91,22 @@ class RowDetector:
         self.row_end_density = row_end_density
         self.ema_alpha = ema_alpha
         self.dual_row = dual_row
+        self.row_spacing = row_spacing
+        self.max_lateral_jump = max_lateral_jump
+        self._spacing_factor = 1.0   # confidence penalty when peak pair spacing is off
         self._est = RowEstimate()
+
+    # ------------------------------------------------------------------
+    def reset(self) -> None:
+        """Forget the smoothed estimate (call when starting a new row).
+
+        During a headland turn the ROI sweeps across the headland and the
+        EMA accumulates garbage geometry; without a reset the lateral and
+        heading outlier gates then fight the first genuine detections of
+        the next row.
+        """
+        self._est = RowEstimate()
+        self._spacing_factor = 1.0
 
     # ------------------------------------------------------------------
     def update(self, pts: np.ndarray) -> RowEstimate:
@@ -151,6 +168,8 @@ class RowDetector:
         density = min(1.0, n / self.full_points)
         linear_factor = max(0.0, min(1.0, (linearity - 0.20) / 0.55))
         confidence = density * linear_factor
+        if self.dual_row:
+            confidence *= self._spacing_factor
 
         return self._smooth(RowEstimate(
             heading_error=heading,
@@ -182,16 +201,27 @@ class RowDetector:
 
     # ------------------------------------------------------------------
     def _midpoint_peaks(self, cross: np.ndarray) -> float:
-        """Return the midpoint between the nearest left and right histogram
-        peaks (dual-row / soybean centre-residue mode).
+        """Return the midpoint between the left and right histogram peaks
+        (dual-row / soybean centre-residue mode).
 
         The robot straddles the dark residue strip; the soybean rows flank it
         symmetrically on each side.  Their histogram peaks are at roughly
         ±(row_spacing/2) in the robot frame.  The midpoint of those two peaks
         is the centre of the residue strip — the tracking target.
 
-        When only one side is visible (robot is far off-centre), falls back to
-        the nearest single peak so the correction direction is still correct.
+        Pair selection uses a row-spacing prior: among all left/right peak
+        combinations, the pair whose separation is closest to ``row_spacing``
+        wins.  Picking the *innermost* pair instead (the old behaviour) locks
+        onto weed clumps or residue clutter near the centreline whenever they
+        produce a histogram peak, dragging the midpoint off the true centre.
+        A pair whose separation is far from the expected spacing also lowers
+        confidence via ``_spacing_factor``.
+
+        When only one side is visible (robot far off-centre, or one row
+        occluded), the residue centre is half a row spacing INWARD from the
+        visible row — mirroring DualCameraRowTracker's single-side fallback.
+        Returning the peak itself (the old behaviour) made the robot steer
+        directly onto the visible soybean row.
         """
         lo, hi = -self.roi_x_half, self.roi_x_half
         edges = np.arange(lo, hi + self.bin_width, self.bin_width)
@@ -212,14 +242,40 @@ class RowDetector:
         left_peaks = [p for p in peaks if centres[p] < -0.05]
         right_peaks = [p for p in peaks if centres[p] > 0.05]
 
-        if left_peaks and right_peaks:
-            # Rightmost left peak and leftmost right peak bracket the residue strip.
-            best_left = max(left_peaks, key=lambda i: centres[i])
-            best_right = min(right_peaks, key=lambda i: centres[i])
-            return 0.5 * (centres[best_left] + centres[best_right])
+        self._spacing_factor = 1.0
+        half_spacing = 0.5 * self.row_spacing
 
-        # Only one side visible — robot is far off-centre.  Nearest peak gives
-        # the correct correction sign so the robot steers back toward centre.
+        if left_peaks and right_peaks:
+            # Row-spacing prior: choose the L/R pair whose separation best
+            # matches the known flanking-row spacing.
+            best_pair = None
+            best_err = float("inf")
+            for li in left_peaks:
+                for ri in right_peaks:
+                    sep = centres[ri] - centres[li]
+                    err = abs(sep - self.row_spacing)
+                    if err < best_err:
+                        best_err = err
+                        best_pair = (li, ri)
+            li, ri = best_pair
+            # Penalise confidence when even the best pair's separation is far
+            # from the expected spacing (clutter posing as a row).
+            self._spacing_factor = max(0.5, 1.0 - best_err / self.row_spacing)
+            return 0.5 * (centres[li] + centres[ri])
+
+        if left_peaks:
+            # Only the left row visible — centre is half a spacing to its right.
+            inner = max(left_peaks, key=lambda i: centres[i])
+            self._spacing_factor = 0.7
+            return float(centres[inner]) + half_spacing
+        if right_peaks:
+            inner = min(right_peaks, key=lambda i: centres[i])
+            self._spacing_factor = 0.7
+            return float(centres[inner]) - half_spacing
+
+        # All peaks inside the dead-band (clutter on the residue strip itself):
+        # treat as "approximately centred" rather than steering at the clutter.
+        self._spacing_factor = 0.5
         return float(centres[min(peaks, key=lambda i: abs(centres[i]))])
 
     # ------------------------------------------------------------------
@@ -237,15 +293,23 @@ class RowDetector:
         # starting from conf≈0.45 it falls to 0.34→0.25. With 0.30 the gate
         # disabled at 0.25 and allowed unclamped jumps, drifting heading +5°/scan.
         hdg_fresh = fresh.heading_error
+        lat_fresh = fresh.lateral_offset
         if prev.confidence > 0.15:
             delta = hdg_fresh - prev.heading_error
             max_delta = math.radians(30.0)
             if abs(delta) > max_delta:
                 hdg_fresh = prev.heading_error + math.copysign(max_delta, delta)
+            # Lateral outlier gate: the dual-row midpoint can snap by half a
+            # row spacing in one scan when peak pairing changes (one row
+            # momentarily occluded).  The robot cannot physically translate
+            # that fast at 10 Hz, so clamp the per-scan jump.
+            d_lat = lat_fresh - prev.lateral_offset
+            if abs(d_lat) > self.max_lateral_jump:
+                lat_fresh = prev.lateral_offset + math.copysign(self.max_lateral_jump, d_lat)
 
         self._est = RowEstimate(
             heading_error=a * hdg_fresh + (1 - a) * prev.heading_error,
-            lateral_offset=a * fresh.lateral_offset + (1 - a) * prev.lateral_offset,
+            lateral_offset=a * lat_fresh + (1 - a) * prev.lateral_offset,
             confidence=a * fresh.confidence + (1 - a) * prev.confidence,
             row_end_confidence=fresh.row_end_confidence,
             n_points=fresh.n_points,

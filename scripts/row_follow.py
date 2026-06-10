@@ -351,6 +351,7 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
         crop_h_min=args.crop_min,
         crop_h_max=args.crop_max,
         dual_row=args.dual_row,
+        row_spacing=args.row_spacing,
     )
     tire_h = args.tire_height if args.tire_height is not None else args.obstacle_height
     safety = SafetyMonitor(
