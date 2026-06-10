@@ -278,7 +278,7 @@ async for event, message in EventClient(config).subscribe(config.subscriptions[0
 | `lidar/obstacle_filter.py` | `tilt_correct_pts()` + `LIDAR_MOUNT_HEIGHT`; self-filter logic |
 | `camera/oak_driver.py` | Async OAK-D driver via farm-ng EventClient (localhost:50010) |
 | `camera/depth_obstacle.py` | Depth-frame inner-edge obstacle detector (`col_centre_frac`) |
-| `camera/soybean_row_tracker.py` | **Dual-camera flanking-row tracker** — each OAK-D tracks its own side's soybean row; residue centre = midpoint |
+| `camera/soybean_row_tracker.py` | **Dual-camera ground-projection tracker** — both forward-facing OAK-Ds project green pixels onto the canopy plane (IPM); each independently estimates the residue centre; fusion = equal-weight mean (cancels canopy-height bias) |
 | `camera/row_detector_visual.py` | HSV green-centroid + linearity-gated PCA heading (single-row/onion) |
 | `camera/row_detector_depth_edge.py` | Colour-independent Canny/Hough + depth-gap lateral detector |
 | `ros2_bridge/Dockerfile` | L4T-optimised ROS2 Foxy image: `dustynv/ros:foxy-ros-base-l4t-r35.2.1` |
@@ -298,8 +298,9 @@ residue strip**, tracked from three independent sources and fused.
 ```
                 LEFT soybean row     centre residue strip     RIGHT soybean row
                        │              (tracking target)              │
-   left OAK-D ─────────┘                     ▲                       └───────── right OAK-D
-   (tracks LEFT row)                         │                       (tracks RIGHT row)
+   left OAK-D ─────────┴─────────────────────┬───────────────────────┴───────── right OAK-D
+   (forward-facing, above left tire,         │           (forward-facing, above right tire,
+    sees BOTH rows)                          │            sees BOTH rows)
                                   VLP-16 LiDAR dual-row
                               (midpoint of L+R crop peaks)
 ```
@@ -307,22 +308,51 @@ residue strip**, tracked from three independent sources and fused.
 **Three estimators of the same residue-strip centre:**
 
 1. **LiDAR dual-row** (`RowDetector(dual_row=True)`) — histograms the crop-band
-   cross-row coordinate, takes the **midpoint** of the nearest left and right
-   peaks (`_midpoint_peaks`).  Primary source (full 0–1 confidence).
-2. **Dual-camera flanking rows** (`DualCameraRowTracker`) — each OAK-D locks onto
-   the dominant green row band on **its own side**; the residue centre is the
-   **midpoint** of the two detected rows (camera-capped 0–0.5 confidence).
+   cross-row coordinate; `find_row_midpoint` pairs the left/right peaks with a
+   row-spacing prior and returns their **midpoint**.  Primary source (full 0–1
+   confidence).
+2. **Dual-camera ground projection** (`DualCameraRowTracker`) — both OAK-Ds are
+   **forward-facing** (15° nose-down, ±0.88 m above the tires) and see **both**
+   flanking rows.  Each camera HSV-masks the green, ray-casts every green pixel
+   through the known intrinsics + extrinsics onto the canopy plane (inverse
+   perspective mapping — metric robot-frame points, no stereo depth needed),
+   then fits the points with the **same pipeline as the LiDAR** (cluster-centred
+   PCA heading → cross-row histogram → shared `find_row_midpoint`).  Each camera
+   yields an independent metric estimate of the SAME centre; fusion is their
+   equal-weight mean (camera-capped 0–0.5 confidence, scaled by cross-camera
+   agreement).
 3. **Fusion** — EKF (`--ekf`) or confidence-weighted average folds the camera
-   midpoint into the LiDAR midpoint; camera weight is capped at half the LiDAR
-   weight.
+   centre into the LiDAR centre; camera weight is capped at half the LiDAR
+   weight, and the confidence boost scales with LiDAR↔camera agreement.
 
-**Why two cameras (not a redundant stereo pair):** each camera is assigned to the
-row on its own side, so the pair forms a *differential* centring sensor —
-drifting right brings the right row nearer and the left row farther, shifting the
-midpoint immediately.  Benefits: common-mode rejection (shared lighting errors
-cancel), direct proportional centring signal, graceful degradation (one row
-occluded → fall back to the visible row ± half the row spacing), and √2 heading
-noise reduction from averaging two parallel-row estimates.
+**Why the wide-baseline pair beats one camera:** ground projection assumes the
+green sits at `canopy_z`; real canopy tops sit higher, so each ray overshoots
+radially AWAY from its camera by k ≈ cam_z/(cam_z − h).  The left camera's
+midpoint is biased ≈ +0.88·(k−1) (to the right), the right camera's by the same
+amount to the LEFT — **equal and opposite**, so the equal-weight mean cancels
+canopy-height bias to first order (verified in
+`test_canopy_height_bias_cancels_in_two_camera_mean`).  Shared lighting/exposure
+errors also cancel, heading noise drops by √2, and degradation is graceful: one
+camera alone still sees BOTH rows and still produces a complete centre estimate
+at reduced confidence; one row occluded → `find_row_midpoint` falls back to the
+visible row ± half the row spacing.
+
+**Per-camera fitting details** (`soybean_row_tracker.py`):
+- Ground maps (per-pixel ray→canopy-plane intersection) are precomputed once per
+  frame size and shared by both cameras (same pitch, zero yaw — they differ only
+  by the constant `cam_x` offset).
+- **Depth sanity gate**: a green pixel whose stereo depth is < 0.5× the
+  ground-ray distance is a TALL object (person, equipment) standing above the
+  crop — discarded so obstacles cannot smear green into the row estimate.
+  Pixels with no valid depth are kept (the gate is advisory).
+- **Two-pass cluster-centred PCA**: an off-centre camera sees the outer row's
+  near end cut off by the FOV; whole-cloud PCA over two stripes with unequal
+  extents tilts the axis ~2–3° and biases the midpoint ~0.10 m toward the
+  camera.  Pass 2 splits the points at the pass-1 midpoint, centres each row
+  cluster on its own centroid, and re-runs PCA on the pooled centred points —
+  within-row direction only, unbiased regardless of visible extents.
+- ROI: y ∈ [0.8, 5.0] m (beyond ~5 m one pixel spans tens of cm), |x| ≤ 0.90 m
+  in the ROBOT frame (keeps rows at ±0.38, excludes next rows at ±1.14).
 
 **End-of-row U-turn** (`HeadlandTurn`, closed-loop on wheel odometry):
 
@@ -491,7 +521,7 @@ Applied in `row_navigator.py` after self-filtering, before `detector.update()` a
 | `--auto` | off | Enable motion (default: perception-only) |
 | `--rows N` | 1 | Number of rows to cover |
 | `--headland` | off | **Closed-loop** headland U-turns between rows (odometry feedback) |
-| `--dual-row` | off | Soybean mode: dual-camera flanking-row tracker (overrides `--detector`) |
+| `--dual-row` | off | Soybean mode: dual-camera ground-projection tracker (overrides `--detector`) |
 | `--row-spacing M` | **0.76** | Soybean row spacing / next-strip distance |
 | `--turn-dir D` | **right** | First U-turn direction (`right`/`left`); subsequent alternate |
 | `--headland-exit M` | **1.0** | Straight distance past row end before first pivot |
@@ -855,6 +885,8 @@ OAK-D defaults: hfov=73°, vfov=54°, 640×400 → scale factor ≈ 0.91.
 | Robot keeps driving on last twist if LiDAR dies mid-row | `run()` blocked forever inside `async for`; no further commands sent | Scan-stall watchdog: no scan for 0.5 s → actively command zero velocity until the stream recovers |
 | Dead camera stream freezes fusion + blocks ROW_END | `get_latest()` returns the final frame forever; frozen green fraction vetoes ROW_END indefinitely | Staleness gate (1.5 s) in both navigators treats old frames as "no camera" |
 | Stale EMA from previous row fights re-acquisition after U-turn | Detector EMA accumulates garbage while the ROI sweeps the headland; outlier gates then clamp genuine detections of the next row | `RowDetector.reset()` / tracker `reset()` called on HEADLAND→ACQUIRE |
+| Camera tracker ambiguous/biased with forward-facing mounts | Old side-assigned design ("each camera tracks its own side's row" via inner-half column search) assumed inward-looking cameras; forward-facing cameras see BOTH rows, so the column-histogram argmax was ambiguous and depth-scaled pixel offsets were imprecise | Rewrote `soybean_row_tracker.py` as a ground-projection (IPM) tracker: metric robot-frame points per camera, LiDAR-identical fitting via shared `find_row_midpoint`, equal-weight two-camera mean |
+| Camera midpoint biased ~0.10 m toward each camera, heading off 2–3° | Whole-cloud PCA over two row stripes with unequal visible extents (outer row's near end outside FOV) tilts the principal axis | Two-pass cluster-centred PCA in `_side_from_mask` — pass 2 centres each row cluster on its own centroid before the PCA |
 
 ---
 

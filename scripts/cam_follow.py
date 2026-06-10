@@ -97,8 +97,12 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
     right_cam = OakDriver(side="right", device_id=args.cam_right_id, fps=args.fps)
 
     if args.dual_row:
-        # Soybean centre-residue mode: each camera tracks the flanking row on
-        # its own side; the residue-strip centre is their midpoint.
+        # Soybean centre-residue mode: both forward-facing cameras see BOTH
+        # flanking rows; each ground-projects its green mask (IPM) and
+        # independently estimates the residue-strip centre.  The fused centre
+        # is the equal-weight mean of the two estimates (cancels canopy-height
+        # projection bias).  Extrinsics use the measured mount defaults
+        # (0.92 m height, 15 deg nose-down, 46.5 cm behind the LiDAR).
         from camera.soybean_row_tracker import DualCameraRowTracker
         vis_detector = DualCameraRowTracker(
             cam_x_left=-args.cam_x,

@@ -281,13 +281,18 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
         right_cam = OakDriver(side="right", device_id=args.cam_right_id)
 
         if args.dual_row:
-            # Soybean centre-residue mode: each camera tracks the flanking row
-            # on its own side; the residue-strip centre is their midpoint.
+            # Soybean centre-residue mode: both forward-facing cameras see
+            # BOTH flanking rows; each projects its green mask onto the
+            # ground plane and independently estimates the residue-strip
+            # centre.  The fused centre is the mean of the two estimates.
             from camera.soybean_row_tracker import DualCameraRowTracker
             vis_detector = DualCameraRowTracker(
                 cam_x_left=-args.cam_x,
                 cam_x_right=args.cam_x,
                 row_spacing=args.row_spacing,
+                cam_y_fwd=args.cam_y_fwd,
+                cam_z=args.cam_height,
+                cam_pitch_deg=args.cam_pitch_deg,
             )
         else:
             # Single-row mode: forward green-centroid detector (onion / raised bed).

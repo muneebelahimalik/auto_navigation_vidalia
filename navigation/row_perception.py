@@ -49,6 +49,85 @@ class RowEstimate:
     valid: bool = False              # True when a row was detected this scan
 
 
+def find_row_midpoint(
+    cross: np.ndarray,
+    roi_x_half: float,
+    bin_width: float,
+    row_spacing: float,
+) -> "tuple[float, float]":
+    """Locate the residue-strip centre on the cross-row axis.
+
+    Shared by the LiDAR ``RowDetector`` (dual-row mode) and the camera
+    ``DualCameraRowTracker`` — both sensors observe the same two flanking
+    crop rows, so the centre-finding logic is identical once their
+    observations are expressed as cross-row coordinates in the robot frame.
+
+    Returns ``(lateral, spacing_factor)`` where ``spacing_factor`` in
+    (0, 1] penalises confidence when the detected peak geometry deviates
+    from the expected row spacing.
+
+    Pair selection uses a row-spacing prior: among all left/right peak
+    combinations, the pair whose separation is closest to ``row_spacing``
+    wins.  Picking the *innermost* pair instead locks onto weed clumps or
+    residue clutter near the centreline whenever they produce a histogram
+    peak, dragging the midpoint off the true centre.
+
+    When only one side is visible (robot far off-centre, or one row
+    occluded), the residue centre is half a row spacing INWARD from the
+    visible row.  Returning the peak itself would steer the robot directly
+    onto the visible crop row.
+    """
+    lo, hi = -roi_x_half, roi_x_half
+    edges = np.arange(lo, hi + bin_width, bin_width)
+    hist, edges = np.histogram(cross, bins=edges)
+    centres = 0.5 * (edges[:-1] + edges[1:])
+    smooth = np.convolve(hist.astype(float), [0.25, 0.5, 0.25], mode="same")
+    thresh = max(3.0, 0.25 * float(smooth.max()))
+    peaks = [
+        i for i in range(1, len(smooth) - 1)
+        if smooth[i] >= smooth[i - 1] and smooth[i] >= smooth[i + 1]
+        and smooth[i] >= thresh
+    ]
+    if not peaks:
+        peaks = [int(np.argmax(smooth))]
+
+    # Separate into left (x < -0.05 m) and right (x > +0.05 m) peaks.
+    # The small dead-band avoids treating noise exactly at centre as a peak.
+    left_peaks = [p for p in peaks if centres[p] < -0.05]
+    right_peaks = [p for p in peaks if centres[p] > 0.05]
+
+    half_spacing = 0.5 * row_spacing
+
+    if left_peaks and right_peaks:
+        best_pair = None
+        best_err = float("inf")
+        for li in left_peaks:
+            for ri in right_peaks:
+                sep = centres[ri] - centres[li]
+                err = abs(sep - row_spacing)
+                if err < best_err:
+                    best_err = err
+                    best_pair = (li, ri)
+        li, ri = best_pair
+        # Penalise confidence when even the best pair's separation is far
+        # from the expected spacing (clutter posing as a row).
+        spacing_factor = max(0.5, 1.0 - best_err / row_spacing)
+        return 0.5 * (centres[li] + centres[ri]), spacing_factor
+
+    if left_peaks:
+        # Only the left row visible — centre is half a spacing to its right.
+        inner = max(left_peaks, key=lambda i: centres[i])
+        return float(centres[inner]) + half_spacing, 0.7
+    if right_peaks:
+        inner = min(right_peaks, key=lambda i: centres[i])
+        return float(centres[inner]) - half_spacing, 0.7
+
+    # All peaks inside the dead-band (clutter on the residue strip itself):
+    # treat as "approximately centred" rather than steering at the clutter.
+    nearest = min(peaks, key=lambda i: abs(centres[i]))
+    return float(centres[nearest]), 0.5
+
+
 class RowDetector:
     """
     Stateful centre-row / centre-residue detector.  Call update() once per
@@ -201,82 +280,12 @@ class RowDetector:
 
     # ------------------------------------------------------------------
     def _midpoint_peaks(self, cross: np.ndarray) -> float:
-        """Return the midpoint between the left and right histogram peaks
-        (dual-row / soybean centre-residue mode).
-
-        The robot straddles the dark residue strip; the soybean rows flank it
-        symmetrically on each side.  Their histogram peaks are at roughly
-        ±(row_spacing/2) in the robot frame.  The midpoint of those two peaks
-        is the centre of the residue strip — the tracking target.
-
-        Pair selection uses a row-spacing prior: among all left/right peak
-        combinations, the pair whose separation is closest to ``row_spacing``
-        wins.  Picking the *innermost* pair instead (the old behaviour) locks
-        onto weed clumps or residue clutter near the centreline whenever they
-        produce a histogram peak, dragging the midpoint off the true centre.
-        A pair whose separation is far from the expected spacing also lowers
-        confidence via ``_spacing_factor``.
-
-        When only one side is visible (robot far off-centre, or one row
-        occluded), the residue centre is half a row spacing INWARD from the
-        visible row — mirroring DualCameraRowTracker's single-side fallback.
-        Returning the peak itself (the old behaviour) made the robot steer
-        directly onto the visible soybean row.
-        """
-        lo, hi = -self.roi_x_half, self.roi_x_half
-        edges = np.arange(lo, hi + self.bin_width, self.bin_width)
-        hist, edges = np.histogram(cross, bins=edges)
-        centres = 0.5 * (edges[:-1] + edges[1:])
-        smooth = np.convolve(hist.astype(float), [0.25, 0.5, 0.25], mode="same")
-        thresh = max(3.0, 0.25 * float(smooth.max()))
-        peaks = [
-            i for i in range(1, len(smooth) - 1)
-            if smooth[i] >= smooth[i - 1] and smooth[i] >= smooth[i + 1]
-            and smooth[i] >= thresh
-        ]
-        if not peaks:
-            peaks = [int(np.argmax(smooth))]
-
-        # Separate into left (x < -0.05 m) and right (x > +0.05 m) peaks.
-        # The small dead-band avoids treating noise exactly at centre as a peak.
-        left_peaks = [p for p in peaks if centres[p] < -0.05]
-        right_peaks = [p for p in peaks if centres[p] > 0.05]
-
-        self._spacing_factor = 1.0
-        half_spacing = 0.5 * self.row_spacing
-
-        if left_peaks and right_peaks:
-            # Row-spacing prior: choose the L/R pair whose separation best
-            # matches the known flanking-row spacing.
-            best_pair = None
-            best_err = float("inf")
-            for li in left_peaks:
-                for ri in right_peaks:
-                    sep = centres[ri] - centres[li]
-                    err = abs(sep - self.row_spacing)
-                    if err < best_err:
-                        best_err = err
-                        best_pair = (li, ri)
-            li, ri = best_pair
-            # Penalise confidence when even the best pair's separation is far
-            # from the expected spacing (clutter posing as a row).
-            self._spacing_factor = max(0.5, 1.0 - best_err / self.row_spacing)
-            return 0.5 * (centres[li] + centres[ri])
-
-        if left_peaks:
-            # Only the left row visible — centre is half a spacing to its right.
-            inner = max(left_peaks, key=lambda i: centres[i])
-            self._spacing_factor = 0.7
-            return float(centres[inner]) + half_spacing
-        if right_peaks:
-            inner = min(right_peaks, key=lambda i: centres[i])
-            self._spacing_factor = 0.7
-            return float(centres[inner]) - half_spacing
-
-        # All peaks inside the dead-band (clutter on the residue strip itself):
-        # treat as "approximately centred" rather than steering at the clutter.
-        self._spacing_factor = 0.5
-        return float(centres[min(peaks, key=lambda i: abs(centres[i]))])
+        """Dual-row / soybean centre-residue mode: locate the residue-strip
+        centre via the shared ``find_row_midpoint`` (row-spacing prior +
+        single-side half-spacing fallback)."""
+        lateral, self._spacing_factor = find_row_midpoint(
+            cross, self.roi_x_half, self.bin_width, self.row_spacing)
+        return lateral
 
     # ------------------------------------------------------------------
     def _smooth(self, fresh: RowEstimate) -> RowEstimate:
