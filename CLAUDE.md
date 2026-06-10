@@ -2,6 +2,16 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Git Workflow — ALWAYS push to main
+
+Whenever a change is completed (code, tests, or docs), **commit it and push it
+to `main`** — the user has standing permission for this; do not wait to be
+asked and do not leave finished work only on a side branch.  In remote Claude
+Code sessions that develop on a `claude/*` session branch: push the session
+branch first, then fast-forward `main` to it (`git checkout main && git merge
+--ff-only <branch> && git push origin main`) and switch back.  Run
+`python3 -m pytest tests/ -q` before pushing.
+
 ## Project Overview
 
 Autonomous navigation workspace for the farm-ng Amiga robot using a Velodyne VLP-16 LiDAR
