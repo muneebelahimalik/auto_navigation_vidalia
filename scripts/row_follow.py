@@ -339,6 +339,12 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
                 col_centre_frac=0.5,
             )
 
+    if args.cam_fusion == "point" and not (args.camera and args.dual_row):
+        print(" [row_follow] --cam-fusion point requires --camera --dual-row "
+              "(the ground-projection tracker provides the metric points) — "
+              "falling back to estimate-level fusion.")
+        args.cam_fusion = "estimate"
+
     if args.ekf:
         from navigation.ekf_estimator import RowEKF
         ekf = RowEKF()
@@ -398,6 +404,7 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
         cam_block_frames=args.cam_block_frames,
         cam_self_radius=args.cam_self_radius,
         ros2_bridge=args.ros2_bridge,
+        cam_fusion=args.cam_fusion,
     )
     nav_ref.append(navigator)
 
@@ -429,7 +436,9 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
     else:
         cam_mode = "disabled"
     ekf_str = "EKF=on" if args.ekf else "EKF=off"
-    print(f"  cameras : {cam_mode}  {ekf_str}")
+    fusion_str = ("fusion=point (pooled LiDAR+camera fit)"
+                  if args.cam_fusion == "point" else "fusion=estimate")
+    print(f"  cameras : {cam_mode}  {ekf_str}  {fusion_str}")
     if args.ros2_bridge:
         print("  ros2    : bridge ON — writing to /dev/shm/vidalia_pts.bin + vidalia_status.json")
         print("            start Docker bridge:  bash ros2_bridge/start.sh")
@@ -603,6 +612,18 @@ def main() -> None:
                         help="Planar-range self-filter for the 3-D camera depth cloud (default: 1.0 m). "
                              "Points closer than this to the LiDAR origin are assumed to be the robot's "
                              "own structure and are discarded before the safety check.")
+    parser.add_argument("--cam-fusion", choices=["estimate", "point"], default="estimate",
+                        help="How camera row perception is fused with the LiDAR "
+                             "(default: estimate). 'estimate' = each sensor fits its own "
+                             "lateral/heading, then the estimates are blended (EKF or "
+                             "weighted average) — the original behaviour. 'point' = the "
+                             "camera tracker's metric ground points are pooled with the "
+                             "LiDAR crop points into ONE weighted row fit (single "
+                             "histogram + peak pairing + PCA over all evidence); camera "
+                             "mass is capped at 50%% of a full LiDAR scan so the LiDAR "
+                             "always dominates on disagreement, while camera points carry "
+                             "the fit through empty VLP-16 crop-ROI scans and cover the "
+                             "<1.5 m self-filter blind zone. Requires --camera --dual-row.")
     parser.add_argument("--ekf", action="store_true", default=False,
                         help="Enable EKF sensor fusion (default: off). Adds Kalman filter over "
                              "LiDAR+camera estimates — useful on rough terrain with many empty scans, "

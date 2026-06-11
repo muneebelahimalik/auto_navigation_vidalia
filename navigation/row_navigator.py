@@ -130,6 +130,7 @@ class RowNavigator:
         acq_miss_thresh: int = 2,
         scan_timeout: float = 0.5,
         cam_stale_secs: float = 1.5,
+        cam_fusion: str = "estimate",
     ) -> None:
         self.canbus = canbus
         self.detector = detector
@@ -157,6 +158,7 @@ class RowNavigator:
         self.acq_miss_thresh = acq_miss_thresh
         self.scan_timeout = scan_timeout
         self.cam_stale_secs = cam_stale_secs
+        self.cam_fusion = cam_fusion if cam_fusion in ("estimate", "point") else "estimate"
 
         self.acquire_conf = acquire_conf
         self.acquire_frames = acquire_frames
@@ -286,9 +288,8 @@ class RowNavigator:
                 if self.tilt_rad != 0.0:
                     pts = tilt_correct_pts(pts, self.tilt_rad)
 
-            est = self.detector.update(pts)
-
-            # --- Camera integration ---
+            # --- Camera integration (runs BEFORE the LiDAR fit so that
+            # point-level fusion can feed camera ground points into it) ---
             vis_est = None
             frame_l = frame_r = dep_l = dep_r = None
             if self.vis_detector is not None or self.depth_pts_left is not None or self.depth_pts_right is not None:
@@ -312,6 +313,19 @@ class RowNavigator:
 
                 if self.vis_detector is not None:
                     vis_est = self.vis_detector.update(rgb_l, dep_l, rgb_r, dep_r)
+
+            # --- Row fit: LiDAR-only, or pooled LiDAR+camera point fit ---
+            # cam_fusion == "point": the tracker's metric ground points join
+            # the LiDAR crop points in ONE weighted fit (single histogram /
+            # peak pairing / PCA over all evidence).  Camera points fill
+            # empty VLP-16 crop-ROI scans and the < 1.5 m self-filter blind
+            # zone; their total mass is capped so a healthy LiDAR scan
+            # always dominates.  The camera estimate is then NOT fused again
+            # at the estimate level (that would double-count it).
+            aux_xy = None
+            if self.cam_fusion == "point" and self.vis_detector is not None:
+                aux_xy = getattr(self.vis_detector, "last_ground_points", None)
+            est = self.detector.update(pts, aux_xy=aux_xy)
 
             # --- 3-D camera depth cloud: fill LiDAR blind zone ---
             # Projects depth images to 3D, merges with LiDAR cloud so that
@@ -394,14 +408,16 @@ class RowNavigator:
                                 if vis_est is not None else None)
 
             # --- Sensor fusion: EKF or weighted average ---
+            # With point-level fusion the camera evidence is already inside
+            # `est`; feeding vis_est in again here would double-count it.
             if self.ekf is not None:
                 prev_v, prev_w = self.cmd   # commanded last scan — best motion estimate
                 self.ekf.predict(linear_vel=prev_v, angular_vel=prev_w, dt=dt)
                 self.ekf.update_lidar(est)
-                if vis_est is not None:
+                if vis_est is not None and self.cam_fusion != "point":
                     self.ekf.update_camera(vis_est)
                 est = self.ekf.to_estimate(est)
-            elif vis_est is not None:
+            elif vis_est is not None and self.cam_fusion != "point":
                 est = self._fuse_estimates(est, vis_est)
 
             linear, angular = self._step(est, safety, dt)
@@ -743,7 +759,7 @@ class RowNavigator:
         ekf_active = self.ekf is not None
         suffix = ""
         if cam_active:
-            suffix += "+CAM"
+            suffix += "+CAMpt" if self.cam_fusion == "point" else "+CAM"
         if depth3d:
             suffix += "+3D"
         if ekf_active:

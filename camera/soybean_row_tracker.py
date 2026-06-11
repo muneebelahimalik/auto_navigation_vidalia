@@ -223,11 +223,16 @@ class DualCameraRowTracker:
         self._m_valid: Optional[np.ndarray] = None  # ray hits ground inside fwd ROI
 
         self._est = DualRowEstimate()
+        # Metric robot-frame ground points from the most recent update() —
+        # consumed by RowDetector point-level fusion (--cam-fusion point).
+        self.last_ground_points: Optional[np.ndarray] = None
+        self._last_side_pts: Optional[np.ndarray] = None
 
     # ------------------------------------------------------------------
     def reset(self) -> None:
         """Forget the smoothed estimate (call when starting a new row)."""
         self._est = DualRowEstimate()
+        self.last_ground_points = None
 
     # ------------------------------------------------------------------
     def update(
@@ -238,11 +243,21 @@ class DualCameraRowTracker:
         depth_right: Optional[np.ndarray],
     ) -> DualRowEstimate:
         """Estimate the residue-strip centre from both forward cameras."""
+        self.last_ground_points = None
         if not _CV2_OK:
             return DualRowEstimate()
 
+        self._last_side_pts = None
         left = self._process_side(rgb_left, depth_left, self.cam_x_left)
+        pts_l = self._last_side_pts
+
+        self._last_side_pts = None
         right = self._process_side(rgb_right, depth_right, self.cam_x_right)
+        pts_r = self._last_side_pts
+
+        parts = [p for p in (pts_l, pts_r) if p is not None and len(p)]
+        if parts:
+            self.last_ground_points = np.vstack(parts)
         return self._fuse(left, right)
 
     # ------------------------------------------------------------------
@@ -397,6 +412,10 @@ class DualCameraRowTracker:
 
         if frac < self.min_green_fraction or quality <= 0.0:
             return _SideResult(green_fraction=frac)
+
+        # Expose the gated metric points for point-level fusion (only from
+        # sides that passed every quality gate above).
+        self._last_side_pts = P
 
         return _SideResult(
             valid=True,

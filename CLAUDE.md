@@ -331,9 +331,30 @@ residue strip**, tracked from three independent sources and fused.
    yields an independent metric estimate of the SAME centre; fusion is their
    equal-weight mean (camera-capped 0–0.5 confidence, scaled by cross-camera
    agreement).
-3. **Fusion** — EKF (`--ekf`) or confidence-weighted average folds the camera
-   centre into the LiDAR centre; camera weight is capped at half the LiDAR
-   weight, and the confidence boost scales with LiDAR↔camera agreement.
+3. **Fusion** — two levels, selected by `--cam-fusion` (both keep the camera
+   subordinate to the LiDAR):
+   - `estimate` (default, original behaviour): EKF (`--ekf`) or
+     confidence-weighted average folds the camera centre into the LiDAR
+     centre; camera weight is capped at half the LiDAR weight, and the
+     confidence boost scales with LiDAR↔camera agreement.
+   - `point` (opt-in, measurement-level): the tracker's metric ground points
+     are pooled with the LiDAR crop points into **one weighted row fit** —
+     a single cross-row histogram, one spacing-prior peak pairing, one PCA
+     over all evidence (`RowDetector.update(pts, aux_xy=...)`).  Camera
+     total mass is capped at `aux_mass_ratio × full_points` (50 % of a full
+     LiDAR scan), so a healthy LiDAR always dominates on disagreement —
+     with a centred LiDAR and a camera mis-calibrated by 0.35 m the fused
+     lateral moves < 0.05 m, because the spacing prior simply pairs the
+     LiDAR peaks.  Camera points carry the fit through empty VLP-16
+     crop-ROI scans (no more confidence decay toward ACQUIRE during
+     dropouts) and extend coverage into the < 1.5 m LiDAR self-filter
+     blind zone (`aux_y_min = 0.5 m`).  Mixed fits use a LiDAR-seeded,
+     peak-cluster-centred two-pass PCA: every point is assigned to its
+     nearest histogram peak and each cluster is centred on its own
+     centroid, so stripes with unequal sensor coverage — or extra stripes
+     from a mis-calibrated camera — cannot tilt the heading.  The camera
+     estimate is then NOT fused again at the estimate level (no double
+     counting); the pure-LiDAR code path is bit-identical to before.
 
 **Why the wide-baseline pair beats one camera:** ground projection assumes the
 green sits at `canopy_z`; real canopy tops sit higher, so each ray overshoots
@@ -508,6 +529,7 @@ Applied in `row_navigator.py` after self-filtering, before `detector.update()` a
 | `--obstacle-height H` | **0.50** | Min ground-relative height m to count as obstacle in FORWARD zone (soybean default; onion: 0.75) |
 | `--tire-height H` | **0.35** | Min height for TIRE-ZONE obstacles (soybean default; onion: 0.85) |
 | `--camera` | off | Enable OAK-D stereo cameras |
+| `--cam-fusion L` | **estimate** | Camera↔LiDAR fusion level: `estimate` = blend independently fitted estimates (original); `point` = pool camera ground points with LiDAR crop points into one weighted row fit (requires `--camera --dual-row`; falls back to `estimate` otherwise) |
 | `--cam-left-id S` | "" | Left camera farm-ng service name (default: oak0) |
 | `--cam-right-id S` | "" | Right camera farm-ng service name (default: oak1) |
 | `--cam-x M` | **0.88** | Camera lateral offset from centreline m (half of 1.76 m inter-camera span; measured) |

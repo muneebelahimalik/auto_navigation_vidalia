@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 
 from lidar.obstacle_filter import LIDAR_MOUNT_HEIGHT
-from navigation.row_perception import RowDetector
+from navigation.row_perception import RowDetector, find_row_midpoint
 
 RNG = np.random.default_rng(42)
 
@@ -156,3 +156,81 @@ def test_reset_clears_smoothed_state():
     est = det.update(np.empty((0, 3)))
     assert est.lateral_offset == 0.0
     assert est.confidence == 0.0
+
+
+# ---------------------------------------------------------------------------
+# Point-level fusion: camera ground points pooled into the LiDAR fit
+# ---------------------------------------------------------------------------
+
+def make_aux_rows(offset=0.0, n_per_row=200, y_lo=0.8, y_hi=4.5):
+    """Camera-tracker-style metric ground points for both flanking rows."""
+    rng = np.random.default_rng(11)
+    pts = []
+    for xc in (-HALF + offset, +HALF + offset):
+        y = rng.uniform(y_lo, y_hi, n_per_row)
+        x = xc + rng.normal(0.0, 0.03, n_per_row)
+        pts.append(np.column_stack((x, y)))
+    return np.vstack(pts)
+
+
+def test_weighted_midpoint_downweights_heavy_clutter():
+    """Many clutter points with low per-point weight must not outvote
+    fewer full-weight row points in the histogram pairing."""
+    rng = np.random.default_rng(3)
+    rows = np.concatenate([rng.normal(-HALF, 0.02, 80), rng.normal(+HALF, 0.02, 80)])
+    clutter = rng.normal(+0.12, 0.02, 400)            # 5x the count of one row
+    cross = np.concatenate([rows, clutter])
+    weights = np.concatenate([np.ones(160), np.full(400, 0.05)])  # mass 20
+    lateral, _ = find_row_midpoint(cross, 0.80, 0.10, ROW_SPACING, weights=weights)
+    assert abs(lateral) < 0.06
+
+
+def test_point_fusion_camera_carries_empty_lidar_scan():
+    """Empty VLP-16 crop ROI + camera ground points: the fit must survive at
+    camera-capped confidence instead of decaying toward ACQUIRE."""
+    det = RowDetector(dual_row=True, row_spacing=ROW_SPACING)
+    aux = make_aux_rows()
+    est = None
+    for _ in range(25):
+        est = det.update(np.empty((0, 3)), aux_xy=aux)
+    assert est.valid
+    assert abs(est.lateral_offset) < 0.06
+    assert 0.20 <= est.confidence <= 0.55          # capped by aux_mass_ratio
+    assert est.row_end_confidence == 1.0           # row-end stays LiDAR-only
+
+
+def test_point_fusion_boosts_sparse_lidar():
+    """A sparse LiDAR scan plus camera points must beat the sparse scan alone."""
+    sparse = np.vstack([make_row(-HALF, n=30), make_row(+HALF, n=30)])
+    det_solo = RowDetector(dual_row=True, row_spacing=ROW_SPACING)
+    est_solo = converge(det_solo, sparse)
+    det_fused = RowDetector(dual_row=True, row_spacing=ROW_SPACING)
+    est_fused = None
+    for _ in range(25):
+        est_fused = det_fused.update(sparse, aux_xy=make_aux_rows())
+    assert est_fused.confidence > est_solo.confidence
+    assert abs(est_fused.lateral_offset) < 0.06
+
+
+def test_point_fusion_lidar_dominates_disagreeing_camera():
+    """Healthy LiDAR centred, camera rows shifted +0.35 m (bad calibration /
+    wrong rows): the capped camera mass must not drag the fit off the LiDAR."""
+    lidar = np.vstack([make_row(-HALF), make_row(+HALF)])
+    det = RowDetector(dual_row=True, row_spacing=ROW_SPACING)
+    est = None
+    for _ in range(25):
+        est = det.update(lidar, aux_xy=make_aux_rows(offset=0.35))
+    assert abs(est.lateral_offset) < 0.12
+
+
+def test_point_fusion_none_aux_matches_lidar_only():
+    """aux_xy=None must reproduce the pure-LiDAR fit exactly."""
+    pts = np.vstack([make_row(-HALF - 0.1), make_row(+HALF - 0.1)])
+    det_a = RowDetector(dual_row=True, row_spacing=ROW_SPACING)
+    det_b = RowDetector(dual_row=True, row_spacing=ROW_SPACING)
+    for _ in range(10):
+        ea = det_a.update(pts)
+        eb = det_b.update(pts, aux_xy=None)
+    assert ea.lateral_offset == eb.lateral_offset
+    assert ea.heading_error == eb.heading_error
+    assert ea.confidence == eb.confidence

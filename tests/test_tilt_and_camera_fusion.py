@@ -220,6 +220,32 @@ def test_canopy_height_bias_cancels_in_two_camera_mean():
     assert fused == pytest.approx(0.0, abs=0.08)
 
 
+def test_ground_points_exposed_for_point_fusion():
+    """A valid side fit must publish its metric points via _last_side_pts —
+    the feed for RowDetector point-level fusion (--cam-fusion point)."""
+    tracker = make_tracker()
+    world = np.vstack([row_points(-0.38), row_points(+0.38)])
+    tracker._last_side_pts = None
+    res = tracker._side_from_mask(render_mask(world, -0.88), -0.88)
+    assert res.valid
+    P = tracker._last_side_pts
+    assert P is not None and P.ndim == 2 and P.shape[1] == 2
+    assert len(P) >= 100
+    # Points must be inside the tracker ROI, in the robot frame.
+    assert np.all(np.abs(P[:, 0]) <= tracker.roi_x_half + 1e-9)
+    assert np.all((P[:, 1] >= tracker.roi_y_min) & (P[:, 1] <= tracker.roi_y_max))
+    # And cluster around the true row positions.
+    assert np.abs(np.abs(P[:, 0]) - 0.38).mean() < 0.10
+
+
+def test_invalid_side_publishes_no_points():
+    tracker = make_tracker()
+    tracker._last_side_pts = None
+    res = tracker._side_from_mask(np.zeros((H, W), dtype=bool), -0.88)
+    assert not res.valid
+    assert tracker._last_side_pts is None
+
+
 def test_depth_gate_rejects_tall_object():
     """Green pixels whose stereo depth is much shorter than the ground-ray
     distance belong to a tall object, not crop — they must be discarded."""
