@@ -662,6 +662,10 @@ def main() -> None:
                              "topics for RViz2 visualization.")
     args = parser.parse_args()
 
+    # Suppress gRPC PollerCompletionQueue noise after event-loop close (Python 3.8 + grpcio).
+    import logging
+    logging.getLogger("asyncio").setLevel(logging.CRITICAL)
+
     nav_ref: list = []
     try:
         asyncio.run(_run(args, nav_ref))
@@ -673,7 +677,7 @@ def main() -> None:
         navigator = nav_ref[0]
         try:
             asyncio.run(navigator.stop())
-        except Exception:
+        except BaseException:
             pass
 
         if args.slam and navigator.slam is not None:
