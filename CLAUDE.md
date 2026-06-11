@@ -422,9 +422,11 @@ python3 scripts/row_follow.py --auto --dual-row --camera --rows 6 --headland \
 - **X** = right, **Y** = forward, **Z** = up (sensor frame, after tilt correction)
 - Ground-relative height: `h = z_corrected + LIDAR_MOUNT_HEIGHT`
 - `LIDAR_MOUNT_HEIGHT = 0.705 m` (defined in `lidar/obstacle_filter.py`; measured: ground to VLP-16 drum centre)
-- **LiDAR tilt: 15° forward (nose-down)** — measured on flat ground with a phone level app.
-  Always pass `--lidar-tilt 15` (the default) when running on this robot.  Set to 0.0 only
-  if the mount bracket is physically levelled.
+- **LiDAR tilt: 0° (no pitch correction needed)** — the mount has a 15° ROLL (left-right
+  lean) confirmed by phone level, but no measurable nose-down PITCH.  Roll does not shift
+  heights for forward-facing beams and requires no software correction.  Debug output at
+  `--lidar-tilt 15` showed all strip points at h≈−0.49 m (correct for applying a pitch
+  correction to a flat sensor); `--lidar-tilt 0` gives ground at h≈0 and crop=480+.
 - Crop geometry (soybean): seedling canopy h ≈ 0.03–0.30 m; tires run in furrows between soybean beds
 - Crop geometry (onion): canopy h ≈ 0.10–0.60 m; adjacent row canopy h ≈ 0.70–0.85 m
 
@@ -446,7 +448,7 @@ z_world = −y_sensor · sin(θ) + z_sensor · cos(θ)
 ```
 Applied in `row_navigator.py` after self-filtering, before `detector.update()` and `safety.check()`.
 
-**CLI flag:** `--lidar-tilt DEG` (default: **15.0** — measured on flat ground; set to 0.0 only if mount is levelled).
+**CLI flag:** `--lidar-tilt DEG` (default: **0.0** — mount has a roll lean not a nose-down pitch; debug-verified).
 
 ---
 
@@ -521,7 +523,7 @@ Applied in `row_navigator.py` after self-filtering, before `detector.update()` a
 | `--headland-turn-rate R` | **0.35** | Pivot rate during the two 90° turns (rad/s) |
 | `--slam` | off | Enable SLAM odometry integration (currently no-op) |
 | `--speed M` | 0.30 | Max forward speed m/s |
-| `--lidar-tilt DEG` | **15.0** | Forward (nose-down) LiDAR tilt in degrees — measured on flat ground; set to 0.0 only if mount is physically levelled |
+| `--lidar-tilt DEG` | **0.0** | Nose-down PITCH tilt of LiDAR mount in degrees — mount has a 15° roll (side lean) not a pitch; debug-verified that 0.0 is correct |
 | `--roi-x W` | 0.80 | Row detection ROI half-width m |
 | `--crop-min H` | 0.05 | Minimum crop height above ground m |
 | `--crop-max H` | 0.60 | Maximum crop height above ground m |

@@ -560,10 +560,11 @@ def main() -> None:
                              "(default: 0.35). Tires run in the furrow between soybean beds "
                              "where plants are absent or short; 0.35 m passes seedlings but "
                              "stops real hazards. Onion fields: use 0.85 m.")
-    parser.add_argument("--lidar-tilt", type=float, default=15.0, metavar="DEG",
-                        help="Forward (nose-down) tilt of the LiDAR mount in degrees "
-                             "(default: 15.0 — measured on flat ground; "
-                             "set to 0.0 only if the mount is physically levelled).")
+    parser.add_argument("--lidar-tilt", type=float, default=0.0, metavar="DEG",
+                        help="Forward (nose-down) PITCH tilt of the LiDAR mount in degrees "
+                             "(default: 0.0). The mount has a 15° ROLL (left-right lean) "
+                             "which does not affect forward-beam height and needs no correction. "
+                             "Only set this if the mount is nose-down relative to the robot chassis.")
     parser.add_argument("--debug", action="store_true",
                         help="Stream a LiDAR height profile instead of navigating")
     parser.add_argument("--save-dir", default="", metavar="PATH",
