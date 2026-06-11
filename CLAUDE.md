@@ -422,7 +422,9 @@ python3 scripts/row_follow.py --auto --dual-row --camera --rows 6 --headland \
 - **X** = right, **Y** = forward, **Z** = up (sensor frame, after tilt correction)
 - Ground-relative height: `h = z_corrected + LIDAR_MOUNT_HEIGHT`
 - `LIDAR_MOUNT_HEIGHT = 0.705 m` (defined in `lidar/obstacle_filter.py`; measured: ground to VLP-16 drum centre)
-- **LiDAR tilt: 15° forward (nose-down)** — requires tilt correction before any height math
+- **LiDAR tilt: 0° (flat mount)** — field-verified 2026-06 with `--debug` height histograms
+  (ground at h≈0, soybean crop band populated only at tilt=0).  An earlier mount was tilted
+  15° nose-down; if the mount is ever angled again, pass the measured angle via `--lidar-tilt`.
 - Crop geometry (soybean): seedling canopy h ≈ 0.03–0.30 m; tires run in furrows between soybean beds
 - Crop geometry (onion): canopy h ≈ 0.10–0.60 m; adjacent row canopy h ≈ 0.70–0.85 m
 
@@ -444,7 +446,7 @@ z_world = −y_sensor · sin(θ) + z_sensor · cos(θ)
 ```
 Applied in `row_navigator.py` after self-filtering, before `detector.update()` and `safety.check()`.
 
-**CLI flag:** `--lidar-tilt DEG` (default: **15.0**). Set `--lidar-tilt 0` for a flat mount.
+**CLI flag:** `--lidar-tilt DEG` (default: **0.0** — field-verified flat; pass measured angle if mount is changed).
 
 ---
 
@@ -519,7 +521,7 @@ Applied in `row_navigator.py` after self-filtering, before `detector.update()` a
 | `--headland-turn-rate R` | **0.35** | Pivot rate during the two 90° turns (rad/s) |
 | `--slam` | off | Enable SLAM odometry integration (currently no-op) |
 | `--speed M` | 0.30 | Max forward speed m/s |
-| `--lidar-tilt DEG` | **15.0** | Forward (nose-down) LiDAR tilt in degrees — **must match physical mount** |
+| `--lidar-tilt DEG` | **0.0** | Forward (nose-down) LiDAR tilt in degrees relative to the field surface — field-verified flat (2026-06); pass measured angle if mount is physically angled |
 | `--roi-x W` | 0.80 | Row detection ROI half-width m |
 | `--crop-min H` | 0.05 | Minimum crop height above ground m |
 | `--crop-max H` | 0.60 | Maximum crop height above ground m |
