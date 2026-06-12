@@ -217,7 +217,13 @@ def _cluster_centred_pca(
         C = P[sel]
         centroid = (ws[:, None] * C).sum(axis=0) / mass
         parts_p.append(C - centroid)
-        parts_w.append(ws)
+        # Normalise each cluster to unit total weight before pooling.
+        # Without this, a cluster with 4× more points (e.g. the left soybean
+        # row when the VLP-16 illuminates it at a wider azimuth angle) would
+        # contribute 4× as much to the covariance and pull the heading toward
+        # its own local direction — in the field this produced a persistent
+        # +9° heading bias even from full scans.
+        parts_w.append(ws / mass)
     if not parts_p:
         return fallback
     return _weighted_pca_dir(np.vstack(parts_p), np.concatenate(parts_w))

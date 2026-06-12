@@ -316,6 +316,26 @@ def test_lateral_jump_gate_tighter_default():
     assert abs(est.lateral_offset) <= 0.08
 
 
+def test_asymmetric_density_does_not_bias_heading():
+    """4:1 LiDAR hit asymmetry between the two rows must not bias heading.
+
+    The VLP-16 consistently illuminates the left soybean row with ~4× more
+    returns than the right (azimuth coverage varies with lateral offset).
+    Without equal-weight cluster normalisation, the left cluster dominates
+    the pooled PCA, pulling the heading toward any local deviation of that
+    row — producing a persistent +9° bias in the field.  With per-cluster
+    weight normalisation both rows contribute equally regardless of density.
+    """
+    det = RowDetector(dual_row=True, row_spacing=ROW_SPACING)
+    # Left row: 4× denser; right row: sparse.  Both are straight (heading 0°).
+    pts = np.vstack([make_row(-HALF, n=520), make_row(+HALF, n=130)])
+    est = converge(det, pts)
+    assert abs(est.heading_error) < math.radians(3.0), (
+        f"Asymmetric density biased heading to {math.degrees(est.heading_error):.1f}°"
+    )
+    assert abs(est.lateral_offset) < 0.05
+
+
 def test_sparse_scan_heading_gate():
     """A dropout scan with < 2×min_points crop returns and a large heading
     jump must not update the heading EMA.
