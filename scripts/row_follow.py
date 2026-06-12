@@ -290,6 +290,7 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
                 cam_x_left=-args.cam_x,
                 cam_x_right=args.cam_x,
                 row_spacing=args.row_spacing,
+                roi_x_half=args.roi_x,
                 cam_y_fwd=args.cam_y_fwd,
                 cam_z=args.cam_height,
                 cam_pitch_deg=args.cam_pitch_deg,
@@ -530,7 +531,12 @@ def main() -> None:
     parser.add_argument("--speed", type=float, default=0.30, metavar="M",
                         help="Max forward speed in m/s (default: 0.30)")
     parser.add_argument("--roi-x", type=float, default=0.80, metavar="M",
-                        help="Half-width of the centre-row search band (default: 0.80)")
+                        help="Half-width of the centre-row search band (default: 0.80). "
+                             "Applies to BOTH the LiDAR detector and the dual-camera "
+                             "tracker. Must exclude all rows other than the two flanking "
+                             "the residue strip — e.g. with inner rows at ±0.30 m and a "
+                             "second pair near the tires at ±0.85 m, use 0.55 so the "
+                             "outer pair cannot be mispaired with an inner row.")
     parser.add_argument("--crop-min", type=float, default=0.03, metavar="M",
                         help="Min crop height above ground to keep (default: 0.03). "
                              "Soybean seedlings: 0.03. Mature onions: 0.05.")

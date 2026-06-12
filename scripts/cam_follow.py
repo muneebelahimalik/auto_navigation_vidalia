@@ -108,6 +108,7 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
             cam_x_left=-args.cam_x,
             cam_x_right=args.cam_x,
             row_spacing=args.row_spacing,
+            roi_x_half=args.roi_x,
             green_h_lo=args.hsv_h_lo,
             green_h_hi=args.hsv_h_hi,
             green_s_lo=args.hsv_s_lo,
@@ -270,6 +271,11 @@ def main() -> None:
                              "is their midpoint (overrides --detector).")
     parser.add_argument("--row-spacing", type=float, default=0.76, metavar="M",
                         help="Soybean row spacing / next-strip lateral distance (default: 0.76).")
+    parser.add_argument("--roi-x", type=float, default=0.90, metavar="M",
+                        help="Lateral half-width (m, robot frame) of the dual-camera "
+                             "tracker ROI (default: 0.90). Must exclude all rows other "
+                             "than the two flanking the residue strip — with a second "
+                             "row pair near the tires at ±0.85 m, use 0.55.")
     parser.add_argument("--turn-dir", choices=["right", "left"], default="right",
                         help="Direction of the first headland U-turn (default: right; "
                              "subsequent turns alternate).")

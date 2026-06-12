@@ -402,17 +402,30 @@ right, …), starting from `--turn-dir` (default right).  The loop repeats until
 commanded-velocity dead-reckoning — both far more accurate than the previous
 fixed-time open-loop manoeuvre.
 
+**Field geometry — FOUR rows between the wheel tracks (Vidalia soybean field):**
+the wheels straddle four soybean rows: an outer pair running just inside each
+tire (≈ ±0.85 m) and an inner pair flanking the centre stubble strip
+(≈ ±0.30 m).  The tracking target is the midpoint of the INNER pair only.
+With the default `--roi-x 0.80` the outer rows leak into the ROI; whenever an
+inner peak is sparse for a scan the spacing prior pairs an OUTER row with the
+opposite INNER row, putting the midpoint ≈ 0.27 m off-centre and steering the
+robot off the strip.  **`--roi-x` must be set between the inner and outer
+rows (0.55), and `--row-spacing` to the measured centre-to-centre distance of
+the inner pair (≈ 0.60 m).**  `--roi-x` bounds BOTH the LiDAR detector and
+the dual-camera tracker.
+
 **Run it:**
 ```bash
 # Perception-only (verify L/R row detection + midpoint before moving):
-python3 scripts/row_follow.py --dual-row --camera
+python3 scripts/row_follow.py --dual-row --camera --roi-x 0.55 --row-spacing 0.60
 
-# Single row, autonomous, LiDAR + dual cameras:
-python3 scripts/row_follow.py --auto --dual-row --camera
+# Single row, autonomous, LiDAR + dual cameras (four-row field — see above):
+python3 scripts/row_follow.py --auto --dual-row --camera --no-cam-obstacles \
+    --roi-x 0.55 --row-spacing 0.60
 
 # Multi-row serpentine coverage with closed-loop U-turns:
-python3 scripts/row_follow.py --auto --dual-row --camera --rows 6 --headland \
-    --row-spacing 0.76 --turn-dir right
+python3 scripts/row_follow.py --auto --dual-row --camera --no-cam-obstacles --rows 6 --headland \
+    --roi-x 0.55 --row-spacing 0.60 --turn-dir right
 ```
 
 ---
@@ -465,7 +478,7 @@ Applied in `row_navigator.py` after self-filtering, before `detector.update()` a
 | Crop height band | h ∈ [**0.03, 0.30**] m | h ∈ [0.05, 0.60] m | Soybean seedlings 3–30 cm; onion canopy 5–60 cm |
 | Detection mode | **dual-row** (`--dual-row`) | single-row (default) | Soybean: find midpoint between left+right soybean rows; onion: nearest crop row to centreline |
 | ROI depth | y ∈ [1.5, 7.0] m | same | Past self-filter; within reliable row geometry |
-| ROI half-width | \|x\| ≤ 0.80 m | same | Captures flanking soybean rows ± shoulder without pulling in outer rows |
+| ROI half-width | \|x\| ≤ 0.80 m default; **0.55 m for the four-row Vidalia field** | same | Must exclude all rows other than the inner flanking pair; with a second row pair near the tires at ±0.85 m the default 0.80 leaks them in and the spacing prior can mispair an outer row with an inner row |
 | PCA linearity threshold | > 0.20 | same | Below this the cluster is not line-like; confidence forced to 0 |
 | Density normaliser | n / 130 pts | same | 130 points = full confidence at typical VLP-16 density |
 | Confidence formula | `min(1, n/130) × max(0, min(1, (linearity−0.20)/0.55))` | same | |
@@ -524,7 +537,7 @@ Applied in `row_navigator.py` after self-filtering, before `detector.update()` a
 | `--slam` | off | Enable SLAM odometry integration (currently no-op) |
 | `--speed M` | 0.30 | Max forward speed m/s |
 | `--lidar-tilt DEG` | **0.0** | Nose-down PITCH tilt of LiDAR mount in degrees — mount has a 15° roll (side lean) not a pitch; debug-verified that 0.0 is correct |
-| `--roi-x W` | 0.80 | Row detection ROI half-width m |
+| `--roi-x W` | 0.80 | Row detection ROI half-width m — applies to BOTH the LiDAR detector and the dual-camera tracker; use 0.55 on the four-row Vidalia field so the outer row pair (±0.85 m, next to the tires) is excluded |
 | `--crop-min H` | 0.05 | Minimum crop height above ground m |
 | `--crop-max H` | 0.60 | Maximum crop height above ground m |
 | `--self-radius R` | **1.5** | Self-filter radius — discard returns within R m (robot body) |
@@ -559,6 +572,7 @@ Applied in `row_navigator.py` after self-filtering, before `detector.update()` a
 | `--headland` | off | **Closed-loop** headland U-turns between rows (odometry feedback) |
 | `--dual-row` | off | Soybean mode: dual-camera ground-projection tracker (overrides `--detector`) |
 | `--row-spacing M` | **0.76** | Soybean row spacing / next-strip distance |
+| `--roi-x M` | **0.90** | Dual-camera tracker lateral ROI half-width (robot frame); 0.55 on the four-row Vidalia field |
 | `--turn-dir D` | **right** | First U-turn direction (`right`/`left`); subsequent alternate |
 | `--headland-exit M` | **1.0** | Straight distance past row end before first pivot |
 | `--headland-speed M` | **0.12** | Forward speed during straight headland phases |
@@ -919,6 +933,7 @@ OAK-D defaults: hfov=73°, vfov=54°, 640×400 → scale factor ≈ 0.91.
 | EKF (`--ekf`) destabilised the loop / added lag | `predict()` motion-model signs were FLIPPED for both lateral (`−v·sinθ`) and heading (`−ω`); every predict step pushed the state away from the robot's actual motion | Corrected to `+v·sinθ·dt` and `+ω·dt`; regression-locked in `tests/test_ekf_estimator.py` |
 | Dual-row: robot steers onto the visible soybean row when one side is occluded | `_midpoint_peaks` single-side fallback returned the row peak itself as the target | Fallback now offsets ±`row_spacing/2` inward (mirrors the dual-camera tracker); `--row-spacing` is wired into `RowDetector` |
 | Dual-row midpoint dragged off-centre by weeds near the centreline | Innermost-peak pairing locked onto any clutter peak inside the strip | Row-spacing prior: the L/R peak pair whose separation best matches `row_spacing` wins; off-spacing pairs lower confidence |
+| Robot drifts to the side from scan 1 (off≈−0.27 m) in the four-row field | Outer row pair (±0.85 m, next to the tires) inside the 0.80 m ROI; when an inner peak goes sparse the spacing prior pairs an outer row with the opposite inner row → midpoint half-off the strip | `--roi-x` now also bounds the dual-camera tracker; run with `--roi-x 0.55 --row-spacing 0.60` so only the inner pair is visible to both sensors |
 | Lateral estimate snaps ±half spacing in one scan | Peak pairing changes when a row drops out for one scan; EMA follows the jump | Lateral outlier gate in `_smooth()` — per-scan jump clamped to 0.30 m (mirrors the heading gate) |
 | Robot keeps driving on last twist if LiDAR dies mid-row | `run()` blocked forever inside `async for`; no further commands sent | Scan-stall watchdog: no scan for 0.5 s → actively command zero velocity until the stream recovers |
 | Dead camera stream freezes fusion + blocks ROW_END | `get_latest()` returns the final frame forever; frozen green fraction vetoes ROW_END indefinitely | Staleness gate (1.5 s) in both navigators treats old frames as "no camera" |
