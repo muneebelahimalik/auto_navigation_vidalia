@@ -53,8 +53,8 @@ class SafetyStatus:
             parts.append(f"L-TIRE(n={self.left_points})")
         if self.right_tire_blocked:
             parts.append(f"R-TIRE(n={self.right_points})")
-        if self.cam_blocked and self.cam_reason:
-            parts.append(self.cam_reason)
+        if self.cam_blocked:
+            parts.append(self.cam_reason if self.cam_reason else "CAM")
         return ",".join(parts) if parts else "clear"
 
 

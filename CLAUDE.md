@@ -490,7 +490,7 @@ Applied in `row_navigator.py` after self-filtering, before `detector.update()` a
 | `forward_dist` | 2.5 m | same | Stopping horizon ahead |
 | `forward_half_width` | **0.60 m** | same | Narrower than physical body — prevents triggering on adjacent crop when slightly off-centre |
 | `obstacle_height` (forward) | **0.50 m** | 0.75 m | Soybean seedlings h≤0.30 m pass; humans/posts (>0.50 m) stop. Onion: 0.75 m |
-| `tire_obstacle_height` | **0.35 m** | 0.85 m | Soybean tires run in furrows (few plants); 0.35 m passes seedlings, stops hazards. Onion: 0.85 m |
+| `tire_obstacle_height` | **0.65 m** | 0.85 m | Soybean fields with dried residue stalks: 0.35–0.50 m catches crop material and causes L-TIRE false stops; 0.65 m passes residue/seedlings (h≤0.60 m) while still stopping real hazards. Onion: 0.85 m |
 | `tire_track` | **0.965 m** | same | Half of 1.93 m robot body width (measured); sets L/R-TIRE zone positions |
 | `tire_half_width` | 0.25 m | ± corridor around each wheel centreline |
 | `tire_dist` | 2.5 m | Same stopping horizon as forward zone |
@@ -531,7 +531,7 @@ Applied in `row_navigator.py` after self-filtering, before `detector.update()` a
 | `--acquire-conf C` | **0.35** | Min row-detection confidence (0–1) to leave ACQUIRE |
 | `--dual-row` | off | Soybean / centre-residue mode: lateral offset = midpoint of left+right flanking crop peaks |
 | `--obstacle-height H` | **0.50** | Min ground-relative height m to count as obstacle in FORWARD zone (soybean default; onion: 0.75) |
-| `--tire-height H` | **0.35** | Min height for TIRE-ZONE obstacles (soybean default; onion: 0.85) |
+| `--tire-height H` | **0.65** | Min height for TIRE-ZONE obstacles (soybean default; 0.35–0.50 causes false L-TIRE stops on dried residue stalks; onion: 0.85) |
 | `--camera` | off | Enable OAK-D stereo cameras |
 | `--cam-fusion L` | **estimate** | Camera↔LiDAR fusion level: `estimate` = blend independently fitted estimates (original); `point` = pool camera ground points with LiDAR crop points into one weighted row fit (requires `--camera --dual-row`; falls back to `estimate` otherwise) |
 | `--cam-left-id S` | "" | Left camera farm-ng service name (default: oak0) |
@@ -898,6 +898,8 @@ OAK-D defaults: hfov=73°, vfov=54°, 640×400 → scale factor ≈ 0.91.
 | Permanent `OBSTACLE_WAIT — FWD@1.2m` | `rng >= self_radius` (inclusive) let boundary through | Raising self_radius further to 1.5 m resolves it |
 | Permanent `OBSTACLE_WAIT — FWD@2.2m, n=482` | `obstacle_height=0.45 m` below LIDAR_MOUNT_HEIGHT; entire field was "obstacle" | Raised `obstacle_height` 0.45 → **0.75 m** |
 | `L-TIRE(n=47)` false positive | Adjacent crop row canopy at h≈0.80–0.84 m triggering tire zone | Added `--tire-height`; set to **0.85 m** for onion fields |
+| `L-TIRE(n=13–15)` OBSTACLE_WAIT cycling in soybean field | Dried corn/soybean residue stalks at h≈0.50–0.65 m in the tire corridor; `--tire-height 0.35–0.50` catches crop material | Raised soybean default `--tire-height` **0.35 → 0.65 m**; residue stalks pass, real hazards still stop the robot |
+| `safe=clear` shown during OBSTACLE_WAIT | `cam_blocked=True` with empty `cam_reason` set `blocked=True` but `reason()` returned "clear", hiding the trigger in logs | Fixed `reason()` in `row_safety.py`: `if self.cam_blocked:` shows `cam_reason or "CAM"` unconditionally |
 | Stuck in ACQUIRE (conf ≤ 0.52) | Robot 0.75 m off-centre → reduced PCA linearity → conf below threshold | Lowered `acquire_conf` 0.55 → **0.45** |
 | `CAM-LEFT@1.8m` persistent OBSTACLE_WAIT | Single camera-blocked frame immediately set `cam_blocked = True` | Added `cam_block_frames=3`; requires 3 consecutive blocked frames |
 | `WARNING:oak/client: no matching topics` flood | EventClient retries gRPC subscription every ~0.5 s; logs each attempt | Log level → ERROR + one-time "offline" message + return on NOT_FOUND (stop retrying) |

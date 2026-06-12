@@ -562,11 +562,12 @@ def main() -> None:
                         help="Distance from robot centreline to wheel centre (default: 0.965 — "
                              "half of 1.93 m body width). Sets the lateral position of the "
                              "L-TIRE / R-TIRE safety zones.")
-    parser.add_argument("--tire-height", type=float, default=0.35, metavar="M",
+    parser.add_argument("--tire-height", type=float, default=0.65, metavar="M",
                         help="Min ground-relative height (m) for TIRE-ZONE obstacles "
-                             "(default: 0.35). Tires run in the furrow between soybean beds "
-                             "where plants are absent or short; 0.35 m passes seedlings but "
-                             "stops real hazards. Onion fields: use 0.85 m.")
+                             "(default: 0.65). Soybean fields with dried residue stalks: "
+                             "0.35–0.50 m catches crop material; 0.65 m passes residue "
+                             "and seedlings while still stopping real hazards (posts, animals). "
+                             "Onion fields: use 0.85 m.")
     parser.add_argument("--lidar-tilt", type=float, default=0.0, metavar="DEG",
                         help="Forward (nose-down) PITCH tilt of the LiDAR mount in degrees "
                              "(default: 0.0). The mount has a 15° ROLL (left-right lean) "
