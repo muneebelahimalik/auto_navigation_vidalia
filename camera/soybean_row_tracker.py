@@ -149,7 +149,7 @@ class DualCameraRowTracker:
         roi_y_min: float = 0.8,
         roi_y_max: float = 5.0,
         roi_x_half: float = 0.90,
-        bin_width: float = 0.10,
+        bin_width: float = 0.05,
         canopy_z: float = 0.10,
         depth_gate_ratio: float = 0.5,
         min_points: int = 60,

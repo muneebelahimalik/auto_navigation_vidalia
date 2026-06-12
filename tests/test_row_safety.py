@@ -68,3 +68,28 @@ def test_onion_thresholds_pass_adjacent_canopy():
                           forward_half_width=0.60, tire_track=0.965)
     s = onion.check(cluster(-0.965, 1.5, h=0.80, n=47))
     assert not s.blocked
+
+
+def test_default_forward_half_width_is_narrow():
+    """Default forward_half_width must be 0.60 m (field-safe narrow corridor)
+    so that adjacent crop-row canopy at ±0.65 m does not false-alarm."""
+    mon = SafetyMonitor()
+    assert mon.forward_half_width == 0.60, (
+        f"Expected 0.60 m, got {mon.forward_half_width} m — "
+        "wide default causes false obstacles from adjacent crop rows"
+    )
+
+
+def test_default_forward_half_width_does_not_false_alarm_in_forward_zone():
+    """Returns at x=0.65 (outside the 0.60 m forward corridor) at obstacle
+    height must not trigger the FORWARD zone — confirming the narrowed default
+    confines the forward check to the robot's true body width."""
+    mon = SafetyMonitor()
+    # h=0.76 just above obstacle_height=0.75; x=0.65 > forward_half_width=0.60
+    # so the forward zone must not fire.  (Tire zone is separate and expected
+    # to fire if the return is in the tire corridor — that is correct behaviour.)
+    tall_outside_body = np.array([[0.65, 1.5, 0.76 - LIDAR_MOUNT_HEIGHT]])
+    status = mon.check(np.tile(tall_outside_body, (10, 1)))
+    assert not status.forward_blocked, (
+        "Returns outside the 0.60 m body corridor must not trip the forward zone"
+    )

@@ -64,7 +64,7 @@ class SafetyMonitor:
     def __init__(
         self,
         forward_dist: float = 2.5,
-        forward_half_width: float = 0.95,
+        forward_half_width: float = 0.60,
         obstacle_height: float = 0.75,
         tire_track: float = 0.915,
         tire_half_width: float = 0.25,

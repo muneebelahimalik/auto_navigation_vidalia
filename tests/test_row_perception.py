@@ -262,3 +262,55 @@ def test_point_fusion_none_aux_matches_lidar_only():
     assert ea.lateral_offset == eb.lateral_offset
     assert ea.heading_error == eb.heading_error
     assert ea.confidence == eb.confidence
+
+
+# ---------------------------------------------------------------------------
+# Precision: finer bin_width should reduce centred-row lateral error
+# ---------------------------------------------------------------------------
+
+def test_fine_bin_width_improves_centre_precision():
+    """bin_width=0.05 m should place the row centre within 3 cm of truth;
+    the old 0.10 m default was limited to ±5 cm worst-case quantisation."""
+    det = RowDetector(dual_row=True, row_spacing=ROW_SPACING, bin_width=0.05)
+    pts = np.vstack([make_row(-HALF), make_row(+HALF)])
+    est = converge(det, pts)
+    assert abs(est.lateral_offset) < 0.03, (
+        f"Expected lateral offset < 3 cm with 5 cm bins, got {est.lateral_offset*100:.1f} cm"
+    )
+
+
+def test_fine_bin_width_offset_accuracy():
+    """With 5 cm bins, a 15 cm lateral offset should be reported within one
+    bin width (5 cm) — coarser 10 cm bins give ±5 cm worst-case; the finer
+    bins halve the quantisation error."""
+    det = RowDetector(dual_row=True, row_spacing=ROW_SPACING, bin_width=0.05)
+    pts = np.vstack([make_row(-HALF - 0.15), make_row(+HALF - 0.15)])
+    est = converge(det, pts)
+    assert est.lateral_offset == pytest.approx(-0.15, abs=0.05), (
+        f"Expected ~-0.15 m within 5 cm, got {est.lateral_offset:.3f} m"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Default parameter assertions — catches accidental drift
+# ---------------------------------------------------------------------------
+
+def test_detector_default_bin_width():
+    """Default bin_width should be 0.05 m for improved centre precision."""
+    det = RowDetector()
+    assert det.bin_width == 0.05
+
+
+def test_detector_default_max_lateral_jump():
+    """Default max_lateral_jump should be 0.20 m for tighter stability."""
+    det = RowDetector()
+    assert det.max_lateral_jump == 0.20
+
+
+def test_lateral_jump_gate_tighter_default():
+    """With default 0.20 m gate, a 0.50 m jump must be slewed to ≤ 0.08 m."""
+    det = RowDetector(dual_row=False)
+    converge(det, make_row(0.0))
+    est = det.update(make_row(0.50))
+    # gated step: 0.35 * 0.20 = 0.07 m from prior 0.0
+    assert abs(est.lateral_offset) <= 0.08
