@@ -302,7 +302,9 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
                 cam_x_right=args.cam_x,
             )
 
-        if args.cam_depth_3d:
+        if args.no_cam_obstacles:
+            pass  # cameras used for row tracking only; LiDAR handles obstacle detection
+        elif args.cam_depth_3d:
             # Full 3-D depth fusion: project camera depth images to LiDAR-convention
             # point clouds and merge with LiDAR before SafetyMonitor.check().
             # Replaces the legacy 1-D strip DepthObstacleDetector.
@@ -326,9 +328,9 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
                 y_max=args.cam_stop_dist + 0.5,
             )
         else:
-            # Legacy 1-D depth strip obstacle detection.
-            # Both cameras face forward: the robot's forward path is at
-            # image centre (col_centre_frac=0.5) for both cameras.
+            # 1-D depth strip obstacle detection (forward-facing cameras).
+            # Disabled automatically in soybean/dual-row fields via --no-cam-obstacles
+            # because the crop rows themselves appear as obstacles at 1–4 m range.
             from camera.depth_obstacle import DepthObstacleDetector
             depth_left = DepthObstacleDetector(
                 stop_dist_m=args.cam_stop_dist,
@@ -432,9 +434,12 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
         cam_mode = f"OAK-D left+right ({row_mode})"
         if args.cam_depth_3d:
             cam_mode += f"  3D-fusion(h={args.cam_height}m yaw={args.cam_yaw_deg}° pitch={args.cam_pitch_deg}° self_r={args.cam_self_radius:.1f}m)"
+        elif args.no_cam_obstacles:
+            cam_mode += "  obstacle=LiDAR-only"
         else:
             cam_mode += "  strip-obstacle(no-height-filter)"
-        cam_mode += f"  stop={args.cam_stop_dist}m"
+        if not args.no_cam_obstacles:
+            cam_mode += f"  stop={args.cam_stop_dist}m"
     else:
         cam_mode = "disabled"
     ekf_str = "EKF=on" if args.ekf else "EKF=off"
@@ -587,6 +592,12 @@ def main() -> None:
                         help="Camera minimum depth for obstacle detection in metres (default: 0.50). "
                              "Depths closer than this are ignored — filters out robot frame returns "
                              "and mounting hardware visible in the camera FOV.")
+    parser.add_argument("--no-cam-obstacles", action="store_true",
+                        help="Use cameras for row tracking only — disable camera depth "
+                             "obstacle detection entirely.  Recommended for soybean/dual-row "
+                             "fields where forward-facing cameras always see crop rows at "
+                             "1–4 m and trigger false OBSTACLE_WAIT.  LiDAR handles all "
+                             "obstacle detection in this mode.")
     parser.add_argument("--cam-block-frames", type=int, default=3, metavar="N",
                         help="Consecutive camera-blocked frames required to trigger "
                              "OBSTACLE_WAIT (default: 3). Raise to reduce false positives "
