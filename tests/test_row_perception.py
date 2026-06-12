@@ -314,3 +314,40 @@ def test_lateral_jump_gate_tighter_default():
     est = det.update(make_row(0.50))
     # gated step: 0.35 * 0.20 = 0.07 m from prior 0.0
     assert abs(est.lateral_offset) <= 0.08
+
+
+def test_sparse_scan_heading_gate():
+    """A dropout scan with < 2×min_points crop returns and a large heading
+    jump must not update the heading EMA.
+
+    Mirrors the field failure: VLP-16 sector dropout left n≈67 crop points
+    whose foreshortened two-stripe view produced a raw PCA heading of ~27°.
+    This passed the 30° gate and biased the smoothed heading to +10°,
+    steering the robot rightward for the rest of the approach.
+    With the sparse-scan gate (< 2×min_points AND |Δhdg| > 12°) the heading
+    update is skipped and the smoothed heading stays near the pre-dropout value.
+    """
+    det = RowDetector(dual_row=True, row_spacing=ROW_SPACING)
+    # Converge at heading ~ 0 with plenty of points.
+    good_pts = np.vstack([make_row(-HALF, n=130), make_row(+HALF, n=130)])
+    est = converge(det, good_pts)
+    hdg_before = est.heading_error
+    assert abs(hdg_before) < math.radians(3.0), "baseline heading not near zero"
+
+    # Craft a sparse scan (n_crop < 2×min_points=80) with a large raw heading.
+    # heading_rad=math.radians(25) gives a clearly off-axis stripe.
+    sparse_pts = np.vstack([
+        make_row(-HALF, n=30, heading_rad=math.radians(25.0)),
+        make_row(+HALF, n=30, heading_rad=math.radians(25.0)),
+    ])
+    est_after = det.update(sparse_pts)
+
+    # The sparse-scan gate must prevent the heading from jumping > 12°.
+    assert abs(est_after.heading_error - hdg_before) < math.radians(13.0), (
+        f"Sparse scan allowed heading to jump from {math.degrees(hdg_before):.1f}° "
+        f"to {math.degrees(est_after.heading_error):.1f}°"
+    )
+    # Specifically: heading must stay much closer to zero than 25°.
+    assert abs(est_after.heading_error) < math.radians(14.0), (
+        f"Heading drifted to {math.degrees(est_after.heading_error):.1f}° from sparse dropout"
+    )

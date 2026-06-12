@@ -480,9 +480,24 @@ class RowDetector:
         lat_fresh = fresh.lateral_offset
         if prev.confidence > 0.15:
             delta = hdg_fresh - prev.heading_error
-            max_delta = math.radians(30.0)
-            if abs(delta) > max_delta:
-                hdg_fresh = prev.heading_error + math.copysign(max_delta, delta)
+            # Sparse-scan heading quality gate: a VLP-16 dropout scan that
+            # loses whole azimuth sectors (left=0 right=0 in validate output)
+            # leaves mostly forward-facing beams.  The foreshortened two-stripe
+            # view makes the PCA heading unreliable — in the field a scan with
+            # n≈67 crop points produced a raw heading of ~27° when the true
+            # heading was ~1°.  This is larger than the standard 30° gate so
+            # it passed through and was folded into the EMA, biasing the robot
+            # rightward for the remainder of the approach.
+            # When the scan is sparse (< 2×min_points) AND the heading jumps
+            # more than 12°, discard the heading update entirely and keep the
+            # previous smoothed heading.  Small genuine changes (≤12°) are
+            # still accepted even from sparse scans.  The lateral offset and
+            # confidence are updated normally — only the heading is frozen.
+            sparse = fresh.n_points < 2 * self.min_points
+            if sparse and abs(delta) > math.radians(12.0):
+                hdg_fresh = prev.heading_error          # skip heading update
+            elif abs(delta) > math.radians(30.0):
+                hdg_fresh = prev.heading_error + math.copysign(math.radians(30.0), delta)
             # Lateral outlier gate: the dual-row midpoint can snap by half a
             # row spacing in one scan when peak pairing changes (one row
             # momentarily occluded).  The robot cannot physically translate
