@@ -332,10 +332,12 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
             from camera.depth_obstacle import DepthObstacleDetector
             depth_left = DepthObstacleDetector(
                 stop_dist_m=args.cam_stop_dist,
+                min_dist_m=args.cam_near_filter,
                 col_centre_frac=0.5,
             )
             depth_right = DepthObstacleDetector(
                 stop_dist_m=args.cam_stop_dist,
+                min_dist_m=args.cam_near_filter,
                 col_centre_frac=0.5,
             )
 
@@ -581,6 +583,10 @@ def main() -> None:
                         help="Camera lateral offset from robot centreline (default: 0.88 — half of 1.76 m inter-camera span; measured)")
     parser.add_argument("--cam-stop-dist", type=float, default=2.5, metavar="M",
                         help="Camera depth obstacle stop distance in metres (default: 2.5)")
+    parser.add_argument("--cam-near-filter", type=float, default=0.50, metavar="M",
+                        help="Camera minimum depth for obstacle detection in metres (default: 0.50). "
+                             "Depths closer than this are ignored — filters out robot frame returns "
+                             "and mounting hardware visible in the camera FOV.")
     parser.add_argument("--cam-block-frames", type=int, default=3, metavar="N",
                         help="Consecutive camera-blocked frames required to trigger "
                              "OBSTACLE_WAIT (default: 3). Raise to reduce false positives "
