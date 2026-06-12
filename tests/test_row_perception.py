@@ -106,6 +106,34 @@ def test_dual_row_heading_detection():
     assert est.heading_error == pytest.approx(theta, abs=math.radians(4.0))
 
 
+def test_dual_row_truncated_stripe_does_not_tilt_heading():
+    """One row truncated in y (VLP-16 sector dropout): heading must stay ~0.
+
+    Whole-cloud PCA over a full left stripe (y 1.6-6.8) plus a truncated
+    right stripe (y 1.6-3.0) tilts the principal axis toward the line
+    joining the stripe centroids — a spurious heading of several degrees
+    that steered the robot steadily off the strip in the field.  The
+    cluster-centred two-pass PCA removes the between-stripe covariance.
+    """
+    det = RowDetector(dual_row=True, row_spacing=ROW_SPACING)
+    pts = np.vstack([make_row(-HALF, n=130),
+                     make_row(+HALF, n=40, y_hi=3.0)])
+    est = converge(det, pts)
+    assert abs(est.heading_error) < math.radians(3.0)
+    assert abs(est.lateral_offset) < 0.07
+
+
+def test_dual_row_truncated_stripe_keeps_true_heading():
+    """Same dropout scenario but with genuinely angled rows: the detector
+    must still recover the true 8 degree heading, not flatten it to zero."""
+    det = RowDetector(dual_row=True, row_spacing=ROW_SPACING)
+    theta = math.radians(8.0)
+    pts = np.vstack([make_row(-HALF, n=130, heading_rad=theta),
+                     make_row(+HALF, n=40, y_hi=3.0, heading_rad=theta)])
+    est = converge(det, pts)
+    assert est.heading_error == pytest.approx(theta, abs=math.radians(4.0))
+
+
 # ---------------------------------------------------------------------------
 # Single-row (onion) mode
 # ---------------------------------------------------------------------------

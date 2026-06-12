@@ -348,13 +348,23 @@ residue strip**, tracked from three independent sources and fused.
      LiDAR peaks.  Camera points carry the fit through empty VLP-16
      crop-ROI scans (no more confidence decay toward ACQUIRE during
      dropouts) and extend coverage into the < 1.5 m LiDAR self-filter
-     blind zone (`aux_y_min = 0.5 m`).  Mixed fits use a LiDAR-seeded,
-     peak-cluster-centred two-pass PCA: every point is assigned to its
-     nearest histogram peak and each cluster is centred on its own
-     centroid, so stripes with unequal sensor coverage — or extra stripes
-     from a mis-calibrated camera — cannot tilt the heading.  The camera
-     estimate is then NOT fused again at the estimate level (no double
-     counting); the pure-LiDAR code path is bit-identical to before.
+     blind zone (`aux_y_min = 0.5 m`).  The camera estimate is then NOT
+     fused again at the estimate level (no double counting).
+
+**Cluster-centred PCA (ALL dual-row fits, LiDAR-only included):** every point
+is assigned to its nearest cross-row histogram peak, each peak cluster is
+centred on its own centroid, and the pooled centred points are re-fit —
+iterated twice so a badly tilted seed axis cannot mis-assign the far end of
+the longer stripe.  Points farther than 0.25 m from every peak are excluded
+from the heading fit (they still vote in the midpoint histogram), so
+sub-threshold clutter stripes cannot tilt the heading.  This matters even
+without cameras: the VLP-16 routinely drops whole azimuth sectors (UDP packet
+loss — `left=0` / `right=0` scans in validate output), so one row's stripe is
+often truncated in y relative to the other; whole-cloud PCA over two stripes
+with unequal extents tilts toward the line joining the stripe centroids,
+which in the field accumulated into a steady +12° heading bias and a
+rightward drift off the strip.  Regression-locked in
+`test_dual_row_truncated_stripe_does_not_tilt_heading`.
 
 **Why the wide-baseline pair beats one camera:** ground projection assumes the
 green sits at `canopy_z`; real canopy tops sit higher, so each ray overshoots
@@ -937,7 +947,7 @@ OAK-D defaults: hfov=73°, vfov=54°, 640×400 → scale factor ≈ 0.91.
 | EKF (`--ekf`) destabilised the loop / added lag | `predict()` motion-model signs were FLIPPED for both lateral (`−v·sinθ`) and heading (`−ω`); every predict step pushed the state away from the robot's actual motion | Corrected to `+v·sinθ·dt` and `+ω·dt`; regression-locked in `tests/test_ekf_estimator.py` |
 | Dual-row: robot steers onto the visible soybean row when one side is occluded | `_midpoint_peaks` single-side fallback returned the row peak itself as the target | Fallback now offsets ±`row_spacing/2` inward (mirrors the dual-camera tracker); `--row-spacing` is wired into `RowDetector` |
 | Dual-row midpoint dragged off-centre by weeds near the centreline | Innermost-peak pairing locked onto any clutter peak inside the strip | Row-spacing prior: the L/R peak pair whose separation best matches `row_spacing` wins; off-spacing pairs lower confidence |
-| Robot appears to drift sideways on entry (off≈−0.27 m, hdg≈+12°) | Robot was parked ~12° out of alignment and 0.27 m off-centre; pure-pursuit look-ahead point is ahead-and-right (following the angled row direction), so the path visually curves sideways for 5–15 m before converging | Position the robot roughly aligned to the rows and centred on the stubble strip before starting; or use `--align-heading` to auto-pivot first |
+| Robot steadily drifts forward-right; heading estimate climbs +5°→+14° while the robot turns right | VLP-16 drops whole azimuth sectors (UDP packet loss — `left=0`/`right=0` in validate, scans of 2 578 vs 17 000 pts), so one row stripe is truncated in y; whole-cloud PCA over stripes with unequal extents tilts toward the line joining the stripe centroids → spurious positive heading → pure-pursuit chases it rightward | Cluster-centred two-pass PCA (previously camera-fusion-only) now applied to ALL dual-row fits, iterated 2×, with a 0.25 m peak-distance gate; regression tests `test_dual_row_truncated_stripe_*` |
 | Lateral estimate snaps ±half spacing in one scan | Peak pairing changes when a row drops out for one scan; EMA follows the jump | Lateral outlier gate in `_smooth()` — per-scan jump clamped to 0.30 m (mirrors the heading gate) |
 | Robot keeps driving on last twist if LiDAR dies mid-row | `run()` blocked forever inside `async for`; no further commands sent | Scan-stall watchdog: no scan for 0.5 s → actively command zero velocity until the stream recovers |
 | Dead camera stream freezes fusion + blocks ROW_END | `get_latest()` returns the final frame forever; frozen green fraction vetoes ROW_END indefinitely | Staleness gate (1.5 s) in both navigators treats old frames as "no camera" |

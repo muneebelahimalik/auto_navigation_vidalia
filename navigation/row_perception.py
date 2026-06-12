@@ -177,6 +177,7 @@ def _cluster_centred_pca(
     cross: np.ndarray,
     peak_positions: "list[float]",
     fallback: "tuple[np.ndarray, float]",
+    max_peak_dist: float = 0.25,
 ) -> "tuple[np.ndarray, float]":
     """Within-row PCA: assign every point to its nearest histogram peak,
     centre each peak cluster on its own (weighted) centroid, and fit the
@@ -186,17 +187,27 @@ def _cluster_centred_pca(
     the stripes have unequal extents (different sensor coverage) — and,
     because clustering is per PEAK rather than a two-way split, stripes
     contributed by a mis-calibrated sensor form their own clusters and
-    cannot tilt the heading either.  Returns ``fallback`` when no usable
-    cluster remains.
+    cannot tilt the heading either.
+
+    Points farther than ``max_peak_dist`` from every detected peak are
+    excluded from the heading fit: a sub-threshold stripe (e.g. a
+    mis-calibrated camera's rows, too light to register as a peak in the
+    weighted histogram) would otherwise be absorbed into the nearest REAL
+    peak's cluster and tilt its within-row direction.  Such points still
+    participate in the midpoint pairing via the histogram — only the
+    heading fit ignores them.  Returns ``fallback`` when no usable cluster
+    remains.
     """
     peaks = np.asarray(peak_positions, dtype=float)
     if len(peaks) == 0:
         return fallback
-    assign = np.argmin(np.abs(cross[:, None] - peaks[None, :]), axis=1)
+    dists = np.abs(cross[:, None] - peaks[None, :])
+    assign = np.argmin(dists, axis=1)
+    near_peak = dists[np.arange(len(cross)), assign] <= max_peak_dist
     total = float(w.sum())
     parts_p, parts_w = [], []
     for k in range(len(peaks)):
-        sel = assign == k
+        sel = (assign == k) & near_peak
         if not sel.any():
             continue
         ws = w[sel]
@@ -362,21 +373,32 @@ class RowDetector:
         cross = P @ perp
 
         if self.dual_row:
-            if w is not None:
-                # Two-pass peak-cluster-centred PCA (mixed-sensor fits only):
-                # LiDAR and camera cover different y ranges, so the pooled
-                # cloud has stripes with unequal extents and whole-cloud PCA
-                # picks up a between-stripe covariance tilt; a mis-calibrated
-                # camera adds extra stripes that tilt it further.  Assigning
-                # every point to its nearest histogram peak and centring each
-                # peak cluster on its own centroid leaves only the within-row
-                # direction.  The pure-LiDAR path keeps the original
-                # single-pass fit (field-validated symmetric view; behaviour
-                # unchanged).
+            # Two-pass peak-cluster-centred PCA: assign every point to its
+            # nearest cross-row histogram peak, centre each peak cluster on
+            # its own centroid, and re-fit the pooled centred points — the
+            # between-stripe covariance is removed, leaving only the
+            # within-row direction.
+            #
+            # This matters even for pure-LiDAR fits: the VLP-16 routinely
+            # drops whole azimuth sectors (UDP packet loss), so one row's
+            # stripe is often truncated in y relative to the other.  A
+            # whole-cloud PCA over two stripes with unequal extents tilts
+            # the axis toward the line joining the stripe centroids,
+            # biasing the heading several degrees per scan — in the field
+            # this accumulated into a steady +12° heading error and a
+            # rightward drift off the residue strip.  Mixed-sensor fits
+            # (camera aux points) additionally need it because LiDAR and
+            # camera cover different y ranges.
+            # Iterated twice: when the seed axis is badly tilted the first
+            # pass assigns far-forward points of the longer stripe to the
+            # wrong peak; the second pass re-clusters with the corrected
+            # axis and converges on the unbiased within-row direction.
+            w_eff = w if w is not None else np.ones(len(P))
+            for _ in range(2):
                 peaks = histogram_peaks(cross, self.roi_x_half,
                                         self.bin_width, weights=w)
                 direction, linearity = _cluster_centred_pca(
-                    P, w, cross, peaks, fallback=(direction, linearity))
+                    P, w_eff, cross, peaks, fallback=(direction, linearity))
                 perp = np.array([direction[1], -direction[0]])
                 cross = P @ perp
             # Soybean / centre-residue mode: find the midpoint between the
