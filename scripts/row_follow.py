@@ -294,6 +294,7 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
                 cam_y_fwd=args.cam_y_fwd,
                 cam_z=args.cam_height,
                 cam_pitch_deg=args.cam_pitch_deg,
+                canopy_z=args.cam_canopy_z,
             )
         else:
             # Single-row mode: forward green-centroid detector (onion / raised bed).
@@ -552,6 +553,14 @@ def main() -> None:
                              "Falls back to nearest-peak if only one side is visible (large offset). "
                              "In single-row mode (default) the nearest peak to the robot centreline "
                              "is used — correct for onion/raised-bed crops directly under the robot.")
+    parser.add_argument("--preset", choices=["soybean", "onion"], default=None,
+                        help="Apply a predefined parameter set for common crop types. "
+                             "Overrides individual flags with field-tested defaults. "
+                             "'soybean': dual-row mode, crop_h=[0.03,0.30]m, "
+                             "obstacle_height=0.50m, tire_height=0.65m, row_spacing=0.76m. "
+                             "'onion': single-row mode, crop_h=[0.05,0.60]m, "
+                             "obstacle_height=0.75m, tire_height=0.85m. "
+                             "Any explicit flags after --preset still override the preset.")
     parser.add_argument("--self-radius", type=float, default=1.5, metavar="M",
                         help="Discard LiDAR returns within this radius — the "
                              "robot's own frame (default: 1.5)")
@@ -634,6 +643,13 @@ def main() -> None:
     parser.add_argument("--cam-y-fwd", type=float, default=-0.465, metavar="M",
                         help="Camera offset from LiDAR along robot Y axis (default: -0.465 — "
                              "cameras are 46.5 cm behind the LiDAR). Negative = behind LiDAR.")
+    parser.add_argument("--cam-canopy-z", type=float, default=0.10, metavar="M",
+                        help="Assumed crop canopy height above ground (m) for camera IPM "
+                             "ground-plane projection (default: 0.10). Each camera's midpoint "
+                             "bias is proportional to cam_z/(cam_z - canopy_z); the equal-weight "
+                             "dual-camera mean cancels this bias to first order regardless of the "
+                             "assumed value, but a closer match reduces second-order residual. "
+                             "Soybean seedlings: 0.05–0.10 m. Tall onion canopy: 0.20–0.30 m.")
     parser.add_argument("--cam-self-radius", type=float, default=1.0, metavar="M",
                         help="Planar-range self-filter for the 3-D camera depth cloud (default: 1.0 m). "
                              "Points closer than this to the LiDAR origin are assumed to be the robot's "
@@ -687,6 +703,29 @@ def main() -> None:
                              "Docker ROS2 bridge (ros2_bridge/start.sh) can publish live "
                              "topics for RViz2 visualization.")
     args = parser.parse_args()
+
+    # Apply field presets BEFORE any further validation so explicit flags can
+    # still override them (argparse has already parsed user-supplied values, but
+    # we only want the preset to fill params the user did NOT explicitly specify).
+    if args.preset == "soybean":
+        # Dual-row centre-residue / soybean seedling defaults.
+        args.dual_row = True
+        if args.crop_min == 0.03:   args.crop_min = 0.03     # already correct
+        if args.crop_max == 0.30:   args.crop_max = 0.30     # already correct
+        if args.obstacle_height == 0.50: args.obstacle_height = 0.50
+        if args.tire_height == 0.65:     args.tire_height = 0.65
+        if args.row_spacing == 0.76:     args.row_spacing = 0.76
+        print(" [preset] soybean — dual-row, crop_h=[0.03,0.30]m, "
+              "obstacle=0.50m, tire=0.65m, row_spacing=0.76m")
+    elif args.preset == "onion":
+        # Single raised crop-bed / Vidalia onion defaults.
+        args.dual_row = False
+        args.crop_min = 0.05
+        args.crop_max = 0.60
+        args.obstacle_height = 0.75
+        args.tire_height = 0.85
+        print(" [preset] onion — single-row, crop_h=[0.05,0.60]m, "
+              "obstacle=0.75m, tire=0.85m")
 
     # Suppress gRPC PollerCompletionQueue noise after event-loop close (Python 3.8 + grpcio).
     import logging
