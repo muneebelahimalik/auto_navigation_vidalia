@@ -583,10 +583,11 @@ def main() -> None:
                              "0.35–0.50 m catches crop material; 0.65 m passes residue "
                              "and seedlings while still stopping real hazards (posts, animals). "
                              "Onion fields: use 0.85 m.")
-    parser.add_argument("--lidar-tilt", type=float, default=15.0, metavar="DEG",
+    parser.add_argument("--lidar-tilt", type=float, default=0.0, metavar="DEG",
                         help="Forward (nose-down) PITCH tilt of the LiDAR mount in degrees "
-                             "(default: 15.0 — confirmed nose-down pitch on this mount). "
-                             "Set to 0.0 only if the mount is purely level or roll-only.")
+                             "(default: 0.0 — mount has a 15° ROLL (left-right lean) not a "
+                             "nose-down pitch; data-verified: tilt=0 gives correct crop heights, "
+                             "tilt=15 pushes all returns below ground).")
     parser.add_argument("--debug", action="store_true",
                         help="Stream a LiDAR height profile instead of navigating")
     parser.add_argument("--save-dir", default="", metavar="PATH",
