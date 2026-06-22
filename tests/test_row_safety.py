@@ -14,7 +14,7 @@ def cluster(x, y, h, n=6):
 
 def soybean_defaults():
     return SafetyMonitor(obstacle_height=0.50, tire_obstacle_height=0.35,
-                         forward_half_width=0.60, tire_track=0.965)
+                         forward_half_width=0.60, tire_track=0.959)
 
 
 def test_empty_scan_is_clear():
@@ -35,12 +35,12 @@ def test_soybean_canopy_passes_under():
 
 
 def test_left_tire_zone():
-    s = soybean_defaults().check(cluster(-0.965, 1.5, h=0.8))
+    s = soybean_defaults().check(cluster(-0.959, 1.5, h=0.8))
     assert s.left_tire_blocked and not s.right_tire_blocked
 
 
 def test_right_tire_zone():
-    s = soybean_defaults().check(cluster(+0.965, 1.5, h=0.8))
+    s = soybean_defaults().check(cluster(+0.959, 1.5, h=0.8))
     assert s.right_tire_blocked and not s.left_tire_blocked
 
 
@@ -65,8 +65,8 @@ def test_onion_thresholds_pass_adjacent_canopy():
     """Onion config: adjacent-row canopy at h~0.80 m under the 0.85 m tire
     threshold must not block (the historical L-TIRE false positive)."""
     onion = SafetyMonitor(obstacle_height=0.75, tire_obstacle_height=0.85,
-                          forward_half_width=0.60, tire_track=0.965)
-    s = onion.check(cluster(-0.965, 1.5, h=0.80, n=47))
+                          forward_half_width=0.60, tire_track=0.959)
+    s = onion.check(cluster(-0.959, 1.5, h=0.80, n=47))
     assert not s.blocked
 
 

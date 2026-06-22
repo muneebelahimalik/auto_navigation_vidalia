@@ -118,7 +118,7 @@ async def main() -> None:
     ap.add_argument("--scans", type=int, default=20)
     ap.add_argument("--out", default="/tmp/row_diag.npz")
     ap.add_argument("--self-radius", type=float, default=1.5)
-    ap.add_argument("--lidar-tilt", type=float, default=0.0)
+    ap.add_argument("--lidar-tilt", type=float, default=15.0)
     ap.add_argument("--roi-x", type=float, default=0.80)
     ap.add_argument("--row-spacing", type=float, default=0.76)
     args = ap.parse_args()

@@ -573,21 +573,20 @@ def main() -> None:
                              "in the FORWARD zone (default: 0.50). "
                              "Soybean seedlings are h≤0.30 m so 0.50 passes plants but "
                              "stops humans/posts. Onion fields: use 0.75 m.")
-    parser.add_argument("--tire-track", type=float, default=0.965, metavar="M",
-                        help="Distance from robot centreline to wheel centre (default: 0.965 — "
-                             "half of 1.93 m body width). Sets the lateral position of the "
-                             "L-TIRE / R-TIRE safety zones.")
+    parser.add_argument("--tire-track", type=float, default=0.959, metavar="M",
+                        help="Distance from robot centreline to wheel centre (default: 0.959 — "
+                             "half of 75.5 in / 1.9177 m wheel-centre-to-wheel-centre). Sets "
+                             "the lateral position of the L-TIRE / R-TIRE safety zones.")
     parser.add_argument("--tire-height", type=float, default=0.65, metavar="M",
                         help="Min ground-relative height (m) for TIRE-ZONE obstacles "
                              "(default: 0.65). Soybean fields with dried residue stalks: "
                              "0.35–0.50 m catches crop material; 0.65 m passes residue "
                              "and seedlings while still stopping real hazards (posts, animals). "
                              "Onion fields: use 0.85 m.")
-    parser.add_argument("--lidar-tilt", type=float, default=0.0, metavar="DEG",
+    parser.add_argument("--lidar-tilt", type=float, default=15.0, metavar="DEG",
                         help="Forward (nose-down) PITCH tilt of the LiDAR mount in degrees "
-                             "(default: 0.0). The mount has a 15° ROLL (left-right lean) "
-                             "which does not affect forward-beam height and needs no correction. "
-                             "Only set this if the mount is nose-down relative to the robot chassis.")
+                             "(default: 15.0 — confirmed nose-down pitch on this mount). "
+                             "Set to 0.0 only if the mount is purely level or roll-only.")
     parser.add_argument("--debug", action="store_true",
                         help="Stream a LiDAR height profile instead of navigating")
     parser.add_argument("--save-dir", default="", metavar="PATH",

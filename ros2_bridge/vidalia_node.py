@@ -64,14 +64,14 @@ SHM_IMG_RIGHT = "/dev/shm/vidalia_img_right.bin"
 # ---------------------------------------------------------------------------
 # Geometry constants (must match CLAUDE.md)
 # ---------------------------------------------------------------------------
-LIDAR_MOUNT_HEIGHT = 0.699   # m — z offset base_link → velodyne
+LIDAR_MOUNT_HEIGHT = 0.75    # m — z offset base_link → velodyne
 LIDAR_MOUNT_X      = 0.959   # m — forward offset base_link → velodyne
 LIDAR_TILT_DEG     = 15.0    # nose-down tilt applied at mount time
 
 # Safety zone geometry (matches row_safety.py defaults)
 FWD_HALF_WIDTH = 0.95
 FWD_DIST       = 2.5
-TIRE_TRACK     = 0.915
+TIRE_TRACK     = 0.959
 TIRE_HALF_W    = 0.25
 TIRE_DIST      = 2.5
 

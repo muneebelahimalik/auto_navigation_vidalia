@@ -448,12 +448,10 @@ python3 scripts/row_follow.py --auto --dual-row --camera --no-cam-obstacles --ro
 
 - **X** = right, **Y** = forward, **Z** = up (sensor frame, after tilt correction)
 - Ground-relative height: `h = z_corrected + LIDAR_MOUNT_HEIGHT`
-- `LIDAR_MOUNT_HEIGHT = 0.705 m` (defined in `lidar/obstacle_filter.py`; measured: ground to VLP-16 drum centre)
-- **LiDAR tilt: 0° (no pitch correction needed)** — the mount has a 15° ROLL (left-right
-  lean) confirmed by phone level, but no measurable nose-down PITCH.  Roll does not shift
-  heights for forward-facing beams and requires no software correction.  Debug output at
-  `--lidar-tilt 15` showed all strip points at h≈−0.49 m (correct for applying a pitch
-  correction to a flat sensor); `--lidar-tilt 0` gives ground at h≈0 and crop=480+.
+- `LIDAR_MOUNT_HEIGHT = 0.75 m` (defined in `lidar/obstacle_filter.py`; measured: ground to VLP-16 drum centre)
+- **LiDAR tilt: 15° nose-down PITCH** — confirmed hardware measurement.  `--lidar-tilt 15.0`
+  is now the default.  `tilt_correct_pts()` un-rotates Y/Z before height computation so
+  `h = z_corrected + LIDAR_MOUNT_HEIGHT` is the true ground-relative height.
 - Crop geometry (soybean): seedling canopy h ≈ 0.03–0.30 m; tires run in furrows between soybean beds
 - Crop geometry (onion): canopy h ≈ 0.10–0.60 m; adjacent row canopy h ≈ 0.70–0.85 m
 
@@ -475,7 +473,7 @@ z_world = −y_sensor · sin(θ) + z_sensor · cos(θ)
 ```
 Applied in `row_navigator.py` after self-filtering, before `detector.update()` and `safety.check()`.
 
-**CLI flag:** `--lidar-tilt DEG` (default: **0.0** — mount has a roll lean not a nose-down pitch; debug-verified).
+**CLI flag:** `--lidar-tilt DEG` (default: **15.0** — confirmed nose-down pitch; set to 0.0 only if mount is level).
 
 ---
 
@@ -518,7 +516,7 @@ Applied in `row_navigator.py` after self-filtering, before `detector.update()` a
 | `forward_half_width` | **0.60 m** | same | Narrower than physical body — prevents triggering on adjacent crop when slightly off-centre |
 | `obstacle_height` (forward) | **0.50 m** | 0.75 m | Soybean seedlings h≤0.30 m pass; humans/posts (>0.50 m) stop. Onion: 0.75 m |
 | `tire_obstacle_height` | **0.65 m** | 0.85 m | Soybean fields with dried residue stalks: 0.35–0.50 m catches crop material and causes L-TIRE false stops; 0.65 m passes residue/seedlings (h≤0.60 m) while still stopping real hazards. Onion: 0.85 m |
-| `tire_track` | **0.965 m** | same | Half of 1.93 m robot body width (measured); sets L/R-TIRE zone positions |
+| `tire_track` | **0.959 m** | same | Half of 75.5 in (1.9177 m) wheel-centre-to-wheel-centre; sets L/R-TIRE zone positions |
 | `tire_half_width` | 0.25 m | ± corridor around each wheel centreline |
 | `tire_dist` | 2.5 m | Same stopping horizon as forward zone |
 | `near` | 0.20 m | Ignore returns closer than this (sensor artefacts at beam origin) |
@@ -550,7 +548,7 @@ Applied in `row_navigator.py` after self-filtering, before `detector.update()` a
 | `--headland-turn-rate R` | **0.35** | Pivot rate during the two 90° turns (rad/s) |
 | `--slam` | off | Enable SLAM odometry integration (currently no-op) |
 | `--speed M` | 0.30 | Max forward speed m/s |
-| `--lidar-tilt DEG` | **0.0** | Nose-down PITCH tilt of LiDAR mount in degrees — mount has a 15° roll (side lean) not a pitch; debug-verified that 0.0 is correct |
+| `--lidar-tilt DEG` | **15.0** | Nose-down PITCH tilt of LiDAR mount in degrees — confirmed 15° pitch; tilt_correct_pts() un-rotates Y/Z before height computation |
 | `--roi-x W` | 0.80 | Row detection ROI half-width m — applies to BOTH the LiDAR detector and the dual-camera tracker (wired in both scripts) |
 | `--crop-min H` | 0.05 | Minimum crop height above ground m |
 | `--crop-max H` | 0.60 | Maximum crop height above ground m |
