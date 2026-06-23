@@ -39,8 +39,8 @@ from lidar.lidar_driver import LidarDriver
 from lidar.obstacle_filter import LIDAR_MOUNT_HEIGHT, tilt_correct_pts, yaw_correct_pts
 
 
-async def collect(n: int, self_r: float, yaw_rad: float,
-                  tilt_rad: float) -> np.ndarray:
+async def collect_raw(n: int, self_r: float) -> np.ndarray:
+    """Collect n self-filtered scans WITHOUT any yaw/tilt correction applied."""
     queue: asyncio.Queue[np.ndarray] = asyncio.Queue()
 
     async def producer() -> None:
@@ -58,10 +58,6 @@ async def collect(n: int, self_r: float, yaw_rad: float,
             if len(pts):
                 rng = np.hypot(pts[:, 0], pts[:, 1])
                 pts = pts[rng >= self_r]
-                if yaw_rad:
-                    pts = yaw_correct_pts(pts, yaw_rad)
-                if tilt_rad:
-                    pts = tilt_correct_pts(pts, tilt_rad)
             scans.append(pts)
         task.cancel()
         try:
@@ -70,6 +66,33 @@ async def collect(n: int, self_r: float, yaw_rad: float,
             pass
 
     return np.vstack(scans) if any(len(s) for s in scans) else np.empty((0, 3))
+
+
+def correct(pts: np.ndarray, yaw_rad: float, tilt_rad: float) -> np.ndarray:
+    """Apply mount corrections in the SAME order as navigation/row_navigator.py:
+    yaw FIRST (align to robot frame), then tilt (pitch about robot X)."""
+    if not len(pts):
+        return pts
+    if yaw_rad:
+        pts = yaw_correct_pts(pts, yaw_rad)
+    if tilt_rad:
+        pts = tilt_correct_pts(pts, tilt_rad)
+    return pts
+
+
+def ground_ramp_slope(pts: np.ndarray) -> float:
+    """Least-squares slope of ground-relative height vs forward distance over a
+    near-ground band (|h| < 0.4 m, 1.5–6 m forward).  ~0 means flat ground; a
+    positive/large value means an uncorrected pitch.  Used by --tilt-sweep to
+    pick the tilt angle that flattens the ground."""
+    if len(pts) < 50:
+        return float("nan")
+    h = pts[:, 2] + LIDAR_MOUNT_HEIGHT
+    y = pts[:, 1]
+    band = (y > 1.5) & (y < 6.0) & (np.abs(h) < 0.4) & (pts[:, 0] > -2) & (pts[:, 0] < 2)
+    if band.sum() < 50:
+        return float("nan")
+    return float(np.polyfit(y[band], h[band], 1)[0])
 
 
 def save_png(pts: np.ndarray, out: str, max_range: float,
@@ -169,6 +192,10 @@ async def main() -> None:
                     help="Mount yaw correction (CCW positive). Default 71 (confirmed for this robot).")
     ap.add_argument("--lidar-tilt", type=float, default=0.0, metavar="DEG",
                     help="Nose-down pitch correction (degrees). Try 15 to test if pitch is real.")
+    ap.add_argument("--tilt-sweep", default="", metavar="LO:HI:STEP",
+                    help="Sweep tilt (after yaw) and report the ground-ramp slope "
+                         "per angle to find the value that flattens the ground, "
+                         "e.g. --tilt-sweep 0:20:1")
     ap.add_argument("--self-radius", type=float, default=1.5)
     ap.add_argument("--range", type=float, default=6.0,
                     help="Plot radius (m)")
@@ -180,8 +207,31 @@ async def main() -> None:
 
     print(f"\n[birdseye] collecting {args.scans} scans "
           f"(yaw={args.lidar_yaw}°  tilt={args.lidar_tilt}°) …", flush=True)
-    pts = await collect(args.scans, args.self_radius, yaw_rad, tilt_rad)
-    print(f"  total points after correction: {len(pts):,}")
+    raw = await collect_raw(args.scans, args.self_radius)
+    print(f"  total points after self-filter: {len(raw):,}")
+
+    # --- Optional tilt sweep: find the angle that flattens the ground --------
+    if args.tilt_sweep:
+        lo, hi, step = (float(v) for v in args.tilt_sweep.split(":"))
+        print(f"\n  Tilt sweep (yaw={args.lidar_yaw}° fixed, applied FIRST):")
+        print("    tilt(deg)   ground-ramp-slope (m/m, ~0 = flat)")
+        best = None
+        t = lo
+        while t <= hi + 1e-6:
+            p = correct(raw, yaw_rad, math.radians(t))
+            slope = ground_ramp_slope(p)
+            flag = ""
+            if not math.isnan(slope) and (best is None or abs(slope) < abs(best[1])):
+                best = (t, slope)
+            print(f"    {t:7.1f}     {slope:+.4f}")
+            t += step
+        if best is not None:
+            print(f"\n  >>> Flattest ground at --lidar-tilt {best[0]:.1f} "
+                  f"(slope {best[1]:+.4f}).  Set this on row_follow.py.")
+        tilt_rad = math.radians(best[0]) if best else tilt_rad
+        args.lidar_tilt = best[0] if best else args.lidar_tilt
+
+    pts = correct(raw, yaw_rad, tilt_rad)
 
     # per-sector nearest range
     print("\n  Nearest range per sector:")

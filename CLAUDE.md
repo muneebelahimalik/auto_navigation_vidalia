@@ -449,15 +449,28 @@ python3 scripts/row_follow.py --auto --dual-row --camera --no-cam-obstacles --ro
 - **X** = right, **Y** = forward, **Z** = up (sensor frame, after tilt correction)
 - Ground-relative height: `h = z_corrected + LIDAR_MOUNT_HEIGHT`
 - `LIDAR_MOUNT_HEIGHT = 0.75 m` (defined in `lidar/obstacle_filter.py`; measured: ground to VLP-16 drum centre)
-- **LiDAR tilt: 0° (no pitch correction needed)** — the mount has a 15° ROLL (left-right
-  lean) confirmed by phone level, but no nose-down PITCH.  Data-verified: with `--lidar-tilt 0`
-  the crop band detects ~480 residue points at h≈0.05–0.20 m (correct); with `--lidar-tilt 15`
-  the correction over-rotates all returns to h<0 (below ground) and crop detection = 0.
-  Roll does not shift forward-beam heights and requires no software correction.
 - **LiDAR yaw: 71° CCW** — confirmed by `scripts/diag_alignment.py` bucket placement test.
   Sensor Y+ axis points 71° CCW of robot-forward (front bucket at sensor az=290°, right bucket
   at az=18°; consistent -70.8° offset). Use `--lidar-yaw 71` on all field runs. Implemented in
-  `lidar/obstacle_filter.py::yaw_correct_pts()`, applied in `row_navigator.py` after tilt.
+  `lidar/obstacle_filter.py::yaw_correct_pts()`.
+- **Correction order: YAW FIRST, then TILT** (`row_navigator.py`, `scripts/diag_birdseye.py`).
+  The two corrections do NOT commute when yaw ≠ 0: yaw aligns the cloud to the robot frame so
+  the subsequent tilt rotates the nose-down PITCH about the robot's left-right (X) axis.
+  Applying tilt first rotates about the un-yawed sensor X axis (71° off) and leaves a >1 m
+  residual ground ramp (regression-locked in `test_yaw_then_tilt_recovers_flat_ground` /
+  `test_tilt_then_yaw_leaves_residual_ramp`).
+- **LiDAR tilt: needs a one-time field sweep after the yaw fix.** The 15° body lean the phone
+  level measured is a roll about the sensor's *own* forward axis; because the sensor is yawed
+  71°, that lean resolves IN THE ROBOT FRAME into a ~14° nose-down PITCH (plus a small ~5° roll
+  that does not shift forward-beam heights).  The forward ground ramp visible in the bird's-eye
+  (flat ground reading h≈0 near the robot but h≈1.4 m at 6 m) is that uncorrected pitch.
+  **Earlier "tilt 0 is correct / tilt 15 drives everything below ground" note was an artifact of
+  the OLD tilt→yaw order and a missing yaw correction** — `tilt 15` then yawing over-rotates
+  returns to h<0, exactly the failure that was misread as "no pitch needed".  With the yaw
+  applied first, sweep the angle to flatten the ground:
+  `python3 scripts/diag_birdseye.py --tilt-sweep 0:20:1` — pick the tilt with ground-ramp slope
+  nearest 0 (expected ~13–15°), then set `--lidar-tilt` on field runs.  Default stays **0.0**
+  until the field sweep confirms the angle.
 - Crop geometry (soybean): seedling canopy h ≈ 0.03–0.30 m; tires run in furrows between soybean beds
 - Crop geometry (onion): canopy h ≈ 0.10–0.60 m; adjacent row canopy h ≈ 0.70–0.85 m
 
@@ -479,7 +492,9 @@ z_world = −y_sensor · sin(θ) + z_sensor · cos(θ)
 ```
 Applied in `row_navigator.py` after self-filtering, before `detector.update()` and `safety.check()`.
 
-**CLI flag:** `--lidar-tilt DEG` (default: **0.0** — mount has a roll lean not a nose-down pitch; data-verified that 0.0 is correct).
+**CLI flag:** `--lidar-tilt DEG` (default: **0.0**) — applied AFTER `--lidar-yaw`.  Re-tune via
+`scripts/diag_birdseye.py --tilt-sweep 0:20:1` now that the 71° yaw is corrected (the body lean
+resolves into a ~14° robot-frame pitch); expected non-zero (~13–15°).
 
 ---
 
@@ -554,7 +569,7 @@ Applied in `row_navigator.py` after self-filtering, before `detector.update()` a
 | `--headland-turn-rate R` | **0.35** | Pivot rate during the two 90° turns (rad/s) |
 | `--slam` | off | Enable SLAM odometry integration (currently no-op) |
 | `--speed M` | 0.30 | Max forward speed m/s |
-| `--lidar-tilt DEG` | **0.0** | Nose-down PITCH tilt of LiDAR mount in degrees — mount has a 15° roll (side lean) not a pitch; data-verified that 0.0 is correct |
+| `--lidar-tilt DEG` | **0.0** | Nose-down PITCH correction (degrees), applied AFTER `--lidar-yaw`. The 15° body roll resolves into a ~14° robot-frame pitch once the 71° yaw is corrected; re-tune with `diag_birdseye.py --tilt-sweep 0:20:1` (expected ~13–15°) |
 | `--lidar-yaw DEG` | **0.0** | Sensor mount yaw (CCW positive) relative to robot-forward. Data-verified: sensor is 71° CCW; use `--lidar-yaw 71` on all field runs |
 | `--roi-x W` | 0.80 | Row detection ROI half-width m — applies to BOTH the LiDAR detector and the dual-camera tracker (wired in both scripts) |
 | `--crop-min H` | 0.05 | Minimum crop height above ground m |

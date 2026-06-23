@@ -287,10 +287,18 @@ class RowNavigator:
             if len(pts):
                 rng = np.hypot(pts[:, 0], pts[:, 1])
                 pts = pts[rng >= self.self_radius]
-                if self.tilt_rad != 0.0:
-                    pts = tilt_correct_pts(pts, self.tilt_rad)
+                # Order matters: yaw FIRST, then tilt.  The yaw aligns the cloud
+                # to the robot frame so the subsequent tilt rotates about the
+                # robot's left-right (X) axis — i.e. corrects a true nose-down
+                # PITCH that flattens the forward ground ramp.  Applying tilt
+                # first would rotate about the un-yawed sensor X axis (71° off),
+                # leaving a >1 m residual ground ramp (see
+                # test_correction_order_matters / scratchpad verify_order.py).
+                # Must match the order in scripts/diag_birdseye.py.
                 if self.yaw_rad != 0.0:
                     pts = yaw_correct_pts(pts, self.yaw_rad)
+                if self.tilt_rad != 0.0:
+                    pts = tilt_correct_pts(pts, self.tilt_rad)
 
             # --- Camera integration (runs BEFORE the LiDAR fit so that
             # point-level fusion can feed camera ground points into it) ---

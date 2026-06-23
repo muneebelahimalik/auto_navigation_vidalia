@@ -94,6 +94,59 @@ def test_uncorrected_height_error_magnitude():
 
 
 # ---------------------------------------------------------------------------
+# Correction ORDER (yaw then tilt) — regression lock
+#
+# With a non-zero mount yaw the two corrections do NOT commute.  The pipeline
+# MUST yaw-correct first (align the cloud to the robot frame) and tilt-correct
+# second (rotate the nose-down PITCH about the robot's left-right X axis).
+# Applying tilt first rotates about the un-yawed sensor X axis (71° off) and
+# leaves a >1 m residual ground ramp — the bug that drove the robot off-row.
+# This must match scripts/diag_birdseye.py and navigation/row_navigator.py.
+# ---------------------------------------------------------------------------
+
+YAW71 = math.radians(71.0)
+PITCH14 = math.radians(14.0)
+
+
+def _synth_flat_ground_raw(yaw, pitch):
+    """Raw sensor returns for FLAT ground seen through a (yaw, pitch) mount,
+    obtained by inverting the correct pipeline  robot = tilt(yaw(sensor))."""
+    xs = np.linspace(-3.0, 3.0, 25)
+    ys = np.linspace(1.5, 6.0, 25)
+    gx, gy = np.meshgrid(xs, ys)
+    p_robot = np.column_stack([gx.ravel(), gy.ravel(),
+                               np.full(gx.size, -LIDAR_MOUNT_HEIGHT)])
+    p_s = tilt_correct_pts(p_robot, -pitch)   # undo tilt
+    p_s = yaw_correct_pts(p_s, -yaw)          # undo yaw
+    return p_robot, p_s
+
+
+def test_yaw_then_tilt_recovers_flat_ground():
+    """Correct order (yaw then tilt) flattens the ground to h ~ 0 everywhere."""
+    p_robot, p_s = _synth_flat_ground_raw(YAW71, PITCH14)
+    out = tilt_correct_pts(yaw_correct_pts(p_s, YAW71), PITCH14)
+    np.testing.assert_allclose(out, p_robot, atol=1e-9)
+    h = out[:, 2] + LIDAR_MOUNT_HEIGHT
+    assert np.abs(h).max() < 1e-9
+
+
+def test_tilt_then_yaw_leaves_residual_ramp():
+    """Wrong order (tilt then yaw) leaves a >1 m residual ground ramp."""
+    _, p_s = _synth_flat_ground_raw(YAW71, PITCH14)
+    out = yaw_correct_pts(tilt_correct_pts(p_s, PITCH14), YAW71)
+    h = out[:, 2] + LIDAR_MOUNT_HEIGHT
+    assert np.abs(h).max() > 1.0          # catastrophic when order is wrong
+
+
+def test_correction_orders_identical_when_yaw_zero():
+    """No yaw -> the two orders commute (why the bug hid until yaw was found)."""
+    _, p_s = _synth_flat_ground_raw(0.0, PITCH14)
+    a = tilt_correct_pts(yaw_correct_pts(p_s, 0.0), PITCH14)
+    b = yaw_correct_pts(tilt_correct_pts(p_s, PITCH14), 0.0)
+    np.testing.assert_allclose(a, b, atol=1e-12)
+
+
+# ---------------------------------------------------------------------------
 # Dual-camera fusion (pure logic, no cv2 required)
 #
 # With both cameras FORWARD-FACING each camera independently estimates the
