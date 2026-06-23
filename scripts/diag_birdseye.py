@@ -10,14 +10,14 @@ Copy the PNG off the robot with:
     scp farm-ng-user-laserweeding@100.66.121.56:/tmp/birdseye.png .
 
 Usage examples:
-    # Default: yaw=71° correction applied, forward view, no tilt:
+    # Default: field-calibrated yaw=71° + tilt=21.5° applied, forward view:
     python3 scripts/diag_birdseye.py
 
-    # Test whether 15° nose-down pitch is real (compare crop counts):
-    python3 scripts/diag_birdseye.py --lidar-tilt 15
+    # Re-derive the pitch that flattens the ground (yaw applied first):
+    python3 scripts/diag_birdseye.py --tilt-sweep 0:26:1
 
     # Raw sensor frame (no corrections — shows 71° rotated view):
-    python3 scripts/diag_birdseye.py --lidar-yaw 0
+    python3 scripts/diag_birdseye.py --lidar-yaw 0 --lidar-tilt 0
 
     # Wider range, more scans:
     python3 scripts/diag_birdseye.py --range 8 --scans 10
@@ -211,8 +211,9 @@ async def main() -> None:
     ap.add_argument("--scans", type=int, default=5)
     ap.add_argument("--lidar-yaw", type=float, default=71.0, metavar="DEG",
                     help="Mount yaw correction (CCW positive). Default 71 (confirmed for this robot).")
-    ap.add_argument("--lidar-tilt", type=float, default=0.0, metavar="DEG",
-                    help="Nose-down pitch correction (degrees). Try 15 to test if pitch is real.")
+    ap.add_argument("--lidar-tilt", type=float, default=21.5, metavar="DEG",
+                    help="Nose-down pitch correction (degrees), applied AFTER yaw. "
+                         "Default 21.5 (field-calibrated). Use --tilt-sweep to re-derive.")
     ap.add_argument("--tilt-sweep", default="", metavar="LO:HI:STEP",
                     help="Sweep tilt (after yaw) and report the ground-ramp slope "
                          "per angle to find the value that flattens the ground, "
@@ -248,8 +249,12 @@ async def main() -> None:
         if best is not None:
             print(f"\n  >>> Flattest ground at --lidar-tilt {best[0]:.1f} "
                   f"(slope {best[1]:+.4f}, ground@3.75m {best[2]:+.3f} m).")
-            print("      A good fit has slope≈0 AND ground level near 0; a large "
-                  "negative ground level means over-rotation.")
+            print("      SLOPE≈0 is the pitch (mount-height-independent) — trust it.")
+            print("      Ground level is a SECONDARY check: in a bedded field the "
+                  "15th-pct tracks the FURROW bottoms, so a negative level "
+                  "(~ -0.3 m = furrow depth) is EXPECTED, not over-rotation. "
+                  "Only suspect over-rotation if the level keeps dropping well "
+                  "past the slope-zero tilt.")
         tilt_rad = math.radians(best[0]) if best else tilt_rad
         args.lidar_tilt = best[0] if best else args.lidar_tilt
 

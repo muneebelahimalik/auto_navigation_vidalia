@@ -584,16 +584,17 @@ def main() -> None:
                              "0.35–0.50 m catches crop material; 0.65 m passes residue "
                              "and seedlings while still stopping real hazards (posts, animals). "
                              "Onion fields: use 0.85 m.")
-    parser.add_argument("--lidar-tilt", type=float, default=0.0, metavar="DEG",
-                        help="Forward (nose-down) PITCH tilt of the LiDAR mount in degrees "
-                             "(default: 0.0 — mount has a 15° ROLL (left-right lean) not a "
-                             "nose-down pitch; data-verified: tilt=0 gives correct crop heights, "
-                             "tilt=15 pushes all returns below ground).")
-    parser.add_argument("--lidar-yaw", type=float, default=0.0, metavar="DEG",
+    parser.add_argument("--lidar-tilt", type=float, default=21.5, metavar="DEG",
+                        help="Forward (nose-down) PITCH correction of the LiDAR mount in degrees, "
+                             "applied AFTER --lidar-yaw (default: 21.5 — field-calibrated via "
+                             "diag_birdseye.py --tilt-sweep: the 15° body lean resolves into a "
+                             "~21.5° robot-frame pitch once the 71° yaw is corrected; this is the "
+                             "angle that flattens the forward ground ramp).")
+    parser.add_argument("--lidar-yaw", type=float, default=71.0, metavar="DEG",
                         help="Yaw of the LiDAR mount relative to robot forward, CCW positive "
-                             "(degrees). Data-verified: sensor Y+ is 71° CCW of robot forward; "
-                             "use --lidar-yaw 71 to correct. Applied after self-filter and tilt "
-                             "correction.")
+                             "(degrees, default: 71 — data-verified: sensor Y+ is 71° CCW of "
+                             "robot forward). Applied FIRST (after self-filter, before tilt) so "
+                             "the tilt then rotates the pitch about the robot's left-right axis.")
     parser.add_argument("--debug", action="store_true",
                         help="Stream a LiDAR height profile instead of navigating")
     parser.add_argument("--save-dir", default="", metavar="PATH",
