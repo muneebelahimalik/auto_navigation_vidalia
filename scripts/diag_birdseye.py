@@ -171,7 +171,7 @@ async def main() -> None:
     ap.add_argument("--self-radius", type=float, default=1.5)
     ap.add_argument("--range", type=float, default=6.0,
                     help="Plot radius (m)")
-    ap.add_argument("--out", default="/tmp/birdseye.png")
+    ap.add_argument("--out", default=str(Path(__file__).resolve().parent.parent / "birdseye.png"))
     args = ap.parse_args()
 
     yaw_rad  = math.radians(args.lidar_yaw)
@@ -199,7 +199,7 @@ async def main() -> None:
 
     save_png(pts, args.out, args.range, args.lidar_yaw, args.lidar_tilt)
     print(f"\n  Copy off the robot:")
-    print(f"    scp farm-ng-user-laserweeding@100.66.121.56:{args.out} .")
+    print(f"    scp farm-ng-user-laserweeding@100.66.121.56:~/auto_navigation_vidalia/birdseye.png .")
 
 
 if __name__ == "__main__":
