@@ -2,7 +2,7 @@
   "configs": [
     {
       "name": "canbus",
-      "host": "camphor-clone.tail0be07.ts.net",
+      "host": "localhost",
       "port": 6001,
       "log_level": "INFO",
       "subscriptions": [
@@ -14,7 +14,7 @@
     },
     {
       "name": "filter",
-      "host": "camphor-clone.tail0be07.ts.net",
+      "host": "localhost",
       "port": 20001,
       "log_level": "INFO",
       "subscriptions": [
