@@ -10,17 +10,17 @@ Copy the PNG off the robot with:
     scp farm-ng-user-laserweeding@100.66.121.56:/tmp/birdseye.png .
 
 Usage examples:
-    # Raw sensor frame (no corrections):
+    # Default: yaw=71° correction applied, forward view, no tilt:
     python3 scripts/diag_birdseye.py
 
-    # With yaw correction (confirmed 71° CCW mount):
-    python3 scripts/diag_birdseye.py --lidar-yaw 71
+    # Test whether 15° nose-down pitch is real (compare crop counts):
+    python3 scripts/diag_birdseye.py --lidar-tilt 15
 
-    # With yaw + tilt (re-test whether 15° nose-down is real after yaw fix):
-    python3 scripts/diag_birdseye.py --lidar-yaw 71 --lidar-tilt 15
+    # Raw sensor frame (no corrections — shows 71° rotated view):
+    python3 scripts/diag_birdseye.py --lidar-yaw 0
 
-    # Wider range, more scans, objects at 2m:
-    python3 scripts/diag_birdseye.py --lidar-yaw 71 --range 5 --scans 10
+    # Wider range, more scans:
+    python3 scripts/diag_birdseye.py --range 8 --scans 10
 """
 
 from __future__ import annotations
@@ -83,45 +83,46 @@ def save_png(pts: np.ndarray, out: str, max_range: float,
 
     fig, axes = plt.subplots(1, 2, figsize=(16, 8))
 
-    # ---- Left: bird's-eye (X-Y) coloured by height -------------------------
+    # ---- Left: bird's-eye (X-Y) forward half, coloured by height -----------
     ax = axes[0]
-    if len(pts):
-        h = pts[:, 2] + LIDAR_MOUNT_HEIGHT          # ground-relative height
-        # colour range: -0.2 m (below ground) to +1.5 m
+    # Only show points in the forward half (y > 0) for a clean forward view
+    fwd_mask = pts[:, 1] > 0 if len(pts) else np.array([], dtype=bool)
+    fwd_pts = pts[fwd_mask] if len(pts) else pts
+    if len(fwd_pts):
+        h = fwd_pts[:, 2] + LIDAR_MOUNT_HEIGHT
         norm = Normalize(vmin=-0.2, vmax=1.5)
-        sc = ax.scatter(pts[:, 0], pts[:, 1], c=h, cmap="RdYlGn_r",
-                        norm=norm, s=0.3, alpha=0.6)
+        sc = ax.scatter(fwd_pts[:, 0], fwd_pts[:, 1], c=h, cmap="RdYlGn_r",
+                        norm=norm, s=0.5, alpha=0.7)
         plt.colorbar(sc, ax=ax, label="Height above ground (m)")
 
-    # sector lines
-    for angle_deg, label, col in [(0, "FWD (Y+)", "blue"),
-                                   (90, "RIGHT (X+)", "orange"),
-                                   (180, "REAR", "gray"),
-                                   (270, "LEFT", "purple")]:
+    # sector lines (forward half only: FWD, LEFT-FWD, RIGHT-FWD)
+    for angle_deg, label, col in [(0, "FWD", "blue"),
+                                   (45, "FWD-R", "orange"),
+                                   (-45, "FWD-L", "purple")]:
         a = math.radians(angle_deg)
         dx, dy = math.sin(a), math.cos(a)
-        ax.annotate("", xy=(dx * max_range * 0.95, dy * max_range * 0.95),
+        ax.annotate("", xy=(dx * max_range * 0.90, dy * max_range * 0.90),
                     xytext=(0, 0),
                     arrowprops=dict(arrowstyle="->", color=col, lw=1.5))
-        ax.text(dx * max_range * 0.98, dy * max_range * 0.98, label,
+        ax.text(dx * max_range * 0.95, dy * max_range * 0.95, label,
                 ha="center", va="center", color=col, fontsize=8)
 
-    # self-filter and range circles
+    # self-filter arc and range arc (forward half only)
     for r, style, lbl in [(1.5, "--", "self-filter"), (max_range, ":", f"{max_range}m")]:
-        theta = np.linspace(0, 2 * math.pi, 200)
-        ax.plot(np.sin(theta) * r, np.cos(theta) * r, style, color="gray",
+        theta = np.linspace(0, math.pi, 200)   # 0=right, π=left (forward half)
+        ax.plot(np.cos(theta) * r, np.sin(theta) * r, style, color="gray",
                 lw=0.8, label=lbl)
 
     ax.set_aspect("equal")
     ax.set_xlim(-max_range, max_range)
-    ax.set_ylim(-max_range, max_range)
+    ax.set_ylim(0, max_range)
     ax.set_xlabel("X → RIGHT (m)")
     ax.set_ylabel("Y → FORWARD (m)")
-    ax.set_title(f"Bird's-eye  yaw={yaw_deg:.0f}°  tilt={tilt_deg:.0f}°\n"
-                 f"n_pts={len(pts):,}")
+    ax.set_title(f"Forward bird's-eye  yaw={yaw_deg:.0f}°  tilt={tilt_deg:.0f}°\n"
+                 f"n_fwd={len(fwd_pts):,}  n_total={len(pts):,}")
     ax.legend(fontsize=7, loc="lower right")
     ax.grid(True, alpha=0.3)
-    ax.plot(0, 0, "r+", markersize=12)   # sensor origin
+    ax.plot(0, 0, "r+", markersize=12)   # sensor origin (bottom centre)
 
     # ---- Right: height histogram -------------------------------------------
     ax2 = axes[1]
@@ -164,10 +165,10 @@ async def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--scans", type=int, default=5)
-    ap.add_argument("--lidar-yaw", type=float, default=0.0, metavar="DEG",
-                    help="Mount yaw correction (CCW positive). Use 71 for this robot.")
+    ap.add_argument("--lidar-yaw", type=float, default=71.0, metavar="DEG",
+                    help="Mount yaw correction (CCW positive). Default 71 (confirmed for this robot).")
     ap.add_argument("--lidar-tilt", type=float, default=0.0, metavar="DEG",
-                    help="Nose-down pitch correction (degrees).")
+                    help="Nose-down pitch correction (degrees). Try 15 to test if pitch is real.")
     ap.add_argument("--self-radius", type=float, default=1.5)
     ap.add_argument("--range", type=float, default=6.0,
                     help="Plot radius (m)")
