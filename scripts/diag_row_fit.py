@@ -35,7 +35,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from lidar.lidar_driver import LidarDriver
-from lidar.obstacle_filter import LIDAR_MOUNT_HEIGHT, tilt_correct_pts
+from lidar.obstacle_filter import LIDAR_MOUNT_HEIGHT, tilt_correct_pts, yaw_correct_pts
 from navigation.row_perception import (
     RowDetector,
     _cluster_centred_pca,
@@ -119,6 +119,8 @@ async def main() -> None:
     ap.add_argument("--out", default="/tmp/row_diag.npz")
     ap.add_argument("--self-radius", type=float, default=1.5)
     ap.add_argument("--lidar-tilt", type=float, default=0.0)
+    ap.add_argument("--lidar-yaw", type=float, default=0.0,
+                    help="Mount yaw correction (CCW positive degrees). Use 71 for this robot.")
     ap.add_argument("--roi-x", type=float, default=0.80)
     ap.add_argument("--row-spacing", type=float, default=0.76)
     args = ap.parse_args()
@@ -126,6 +128,7 @@ async def main() -> None:
     det = RowDetector(dual_row=True, row_spacing=args.row_spacing,
                       roi_x_half=args.roi_x)
     tilt_rad = math.radians(args.lidar_tilt)
+    yaw_rad  = math.radians(args.lidar_yaw)
 
     scans = []
     print(f"[diag] capturing {args.scans} scans …")
@@ -135,6 +138,8 @@ async def main() -> None:
             if len(pts):
                 rng = np.hypot(pts[:, 0], pts[:, 1])
                 pts = pts[rng >= args.self_radius]
+                if yaw_rad != 0.0:
+                    pts = yaw_correct_pts(pts, yaw_rad)
                 if tilt_rad != 0.0:
                     pts = tilt_correct_pts(pts, tilt_rad)
             scans.append(np.asarray(pts, dtype=np.float32))
