@@ -64,6 +64,30 @@ def tilt_correct_pts(pts: np.ndarray, tilt_rad: float) -> np.ndarray:
     return out
 
 
+def yaw_correct_pts(pts: np.ndarray, yaw_rad: float) -> np.ndarray:
+    """Rotate an Nx3 point array to correct for sensor mount yaw misalignment.
+
+    yaw_rad is the sensor's physical yaw (radians, CCW positive when viewed from
+    above) relative to the robot's forward axis.  For a sensor whose Y+ axis points
+    71° CCW of robot-forward, pass yaw_rad = math.radians(71).
+
+    The correction rotates points CW by yaw_rad (i.e. by -yaw_rad in the standard
+    CCW convention), mapping sensor-frame coordinates to robot-frame coordinates:
+
+        x_robot =  x_s * cos(yaw) + y_s * sin(yaw)
+        y_robot = -x_s * sin(yaw) + y_s * cos(yaw)
+        z unchanged
+    """
+    if yaw_rad == 0.0:
+        return pts
+    cos_y = math.cos(yaw_rad)
+    sin_y = math.sin(yaw_rad)
+    out = pts.copy()
+    out[:, 0] = pts[:, 0] * cos_y + pts[:, 1] * sin_y
+    out[:, 1] = -pts[:, 0] * sin_y + pts[:, 1] * cos_y
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Obstacle filter thresholds
 # ---------------------------------------------------------------------------

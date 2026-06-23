@@ -34,7 +34,7 @@ import numpy as np
 
 from canbus.canbus_interface import CanbusInterface
 from lidar.lidar_driver import LidarDriver
-from lidar.obstacle_filter import tilt_correct_pts
+from lidar.obstacle_filter import tilt_correct_pts, yaw_correct_pts
 from navigation.headland import HeadlandTurn
 from navigation.row_controller import PurePursuitController
 from navigation.row_perception import RowDetector, RowEstimate
@@ -123,6 +123,7 @@ class RowNavigator:
         ekf=None,
         odometry=None,
         tilt_rad: float = 0.0,
+        yaw_rad: float = 0.0,
         cam_block_frames: int = 3,
         cam_self_radius: float = 2.0,
         ros2_bridge: bool = False,
@@ -152,6 +153,7 @@ class RowNavigator:
         self.ekf = ekf
         self.odometry = odometry
         self.tilt_rad = tilt_rad
+        self.yaw_rad = yaw_rad
         self.cam_block_frames = cam_block_frames
         self.ros2_bridge = ros2_bridge
         self.follow_miss_thresh = follow_miss_thresh
@@ -287,6 +289,8 @@ class RowNavigator:
                 pts = pts[rng >= self.self_radius]
                 if self.tilt_rad != 0.0:
                     pts = tilt_correct_pts(pts, self.tilt_rad)
+                if self.yaw_rad != 0.0:
+                    pts = yaw_correct_pts(pts, self.yaw_rad)
 
             # --- Camera integration (runs BEFORE the LiDAR fit so that
             # point-level fusion can feed camera ground points into it) ---

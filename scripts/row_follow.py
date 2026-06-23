@@ -407,6 +407,7 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
         ekf=ekf,
         odometry=odometry,
         tilt_rad=_math.radians(args.lidar_tilt),
+        yaw_rad=_math.radians(args.lidar_yaw),
         cam_block_frames=args.cam_block_frames,
         cam_self_radius=args.cam_self_radius,
         ros2_bridge=args.ros2_bridge,
@@ -588,6 +589,11 @@ def main() -> None:
                              "(default: 0.0 — mount has a 15° ROLL (left-right lean) not a "
                              "nose-down pitch; data-verified: tilt=0 gives correct crop heights, "
                              "tilt=15 pushes all returns below ground).")
+    parser.add_argument("--lidar-yaw", type=float, default=0.0, metavar="DEG",
+                        help="Yaw of the LiDAR mount relative to robot forward, CCW positive "
+                             "(degrees). Data-verified: sensor Y+ is 71° CCW of robot forward; "
+                             "use --lidar-yaw 71 to correct. Applied after self-filter and tilt "
+                             "correction.")
     parser.add_argument("--debug", action="store_true",
                         help="Stream a LiDAR height profile instead of navigating")
     parser.add_argument("--save-dir", default="", metavar="PATH",

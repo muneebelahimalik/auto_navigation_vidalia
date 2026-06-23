@@ -7,9 +7,47 @@ import numpy as np
 import pytest
 
 from camera.soybean_row_tracker import DualCameraRowTracker, _SideResult
-from lidar.obstacle_filter import LIDAR_MOUNT_HEIGHT, tilt_correct_pts
+from lidar.obstacle_filter import LIDAR_MOUNT_HEIGHT, tilt_correct_pts, yaw_correct_pts
 
 TILT = math.radians(15.0)
+
+
+# ---------------------------------------------------------------------------
+# LiDAR yaw correction
+# ---------------------------------------------------------------------------
+
+def test_yaw_correct_front_bucket():
+    """Front bucket at (x=-1.862, y=0.683) in sensor frame with 71° yaw → (x≈0, y≈2)."""
+    yaw = math.radians(71.0)
+    pts = np.array([[-1.862, 0.683, 0.0]])
+    out = yaw_correct_pts(pts, yaw)
+    assert out[0, 0] == pytest.approx(0.0, abs=0.05)
+    assert out[0, 1] == pytest.approx(2.0, abs=0.05)
+    assert out[0, 2] == 0.0   # Z untouched
+
+
+def test_yaw_correct_right_bucket():
+    """Right bucket at (x=0.630, y=1.917) in sensor frame with 71° yaw → (x≈2, y≈0)."""
+    yaw = math.radians(71.0)
+    pts = np.array([[0.630, 1.917, 0.0]])
+    out = yaw_correct_pts(pts, yaw)
+    assert out[0, 0] == pytest.approx(2.0, abs=0.05)
+    assert out[0, 1] == pytest.approx(0.0, abs=0.05)
+
+
+def test_yaw_zero_is_noop():
+    """yaw_rad=0 must return the original array unchanged."""
+    pts = np.array([[1.0, 2.0, 3.0]])
+    out = yaw_correct_pts(pts, 0.0)
+    assert out is pts   # identity (no copy made)
+
+
+def test_yaw_correct_round_trip():
+    """Applying +yaw then -yaw must recover the original point."""
+    yaw = math.radians(71.0)
+    pts = np.array([[-1.5, 1.2, 0.5]])
+    out = yaw_correct_pts(yaw_correct_pts(pts, yaw), -yaw)
+    np.testing.assert_allclose(out, pts, atol=1e-9)
 
 
 # ---------------------------------------------------------------------------

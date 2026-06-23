@@ -454,6 +454,10 @@ python3 scripts/row_follow.py --auto --dual-row --camera --no-cam-obstacles --ro
   the crop band detects ~480 residue points at h≈0.05–0.20 m (correct); with `--lidar-tilt 15`
   the correction over-rotates all returns to h<0 (below ground) and crop detection = 0.
   Roll does not shift forward-beam heights and requires no software correction.
+- **LiDAR yaw: 71° CCW** — confirmed by `scripts/diag_alignment.py` bucket placement test.
+  Sensor Y+ axis points 71° CCW of robot-forward (front bucket at sensor az=290°, right bucket
+  at az=18°; consistent -70.8° offset). Use `--lidar-yaw 71` on all field runs. Implemented in
+  `lidar/obstacle_filter.py::yaw_correct_pts()`, applied in `row_navigator.py` after tilt.
 - Crop geometry (soybean): seedling canopy h ≈ 0.03–0.30 m; tires run in furrows between soybean beds
 - Crop geometry (onion): canopy h ≈ 0.10–0.60 m; adjacent row canopy h ≈ 0.70–0.85 m
 
@@ -551,6 +555,7 @@ Applied in `row_navigator.py` after self-filtering, before `detector.update()` a
 | `--slam` | off | Enable SLAM odometry integration (currently no-op) |
 | `--speed M` | 0.30 | Max forward speed m/s |
 | `--lidar-tilt DEG` | **0.0** | Nose-down PITCH tilt of LiDAR mount in degrees — mount has a 15° roll (side lean) not a pitch; data-verified that 0.0 is correct |
+| `--lidar-yaw DEG` | **0.0** | Sensor mount yaw (CCW positive) relative to robot-forward. Data-verified: sensor is 71° CCW; use `--lidar-yaw 71` on all field runs |
 | `--roi-x W` | 0.80 | Row detection ROI half-width m — applies to BOTH the LiDAR detector and the dual-camera tracker (wired in both scripts) |
 | `--crop-min H` | 0.05 | Minimum crop height above ground m |
 | `--crop-max H` | 0.60 | Maximum crop height above ground m |
