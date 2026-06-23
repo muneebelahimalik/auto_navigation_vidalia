@@ -193,6 +193,44 @@ def test_flat_ground_detrend_is_noop():
     pts = np.vstack([make_row(-HALF), make_row(+HALF), make_ground_graded(0.0)])
     converge(det, pts)
     assert det.last_ground_slope == 0.0
+    assert det.last_ground_shift == 0.0
+
+
+def make_dipped_scene(drop=0.33):
+    """Replica of the field stall: a terrain dip puts the whole ROI ~`drop` m
+    below the flat-calibrated h=0.  Ground cluster at -drop, a furrow tail
+    below it, and the two soybean rows as canopy ~0.08-0.30 m ABOVE the local
+    ground (so absolute h ~ -0.25..-0.03, entirely below the 0.03 m crop
+    floor)."""
+    rng = np.random.default_rng(5)
+    parts = []
+    yg = rng.uniform(1.6, 6.8, 1500); xg = rng.uniform(-0.8, 0.8, 1500)
+    parts.append(np.column_stack((xg, yg, (-drop + rng.normal(0, 0.04, 1500)) - LIDAR_MOUNT_HEIGHT)))
+    yf = rng.uniform(1.6, 6.8, 400); xf = rng.uniform(-0.8, 0.8, 400)
+    parts.append(np.column_stack((xf, yf, (-drop - 0.12 + rng.normal(0, 0.05, 400)) - LIDAR_MOUNT_HEIGHT)))
+    for xc in (-HALF, +HALF):
+        yc = rng.uniform(1.6, 6.8, 150); xx = xc + rng.normal(0, 0.03, 150)
+        parts.append(np.column_stack((xx, yc, (-drop + rng.uniform(0.08, 0.30, 150)) - LIDAR_MOUNT_HEIGHT)))
+    return np.vstack(parts)
+
+
+def test_terrain_dip_crop_recovered_with_level_shift():
+    """Ground ~0.35 m below h=0: the band must drop onto the local ground and
+    recover the canopy (rows centred, confident)."""
+    det = RowDetector(dual_row=True, row_spacing=ROW_SPACING)
+    est = converge(det, make_dipped_scene())
+    assert est.valid
+    assert abs(est.lateral_offset) < 0.07
+    assert est.confidence > 0.5
+    assert det.last_ground_shift < -0.20          # band was lowered onto ground
+
+
+def test_terrain_dip_crop_lost_without_level_shift():
+    """Same dip with ground_detrend disabled: the absolute band misses the
+    sunk canopy — documents the field stall (n collapses, low confidence)."""
+    det = RowDetector(dual_row=True, row_spacing=ROW_SPACING, ground_detrend=False)
+    est = converge(det, make_dipped_scene())
+    assert est.confidence < 0.35
 
 
 # ---------------------------------------------------------------------------

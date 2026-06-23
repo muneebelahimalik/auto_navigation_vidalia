@@ -786,7 +786,10 @@ class RowNavigator:
         grade_str = ""
         _gs = getattr(self.detector, "last_ground_slope", 0.0)
         if _gs:
-            grade_str = f" grade={math.degrees(math.atan(_gs)):+.0f}°"
+            grade_str += f" grade={math.degrees(math.atan(_gs)):+.0f}°"
+        _sh = getattr(self.detector, "last_ground_shift", 0.0)
+        if _sh:
+            grade_str += f" drop={_sh:+.2f}m"
         if self.state == _S.ACQUIRE:
             align_frames = self._acq_count - self.acquire_frames
             if align_frames > 0:

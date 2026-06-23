@@ -264,6 +264,7 @@ class RowDetector:
         ground_min_pts: int = 60,
         ground_max_grade_deg: float = 25.0,
         ground_deadband_deg: float = 2.0,
+        ground_level_spread: float = 0.35,
     ) -> None:
         self.roi_y_min = roi_y_min
         self.roi_y_max = roi_y_max
@@ -295,9 +296,11 @@ class RowDetector:
         # removes its SLOPE so the band tracks the local ground.
         self.ground_detrend = ground_detrend
         self.ground_min_pts = ground_min_pts
+        self.ground_level_spread = ground_level_spread
         self._gmax = math.tan(math.radians(ground_max_grade_deg))
         self._gdead = math.tan(math.radians(ground_deadband_deg))
         self.last_ground_slope = 0.0   # dz/dy actually applied last scan (diag)
+        self.last_ground_shift = 0.0   # band level shift applied last scan (diag)
         self._spacing_factor = 1.0   # confidence penalty when peak pair spacing is off
         self._est = RowEstimate()
 
@@ -347,9 +350,27 @@ class RowDetector:
             # flat-ground behaviour byte-identical and is robust to the
             # furrow/soil height split (both ramp together → shared slope).
             a = self._ground_slope(y[in_xy], z[in_xy]) if self.ground_detrend else 0.0
-            self.last_ground_slope = a
             h_eff = h - a * y if a else h
-            roi = in_xy & (h_eff >= self.crop_h_min) & (h_eff <= self.crop_h_max)
+            # Level correction: on undulating terrain the local ground can sit
+            # well below the flat-calibrated h=0 (field-observed: ROI ground at
+            # ~-0.35 m, the whole canopy pushed below the 0.03 m crop floor and
+            # clipped — only 14 pts survived).  When a real ground+canopy column
+            # is present (wide height spread) and its median sits below 0, lower
+            # the band onto the local ground so the canopy — correctly elevated
+            # ABOVE that ground — stays inside the band.  The wide-spread gate
+            # keeps canopy-only clouds (narrow span) on the absolute band, and
+            # the min(0,·) means it only ever lowers the band, never raises it.
+            shift = 0.0
+            if self.ground_detrend:
+                hr = h_eff[in_xy]
+                if len(hr) >= self.ground_min_pts:
+                    spread = float(np.percentile(hr, 95) - np.percentile(hr, 5))
+                    if spread > self.ground_level_spread:
+                        shift = min(0.0, float(np.percentile(hr, 50)))
+            self.last_ground_slope = a
+            self.last_ground_shift = shift
+            roi = (in_xy & (h_eff >= self.crop_h_min + shift)
+                   & (h_eff <= self.crop_h_max + shift))
             cx, cy = x[roi], y[roi]
             n = int(cx.shape[0])
         else:
