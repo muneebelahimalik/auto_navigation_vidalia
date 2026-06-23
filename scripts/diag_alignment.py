@@ -11,8 +11,8 @@ PROCEDURE
 Run the script. It will prompt you through three placements:
 
   1. No object in any direction (baseline — background subtraction)
-  2. Bucket at 1 m DIRECTLY IN FRONT of the robot
-  3. Bucket at 1 m DIRECTLY TO THE RIGHT of the robot
+  2. Bucket DIRECTLY IN FRONT of the robot
+  3. Bucket DIRECTLY TO THE RIGHT of the robot
 
 For each placement it captures scans and finds the nearest cluster of
 returns that appeared since the previous step.  It reports:
@@ -22,8 +22,8 @@ returns that appeared since the previous step.  It reports:
   - which named sector (fwd / right / rear / left)
 
 Expected if sensor is correctly aligned:
-  Front bucket → y ≈ +1.0 m, x ≈ 0.0 m, azimuth ≈ 0°, sector=fwd
-  Right bucket → x ≈ +1.0 m, y ≈ 0.0 m, azimuth ≈ 90°, sector=right
+  Front bucket → y ≈ +range m, x ≈ 0.0 m, azimuth ≈ 0°, sector=fwd
+  Right bucket → x ≈ +range m, y ≈ 0.0 m, azimuth ≈ 90°, sector=right
 
 Actual offsets reveal the mount yaw error so it can be corrected in code.
 """
@@ -58,25 +58,43 @@ def _sector_name(az_deg: float) -> str:
     return "other"
 
 
-async def collect_scans(stream, n: int, tilt_rad: float = 0.0,
-                        self_r: float = 1.5) -> list[np.ndarray]:
-    """Collect n scans from a persistent stream using __anext__() — never closes it."""
-    scans = []
-    for _ in range(n):
-        pts = await stream.__anext__()
+async def scan_producer(lidar: LidarDriver, queue: asyncio.Queue,
+                         tilt_rad: float, self_r: float) -> None:
+    """Single persistent scan loop — runs until task is cancelled."""
+    async for pts in lidar.scan_stream_np():
         if len(pts):
             rng = np.hypot(pts[:, 0], pts[:, 1])
             pts = pts[rng >= self_r]
             if tilt_rad:
                 pts = tilt_correct_pts(pts, tilt_rad)
-        scans.append(pts)
-    return scans
+        await queue.put(np.asarray(pts, dtype=np.float32))
 
 
-async def drain(stream, n: int = 3) -> None:
-    """Discard n scans to flush packets buffered while the event loop was idle."""
+async def flush_and_collect(queue: asyncio.Queue, n: int) -> list[np.ndarray]:
+    """
+    Discard all scans currently in the queue (stale — from before user
+    pressed Enter), wait for 3 fresh scans to arrive, then collect n.
+    """
+    # Drain everything already buffered
+    drained = 0
+    while True:
+        try:
+            queue.get_nowait()
+            drained += 1
+        except asyncio.QueueEmpty:
+            break
+    if drained:
+        print(f"    [flushed {drained} stale scans]", flush=True)
+
+    # Wait for 3 fresh scans (guarantees we're seeing live data)
+    for _ in range(3):
+        await queue.get()
+
+    # Collect n scans
+    scans = []
     for _ in range(n):
-        await stream.__anext__()
+        scans.append(await queue.get())
+    return scans
 
 
 def find_new_cluster(with_pts: np.ndarray, baseline_pts: np.ndarray,
@@ -94,7 +112,6 @@ def find_new_cluster(with_pts: np.ndarray, baseline_pts: np.ndarray,
     if len(candidates) < 3:
         return None
 
-    # Remove points that exist in baseline at the same location
     novel = []
     for p in candidates:
         dists = np.hypot(baseline_pts[:, 0] - p[0], baseline_pts[:, 1] - p[1])
@@ -102,7 +119,6 @@ def find_new_cluster(with_pts: np.ndarray, baseline_pts: np.ndarray,
             novel.append(p)
 
     if len(novel) < 3:
-        # If baseline subtraction removes too much, just use all in-band points
         novel = candidates
 
     pts = np.array(novel)
@@ -141,9 +157,9 @@ async def main() -> None:
     ap.add_argument("--scans", type=int, default=10, help="scans per step")
     ap.add_argument("--lidar-tilt", type=float, default=0.0)
     ap.add_argument("--self-radius", type=float, default=1.5)
-    ap.add_argument("--expect-range", type=float, default=1.0,
+    ap.add_argument("--expect-range", type=float, default=2.0,
                     help="Expected range of the placed object (m)")
-    ap.add_argument("--range-tol", type=float, default=0.40,
+    ap.add_argument("--range-tol", type=float, default=0.50,
                     help="Search band width around expect-range (m)")
     args = ap.parse_args()
     tilt_rad = math.radians(args.lidar_tilt)
@@ -154,39 +170,49 @@ async def main() -> None:
           f"object_range={args.expect_range}±{args.range_tol}m")
     print("====================================================================")
 
+    queue: asyncio.Queue[np.ndarray] = asyncio.Queue()
+
     async with LidarDriver() as lidar:
-        stream = lidar.scan_stream_np()
+        # Single persistent scan loop runs as a background task throughout
+        producer = asyncio.create_task(
+            scan_producer(lidar, queue, tilt_rad, args.self_radius)
+        )
 
-        # ---- Step 1: baseline (no object) ------------------------------------
-        await ainput("\nStep 1: Remove ALL objects from around the robot.\n"
-                     "  Press Enter to capture baseline …")
-        await drain(stream)
-        print(f"  Capturing {args.scans} baseline scans …", flush=True)
-        baseline_scans = await collect_scans(stream, args.scans, tilt_rad, args.self_radius)
-        baseline = stacked(baseline_scans)
-        print(f"  Baseline: {len(baseline)} total points captured.")
+        try:
+            # ---- Step 1: baseline --------------------------------------------
+            await ainput("\nStep 1: Remove ALL objects from around the robot.\n"
+                         "  Press Enter to capture baseline …")
+            print(f"  Capturing {args.scans} baseline scans …", flush=True)
+            baseline_scans = await flush_and_collect(queue, args.scans)
+            baseline = stacked(baseline_scans)
+            print(f"  Baseline: {len(baseline)} total points captured.")
 
-        # ---- Step 2: object DIRECTLY IN FRONT --------------------------------
-        await ainput(f"\nStep 2: Place the bucket at exactly {args.expect_range:.1f} m "
-                     "DIRECTLY IN FRONT of the robot (on the Y+ axis).\n"
-                     "  Press Enter to capture …")
-        await drain(stream)
-        print(f"  Capturing {args.scans} scans …", flush=True)
-        front_scans = await collect_scans(stream, args.scans, tilt_rad, args.self_radius)
-        front_pts = stacked(front_scans)
-        front_result = find_new_cluster(front_pts, baseline, args.expect_range, args.range_tol)
+            # ---- Step 2: object DIRECTLY IN FRONT ----------------------------
+            await ainput(f"\nStep 2: Place the bucket at exactly {args.expect_range:.1f} m "
+                         "DIRECTLY IN FRONT of the robot (on the Y+ axis).\n"
+                         "  Press Enter to capture …")
+            print(f"  Capturing {args.scans} scans …", flush=True)
+            front_scans = await flush_and_collect(queue, args.scans)
+            front_pts = stacked(front_scans)
+            front_result = find_new_cluster(front_pts, baseline,
+                                            args.expect_range, args.range_tol)
 
-        # ---- Step 3: object DIRECTLY TO THE RIGHT ----------------------------
-        await ainput(f"\nStep 3: Move the bucket to {args.expect_range:.1f} m "
-                     "DIRECTLY TO THE RIGHT of the robot (on the X+ axis).\n"
-                     "  Press Enter to capture …")
-        await drain(stream)
-        print(f"  Capturing {args.scans} scans …", flush=True)
-        right_scans = await collect_scans(stream, args.scans, tilt_rad, args.self_radius)
-        right_pts = stacked(right_scans)
-        right_result = find_new_cluster(right_pts, baseline, args.expect_range, args.range_tol)
+            # ---- Step 3: object DIRECTLY TO THE RIGHT ------------------------
+            await ainput(f"\nStep 3: Move the bucket to {args.expect_range:.1f} m "
+                         "DIRECTLY TO THE RIGHT of the robot (on the X+ axis).\n"
+                         "  Press Enter to capture …")
+            print(f"  Capturing {args.scans} scans …", flush=True)
+            right_scans = await flush_and_collect(queue, args.scans)
+            right_pts = stacked(right_scans)
+            right_result = find_new_cluster(right_pts, baseline,
+                                            args.expect_range, args.range_tol)
 
-        await stream.aclose()
+        finally:
+            producer.cancel()
+            try:
+                await producer
+            except (asyncio.CancelledError, BaseException):
+                pass
 
     # ---- Report ---------------------------------------------------------------
     print("\n====================================================================")
