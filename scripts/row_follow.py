@@ -464,15 +464,29 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
                 return
 
         # Confirm the canbus link with a harmless zero-velocity command.
+        # The FIRST request_reply also establishes the gRPC channel, which can
+        # take well over the 0.5 s default — so retry with a longer timeout
+        # before giving up, otherwise a slow channel warm-up silently drops a
+        # perfectly good link to perception-only.
         if canbus is not None:
-            try:
-                await canbus.stop()
-                print(" [row_follow] canbus link OK (sent zero twist).")
-            except Exception as exc:
-                print(f" [row_follow] canbus unreachable: {exc}")
-                if args.auto:
-                    print(" [row_follow] cannot drive — switching to perception-only.")
-                    navigator.auto = False
+            linked = False
+            for attempt in range(1, 4):
+                try:
+                    await canbus.stop(timeout=2.0)
+                    print(" [row_follow] canbus link OK (sent zero twist).")
+                    linked = True
+                    break
+                except asyncio.TimeoutError:
+                    print(f" [row_follow] canbus /twist no reply "
+                          f"(attempt {attempt}/3) — retrying …")
+                    await asyncio.sleep(0.5)
+                except Exception as exc:
+                    print(f" [row_follow] canbus error: {exc!r}")
+                    break
+            if not linked and args.auto:
+                print(" [row_follow] canbus unreachable — is the Amiga in AUTO "
+                      "mode with the e-stop released? Switching to perception-only.")
+                navigator.auto = False
 
         print(" Following the centre crop row — watch the status line.\n")
 
