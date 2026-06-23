@@ -36,6 +36,7 @@ from canbus.canbus_interface import CanbusInterface
 from lidar.lidar_driver import LidarDriver
 from lidar.obstacle_filter import tilt_correct_pts, yaw_correct_pts
 from navigation.headland import HeadlandTurn
+from navigation.state_logic import follow_loss_is_row_end
 from navigation.row_controller import PurePursuitController
 from navigation.row_perception import RowDetector, RowEstimate
 from navigation.row_safety import SafetyMonitor
@@ -587,8 +588,23 @@ class RowNavigator:
             self._follow_miss_count += 1
             if self._follow_miss_count >= self.follow_miss_thresh:
                 self._follow_miss_count = 0
-                self._enter(_S.ACQUIRE)
-                self._acq_count = 0
+                # Crop running out trips BOTH the row-end signal and the
+                # low-confidence miss counter at the same instant, and the miss
+                # counter (4) is shorter than row_end_frames (8), so without
+                # this check the row END is always misread as a lost lock and
+                # the headland turn never starts.  When we have driven a real
+                # row (past row_end_min_dist) and the crop band ahead is
+                # genuinely empty (high row_end_confidence), this sustained loss
+                # IS the row end → ROW_END (→ headland).  Otherwise it is a true
+                # mid-row loss → ACQUIRE to re-lock.
+                if follow_loss_is_row_end(
+                        self._row_dist, est.row_end_confidence,
+                        row_end_min_dist=self.row_end_min_dist,
+                        row_end_conf=self.row_end_conf):
+                    self._enter(_S.ROW_END)
+                else:
+                    self._enter(_S.ACQUIRE)
+                    self._acq_count = 0
                 return 0.0, 0.0
             # Not enough consecutive misses — pause in FOLLOW, wait for row to reappear.
             return 0.0, 0.0

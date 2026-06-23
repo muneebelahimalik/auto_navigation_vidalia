@@ -20,10 +20,21 @@ Work toward the row-to-row turn milestone (built on the v0.1.0 baseline).
   to the next strip the robot straddles, made distinct from `--row-spacing`
   (0.76 m, the in-strip soybean-row separation used by the detector).
 
+### Fixed
+- **Row end never reached the headland turn.** Crop running out trips both the
+  row-end signal and the low-confidence miss counter at once, and the miss
+  counter (4) is shorter than the row-end confirmation (8), so `FOLLOW` always
+  fell through to `ACQUIRE` and the turn never started (field-observed: followed
+  6.6 m, crop ended, went to ACQUIRE). When the miss counter trips, the navigator
+  now routes to `ROW_END` if a real row was driven (`row_dist ≥ row_end_min_dist`)
+  and the crop band ahead is genuinely empty (`row_end_confidence ≥ row_end_conf`),
+  else `ACQUIRE`. Logic extracted to dependency-free `navigation/state_logic.py`
+  and unit-tested (`test_state_logic.py`).
+
 ### Notes
 - Logic is unit-tested (filter-vs-wheel selection, latching, distinct shift
-  distance); the full turn still needs field validation (pivot accuracy,
-  re-acquisition of the next row). 93 tests pass.
+  distance, row-end-vs-loss decision); the full turn still needs field
+  validation (pivot accuracy, re-acquisition of the next row). 98 tests pass.
 
 ## [v0.1.0] — 2026-06-23 — First field-validated row-follow baseline
 
