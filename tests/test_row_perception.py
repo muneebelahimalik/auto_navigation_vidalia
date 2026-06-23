@@ -135,6 +135,67 @@ def test_dual_row_truncated_stripe_keeps_true_heading():
 
 
 # ---------------------------------------------------------------------------
+# Terrain-adaptive crop band (sloped / undulating fields)
+# ---------------------------------------------------------------------------
+
+def make_row_graded(x_centre, grade_deg, n=130, y_lo=1.6, y_hi=6.8,
+                    x_sigma=0.03, h_lo=0.08, h_hi=0.25):
+    """Crop-row canopy on ground that ramps at grade_deg (rises with forward
+    distance).  Ground passes through h=0 at the sensor (y=0), so canopy
+    absolute height = h_local + tan(grade)*y."""
+    y = RNG.uniform(y_lo, y_hi, n)
+    x = x_centre + RNG.normal(0.0, x_sigma, n)
+    h_local = RNG.uniform(h_lo, h_hi, n)
+    z = (h_local - LIDAR_MOUNT_HEIGHT) + math.tan(math.radians(grade_deg)) * y
+    return np.column_stack((x, y, z))
+
+
+def make_ground_graded(grade_deg, n=400, y_lo=1.6, y_hi=6.8, roi_x=0.8):
+    """Bare-soil returns on the same ramp (h_local ~ 0) — what lets the
+    detector estimate and remove the grade."""
+    y = RNG.uniform(y_lo, y_hi, n)
+    x = RNG.uniform(-roi_x, roi_x, n)
+    h_local = RNG.uniform(-0.02, 0.02, n)
+    z = (h_local - LIDAR_MOUNT_HEIGHT) + math.tan(math.radians(grade_deg)) * y
+    return np.column_stack((x, y, z))
+
+
+def test_graded_field_crop_survives_with_detrend():
+    """8° upslope: the soybean rows must still be detected (centred, confident)
+    because the ground-slope detrend keeps the canopy inside the crop band."""
+    det = RowDetector(dual_row=True, row_spacing=ROW_SPACING)
+    pts = np.vstack([
+        make_row_graded(-HALF, 8.0), make_row_graded(+HALF, 8.0),
+        make_ground_graded(8.0),
+    ])
+    est = converge(det, pts)
+    assert est.valid
+    assert abs(est.lateral_offset) < 0.06
+    assert est.confidence > 0.5
+    assert abs(det.last_ground_slope - math.tan(math.radians(8.0))) < 0.05
+
+
+def test_graded_field_crop_lost_without_detrend():
+    """Same 8° slope with detrend disabled: the absolute band ejects the ramped
+    canopy and the row is effectively lost — documents the field failure."""
+    det = RowDetector(dual_row=True, row_spacing=ROW_SPACING, ground_detrend=False)
+    pts = np.vstack([
+        make_row_graded(-HALF, 8.0), make_row_graded(+HALF, 8.0),
+        make_ground_graded(8.0),
+    ])
+    est = converge(det, pts)
+    assert est.confidence < 0.35          # below the FOLLOW threshold
+
+
+def test_flat_ground_detrend_is_noop():
+    """On flat ground the detrend must do nothing (slope within dead-band)."""
+    det = RowDetector(dual_row=True, row_spacing=ROW_SPACING)
+    pts = np.vstack([make_row(-HALF), make_row(+HALF), make_ground_graded(0.0)])
+    converge(det, pts)
+    assert det.last_ground_slope == 0.0
+
+
+# ---------------------------------------------------------------------------
 # Single-row (onion) mode
 # ---------------------------------------------------------------------------
 

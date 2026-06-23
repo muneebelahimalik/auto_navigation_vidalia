@@ -260,6 +260,10 @@ class RowDetector:
         max_lateral_jump: float = 0.20,
         aux_y_min: float = 0.5,
         aux_mass_ratio: float = 0.5,
+        ground_detrend: bool = True,
+        ground_min_pts: int = 60,
+        ground_max_grade_deg: float = 25.0,
+        ground_deadband_deg: float = 2.0,
     ) -> None:
         self.roi_y_min = roi_y_min
         self.roi_y_max = roi_y_max
@@ -282,6 +286,18 @@ class RowDetector:
         # never outvote a healthy LiDAR scan.
         self.aux_y_min = aux_y_min
         self.aux_mass_ratio = aux_mass_ratio
+        # Terrain-adaptive crop band: a fixed mount-tilt correction is
+        # calibrated for FLAT ground, so on a grade the ground (and the crop
+        # riding on it) ramps out of the absolute [crop_h_min, crop_h_max]
+        # height band and the crop vanishes (field-observed: n collapsed
+        # 450->46, FOLLOW dropped to ACQUIRE the moment the field pitched).
+        # ground_detrend estimates the residual forward grade per scan and
+        # removes its SLOPE so the band tracks the local ground.
+        self.ground_detrend = ground_detrend
+        self.ground_min_pts = ground_min_pts
+        self._gmax = math.tan(math.radians(ground_max_grade_deg))
+        self._gdead = math.tan(math.radians(ground_deadband_deg))
+        self.last_ground_slope = 0.0   # dz/dy actually applied last scan (diag)
         self._spacing_factor = 1.0   # confidence penalty when peak pair spacing is off
         self._est = RowEstimate()
 
@@ -321,11 +337,19 @@ class RowDetector:
         if pts is not None and len(pts) > 0:
             x, y, z = pts[:, 0], pts[:, 1], pts[:, 2]
             h = z + LIDAR_MOUNT_HEIGHT
-            roi = (
+            in_xy = (
                 (y >= self.roi_y_min) & (y <= self.roi_y_max)
                 & (np.abs(x) <= self.roi_x_half)
-                & (h >= self.crop_h_min) & (h <= self.crop_h_max)
             )
+            # Remove the residual forward ground grade so the crop-height band
+            # follows undulating / sloped terrain (see __init__ note).  Only
+            # the SLOPE is removed (pivot at the sensor, y=0), which keeps the
+            # flat-ground behaviour byte-identical and is robust to the
+            # furrow/soil height split (both ramp together → shared slope).
+            a = self._ground_slope(y[in_xy], z[in_xy]) if self.ground_detrend else 0.0
+            self.last_ground_slope = a
+            h_eff = h - a * y if a else h
+            roi = in_xy & (h_eff >= self.crop_h_min) & (h_eff <= self.crop_h_max)
             cx, cy = x[roi], y[roi]
             n = int(cx.shape[0])
         else:
@@ -439,6 +463,37 @@ class RowDetector:
             n_points=int(round(total_mass)),
             valid=True,
         ))
+
+    # ------------------------------------------------------------------
+    def _ground_slope(self, y: np.ndarray, z: np.ndarray) -> float:
+        """Residual forward ground slope (dz/dy) over the ROI.
+
+        Per 0.5 m forward range-bin the ground is the low percentile of z
+        (the lowest returns = bare soil / furrow, whatever their absolute
+        height — grade-agnostic).  A line is fit through these per-bin ground
+        points; only its slope is used.  Using the slope (not the level) makes
+        the estimate immune to the furrow/soil height bimodality and to the
+        absolute calibration: a canopy-only cloud (no ground returns) yields a
+        ~flat per-bin floor → slope ≈ 0 → no correction.  Returns 0 unless the
+        slope clears a small dead-band (ignores flat-ground estimation noise),
+        clamped to a plausible maximum grade.
+        """
+        if len(y) < self.ground_min_pts:
+            return 0.0
+        edges = np.arange(self.roi_y_min, self.roi_y_max + 0.5, 0.5)
+        yc, gc = [], []
+        idx = np.digitize(y, edges)
+        for b in range(1, len(edges)):
+            sel = idx == b
+            if int(sel.sum()) < 8:
+                continue
+            yc.append(0.5 * (edges[b - 1] + edges[b]))
+            gc.append(float(np.percentile(z[sel], 20)))
+        if len(yc) < 3:
+            return 0.0
+        a = float(np.polyfit(np.asarray(yc), np.asarray(gc), 1)[0])
+        a = max(-self._gmax, min(self._gmax, a))
+        return a if abs(a) > self._gdead else 0.0
 
     # ------------------------------------------------------------------
     def _nearest_peak(self, cross: np.ndarray, weights: Optional[np.ndarray] = None) -> float:

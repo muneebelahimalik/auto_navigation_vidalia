@@ -369,6 +369,7 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
         crop_h_max=args.crop_max,
         dual_row=args.dual_row,
         row_spacing=args.row_spacing,
+        ground_detrend=not args.no_ground_detrend,
     )
     tire_h = args.tire_height if args.tire_height is not None else args.obstacle_height
     safety = SafetyMonitor(
@@ -598,6 +599,11 @@ def main() -> None:
                              "0.35–0.50 m catches crop material; 0.65 m passes residue "
                              "and seedlings while still stopping real hazards (posts, animals). "
                              "Onion fields: use 0.85 m.")
+    parser.add_argument("--no-ground-detrend", action="store_true",
+                        help="Disable the terrain-adaptive crop band. By default the detector "
+                             "estimates the forward ground grade each scan and removes its slope "
+                             "so crop stays inside the height band on sloped/undulating fields; "
+                             "pass this to revert to a fixed flat-ground height band.")
     parser.add_argument("--lidar-tilt", type=float, default=21.5, metavar="DEG",
                         help="Forward (nose-down) PITCH correction of the LiDAR mount in degrees, "
                              "applied AFTER --lidar-yaw (default: 21.5 — field-calibrated via "

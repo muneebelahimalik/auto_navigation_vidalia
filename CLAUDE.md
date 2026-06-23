@@ -577,6 +577,7 @@ Re-run the sweep if the mount is disturbed.
 | `--roi-x W` | 0.80 | Row detection ROI half-width m — applies to BOTH the LiDAR detector and the dual-camera tracker (wired in both scripts) |
 | `--crop-min H` | 0.05 | Minimum crop height above ground m |
 | `--crop-max H` | 0.60 | Maximum crop height above ground m |
+| `--no-ground-detrend` | off | Disable the terrain-adaptive crop band. By default the detector estimates the forward ground grade per scan (low percentile of z per range-bin) and removes its slope so crop stays inside the height band on sloped/undulating fields; the live grade is shown as `grade=±N°` in the status line. Pass this to revert to a fixed flat-ground band |
 | `--self-radius R` | **1.5** | Self-filter radius — discard returns within R m (robot body) |
 | `--acquire-conf C` | **0.35** | Min row-detection confidence (0–1) to leave ACQUIRE |
 | `--dual-row` | off | Soybean / centre-residue mode: lateral offset = midpoint of left+right flanking crop peaks |
@@ -977,6 +978,7 @@ OAK-D defaults: hfov=73°, vfov=54°, 640×400 → scale factor ≈ 0.91.
 | Stale EMA from previous row fights re-acquisition after U-turn | Detector EMA accumulates garbage while the ROI sweeps the headland; outlier gates then clamp genuine detections of the next row | `RowDetector.reset()` / tracker `reset()` called on HEADLAND→ACQUIRE |
 | Camera tracker ambiguous/biased with forward-facing mounts | Old side-assigned design ("each camera tracks its own side's row" via inner-half column search) assumed inward-looking cameras; forward-facing cameras see BOTH rows, so the column-histogram argmax was ambiguous and depth-scaled pixel offsets were imprecise | Rewrote `soybean_row_tracker.py` as a ground-projection (IPM) tracker: metric robot-frame points per camera, LiDAR-identical fitting via shared `find_row_midpoint`, equal-weight two-camera mean |
 | Camera midpoint biased ~0.10 m toward each camera, heading off 2–3° | Whole-cloud PCA over two row stripes with unequal visible extents (outer row's near end outside FOV) tilts the principal axis | Two-pass cluster-centred PCA in `_side_from_mask` — pass 2 centres each row cluster on its own centroid before the PCA |
+| Crop vanishes (n collapses ~450→46, FOLLOW→ACQUIRE, robot stops) when the field slopes/undulates | Absolute crop-height band `h ∈ [0.03, 0.30]` assumes flat ground; a fixed mount-tilt correction under-/over-rotates on a grade so the ground (and the crop on it) ramps out of the band (~5° grade shifts a 5 m return by 0.44 m) | Terrain-adaptive band in `RowDetector._ground_slope`: estimate the forward ground slope per scan (20th-pct of z per 0.5 m range-bin, slope-only → robust to furrow/soil bimodality, no-op on flat/canopy-only) and detrend `h_eff = h − slope·y`; `--no-ground-detrend` reverts; live `grade=±N°` in status. Tests `test_graded_field_crop_*` |
 
 ---
 

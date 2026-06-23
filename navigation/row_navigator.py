@@ -781,6 +781,12 @@ class RowNavigator:
         ekf_str = ""
         if ekf_active and self.ekf is not None:
             ekf_str = f" σ={self.ekf.std_lateral:.3f}"
+        # Show the live ground grade being detrended (only when non-zero) so a
+        # field operator can confirm the terrain-adaptive band is engaging.
+        grade_str = ""
+        _gs = getattr(self.detector, "last_ground_slope", 0.0)
+        if _gs:
+            grade_str = f" grade={math.degrees(math.atan(_gs)):+.0f}°"
         if self.state == _S.ACQUIRE:
             align_frames = self._acq_count - self.acquire_frames
             if align_frames > 0:
@@ -797,7 +803,7 @@ class RowNavigator:
             f"\r[{mode}] {self.state:11s} | "
             f"hdg={deg:+5.1f}° off={est.lateral_offset:+5.2f}m "
             f"conf={est.confidence:.2f} end={est.row_end_confidence:.2f} "
-            f"n={est.n_points:4d}{ekf_str}{acq_str} | "
+            f"n={est.n_points:4d}{ekf_str}{grade_str}{acq_str} | "
             f"row={self._rows_done}/{self.rows} d={self._row_dist:4.1f}m | "
             f"safe={safety.reason():14s} | "
             f"cmd v={linear:+.2f} w={angular:+.2f}   "
