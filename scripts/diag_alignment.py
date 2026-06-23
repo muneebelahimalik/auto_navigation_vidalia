@@ -61,13 +61,22 @@ def _sector_name(az_deg: float) -> str:
 async def scan_producer(lidar: LidarDriver, queue: asyncio.Queue,
                          tilt_rad: float, self_r: float) -> None:
     """Single persistent scan loop — runs until task is cancelled."""
-    async for pts in lidar.scan_stream_np():
-        if len(pts):
-            rng = np.hypot(pts[:, 0], pts[:, 1])
-            pts = pts[rng >= self_r]
-            if tilt_rad:
-                pts = tilt_correct_pts(pts, tilt_rad)
-        await queue.put(np.asarray(pts, dtype=np.float32))
+    count = 0
+    try:
+        async for pts in lidar.scan_stream_np():
+            if len(pts):
+                rng = np.hypot(pts[:, 0], pts[:, 1])
+                pts = pts[rng >= self_r]
+                if tilt_rad:
+                    pts = tilt_correct_pts(pts, tilt_rad)
+            await queue.put(np.asarray(pts, dtype=np.float32))
+            count += 1
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:
+        print(f"\n  [producer CRASHED after {count} scans]: {type(e).__name__}: {e}",
+              flush=True)
+        raise
 
 
 async def flush_and_collect(queue: asyncio.Queue, n: int) -> list[np.ndarray]:
@@ -87,13 +96,23 @@ async def flush_and_collect(queue: asyncio.Queue, n: int) -> list[np.ndarray]:
         print(f"    [flushed {drained} stale scans]", flush=True)
 
     # Wait for 3 fresh scans (guarantees we're seeing live data)
-    for _ in range(3):
-        await queue.get()
+    for i in range(3):
+        try:
+            await asyncio.wait_for(queue.get(), timeout=8.0)
+        except asyncio.TimeoutError:
+            print(f"  *** TIMEOUT waiting for warmup scan {i+1}/3 "
+                  f"(queue size={queue.qsize()}) ***", flush=True)
+            return []
 
     # Collect n scans
     scans = []
-    for _ in range(n):
-        scans.append(await queue.get())
+    for i in range(n):
+        try:
+            scans.append(await asyncio.wait_for(queue.get(), timeout=8.0))
+        except asyncio.TimeoutError:
+            print(f"  *** TIMEOUT waiting for scan {i+1}/{n} "
+                  f"(queue size={queue.qsize()}) ***", flush=True)
+            break
     return scans
 
 
