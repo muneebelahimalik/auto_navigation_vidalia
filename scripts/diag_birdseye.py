@@ -275,6 +275,30 @@ async def main() -> None:
         else:
             print(f"    {name:5s}: (no returns)")
 
+    # --- Height profile INSIDE the detector ROI (|x|<=0.8, y in [1.5,7]) -----
+    # This is the exact slice RowDetector uses; it reveals where the bed,
+    # furrow and soybean canopy sit in height at this spot (the wide-ROI crop
+    # count above includes the ±0.95 tire furrows and other rows).
+    if len(pts):
+        roi = ((np.abs(pts[:, 0]) <= 0.80)
+               & (pts[:, 1] >= 1.5) & (pts[:, 1] <= 7.0))
+        hr = pts[roi, 2] + LIDAR_MOUNT_HEIGHT
+        print(f"\n  Detector-ROI height profile (|x|<=0.8 m, y 1.5-7 m): n={len(hr)}")
+        if len(hr):
+            print(f"    h percentiles: 5%={np.percentile(hr,5):+.2f}  "
+                  f"15%={np.percentile(hr,15):+.2f}  50%={np.percentile(hr,50):+.2f}  "
+                  f"85%={np.percentile(hr,85):+.2f}  95%={np.percentile(hr,95):+.2f} m")
+            print(f"    crop band [0.03,0.30] in ROI: "
+                  f"{int(((hr>=0.03)&(hr<=0.30)).sum())} pts")
+            edges = np.arange(-0.60, 0.66, 0.05)
+            hist, _ = np.histogram(hr, bins=edges)
+            hmax = max(1, hist.max())
+            for i in range(len(hist)):
+                c = 0.5 * (edges[i] + edges[i + 1])
+                bar = "#" * int(40 * hist[i] / hmax)
+                mark = " <-crop" if 0.03 <= c <= 0.30 else ""
+                print(f"    {c:+.2f} m | {hist[i]:5d} {bar}{mark}")
+
     save_png(pts, args.out, args.range, args.lidar_yaw, args.lidar_tilt)
     print(f"\n  Copy off the robot:")
     print(f"    scp farm-ng-user-laserweeding@100.66.121.56:~/auto_navigation_vidalia/birdseye.png .")
