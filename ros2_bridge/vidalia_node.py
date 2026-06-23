@@ -64,9 +64,9 @@ SHM_IMG_RIGHT = "/dev/shm/vidalia_img_right.bin"
 # ---------------------------------------------------------------------------
 # Geometry constants (must match CLAUDE.md)
 # ---------------------------------------------------------------------------
-LIDAR_MOUNT_HEIGHT = 0.75    # m — z offset base_link → velodyne
-LIDAR_MOUNT_X      = 0.959   # m — forward offset base_link → velodyne
-LIDAR_TILT_DEG     = 15.0    # nose-down tilt applied at mount time
+LIDAR_MOUNT_HEIGHT = 0.75    # m — z offset base_link → velodyne (lifts cloud to ground)
+LIDAR_MOUNT_X      = 0.0      # m — sensor is centre-mounted on the crossbar
+LIDAR_TILT_DEG     = 0.0      # cloud is ALREADY yaw+tilt corrected upstream (row_navigator)
 
 # Safety zone geometry (matches row_safety.py defaults)
 FWD_HALF_WIDTH = 0.95
@@ -282,15 +282,19 @@ class VidaliaBridgeNode(Node):
 
     # ------------------------------------------------------------------
     def _publish_tf_static(self) -> None:
+        # The cloud in /dev/shm is ALREADY in the robot frame (yaw + tilt
+        # corrected by row_navigator before it is written), so base_link->
+        # velodyne must be IDENTITY rotation — applying the mount pitch here
+        # would re-tilt an already-flat cloud and make the ground look sloped.
+        # Only a vertical lift (mount height) places the sensor above ground.
         ts = TransformStamped()
         ts.header.stamp    = _ros_time(self)
         ts.header.frame_id = "base_link"
         ts.child_frame_id  = "velodyne"
-        ts.transform.translation.x = LIDAR_MOUNT_X
+        ts.transform.translation.x = LIDAR_MOUNT_X      # 0 — centre-mounted
         ts.transform.translation.y = 0.0
         ts.transform.translation.z = LIDAR_MOUNT_HEIGHT
-        tilt_rad = math.radians(-LIDAR_TILT_DEG)
-        ts.transform.rotation = _quat_from_rpy(0.0, tilt_rad, 0.0)
+        ts.transform.rotation = _quat_from_rpy(0.0, math.radians(-LIDAR_TILT_DEG), 0.0)
         self._tf_static.sendTransform(ts)
 
     # ------------------------------------------------------------------
