@@ -101,6 +101,30 @@ def _load_canbus_interface():
     return None
 
 
+def _load_filter_config():
+    """Return the 'filter' EventServiceConfig (GPS+IMU heading) or None.
+
+    Used as the absolute-heading source for headland pivots; absent → the turn
+    falls back to wheel-odometry heading.
+    """
+    config_path = Path(__file__).parent.parent / "service_config.json"
+    if not config_path.exists():
+        return None
+    try:
+        from google.protobuf import json_format
+        from farm_ng.core.event_service_pb2 import EventServiceConfigList
+
+        with open(config_path) as f:
+            raw = json.load(f)
+        config_list = json_format.ParseDict(raw, EventServiceConfigList())
+        for cfg in config_list.configs:
+            if cfg.name == "filter":
+                return cfg
+    except Exception as exc:
+        print(f" [row_follow] could not load filter config: {exc}")
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Diagnostic loop
 # ---------------------------------------------------------------------------
@@ -363,6 +387,12 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
     canbus_config = canbus.config if canbus is not None else None
     odometry = WheelOdometry(canbus_config)
 
+    # Absolute heading (GPS+IMU) for accurate headland pivots; None → the turn
+    # falls back to wheel-odometry heading.
+    from navigation.filter_heading import FilterHeading
+    filter_config = _load_filter_config()
+    filter_heading = FilterHeading(filter_config) if filter_config is not None else None
+
     detector = RowDetector(
         roi_x_half=args.roi_x,
         crop_h_min=args.crop_min,
@@ -392,10 +422,12 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
         acquire_conf=args.acquire_conf,
         row_end_min_dist=args.row_end_min_dist,
         row_spacing=args.row_spacing,
+        headland_shift=args.headland_shift,
         headland_exit_dist=args.headland_exit,
         first_turn_sign=(1.0 if args.turn_dir == "right" else -1.0),
         headland_speed=args.headland_speed,
         headland_turn_rate=args.headland_turn_rate,
+        heading_source=filter_heading,
         align_heading=args.align_heading,
         align_rate=args.align_speed,
         left_cam=left_cam,
@@ -498,6 +530,9 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
         # Background wheel-odometry subscription (no-op if telemetry unavailable).
         if odometry is not None and canbus_config is not None:
             cam_tasks.append(asyncio.ensure_future(odometry.run()))
+        # Background filter-heading subscription for accurate headland pivots.
+        if filter_heading is not None:
+            cam_tasks.append(asyncio.ensure_future(filter_heading.run()))
         try:
             await navigator.run(lidar)
         finally:
@@ -534,6 +569,11 @@ def main() -> None:
     parser.add_argument("--turn-dir", choices=["right", "left"], default="right",
                         help="Direction of the FIRST headland U-turn (default: right). "
                              "Subsequent turns alternate for serpentine coverage.")
+    parser.add_argument("--headland-shift", type=float, default=1.52, metavar="M",
+                        help="Centre-to-centre distance (m) the U-turn SHIFTs sideways to "
+                             "the next strip the robot straddles (default: 1.52). This is "
+                             "the strip-to-strip distance and is DISTINCT from --row-spacing "
+                             "(the in-strip soybean-row separation used by the detector).")
     parser.add_argument("--headland-exit", type=float, default=1.0, metavar="M",
                         help="Straight distance (m) driven past the row end before the "
                              "first pivot, to clear the body of the last plants (default: 1.0).")

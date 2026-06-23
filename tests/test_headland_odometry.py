@@ -65,6 +65,79 @@ def test_pivot_commands_are_in_place():
     assert w < 0.0                            # right turn = clockwise = negative
 
 
+def test_headland_shift_uses_distinct_distance():
+    """SHIFT must use the headland shift distance (passed as row_spacing here),
+    independent of the detector's in-strip row spacing."""
+    odo, turn, _ = run_turn(+1.0, row_spacing=1.52, exit_dist=1.0)
+    assert turn.done
+    assert odo.distance == pytest.approx(1.0 + 1.52, abs=0.05)   # exit + shift
+
+
+# ---------------------------------------------------------------------------
+# Filter (IMU/GPS) heading source for the pivots
+# ---------------------------------------------------------------------------
+
+class FakeFilter:
+    """Absolute-heading stand-in with the FilterHeading interface."""
+    def __init__(self, usable=True):
+        self.heading = 0.0
+        self._usable = usable
+
+    @property
+    def usable(self):
+        return self._usable
+
+
+def run_turn_with_filter(usable=True, wheel_slip=0.7):
+    """Drive a turn where the filter heading is ground truth and the wheel
+    heading slips (scaled by wheel_slip), so the two diverge during pivots."""
+    odo = FakeOdo()
+    filt = FakeFilter(usable=usable)
+    turn = HeadlandTurn(odo, row_spacing=1.52, exit_dist=1.0,
+                        speed=0.15, turn_rate=0.35, heading_source=filt)
+    turn.begin(+1.0)
+    dt = 0.05
+    for _ in range(20000):
+        v, w = turn.step(dt)
+        if turn.done:
+            break
+        odo.distance += abs(v) * dt
+        odo.theta += w * dt * wheel_slip      # wheel heading under-reads (slip)
+        filt.heading += w * dt                # filter = true heading
+    return odo, turn, filt
+
+
+def test_filter_heading_used_when_usable():
+    """With a usable filter the pivots close on the (true) filter heading, so
+    the U-turn reaches a correct ~180° even when the wheel heading slipped."""
+    odo, turn, filt = run_turn_with_filter(usable=True, wheel_slip=0.7)
+    assert turn.done
+    assert turn.heading_source_name == "filter"
+    assert filt.heading == pytest.approx(-math.pi, abs=0.15)   # true U-turn
+    # The slipping wheel heading is well short — the bug the filter fixes.
+    assert abs(odo.theta) < 0.85 * math.pi
+
+
+def test_filter_falls_back_to_wheel_when_not_converged():
+    """A non-usable filter must not be used; pivots fall back to wheel heading."""
+    odo, turn, _ = run_turn_with_filter(usable=False, wheel_slip=1.0)
+    assert turn.done
+    assert turn.heading_source_name == "wheel"
+    assert odo.theta == pytest.approx(-math.pi, abs=0.15)
+
+
+def test_heading_source_latched_at_begin():
+    """The source is latched at begin(): a filter that becomes usable only
+    after the turn starts is not adopted mid-turn."""
+    odo = FakeOdo()
+    filt = FakeFilter(usable=False)
+    turn = HeadlandTurn(odo, heading_source=filt)
+    turn.begin(+1.0)
+    assert turn.heading_source_name == "wheel"
+    filt._usable = True                       # changes after begin()
+    assert turn.heading_source_name == "wheel"
+
+
 # ---------------------------------------------------------------------------
 # Wheel odometry (commanded-velocity fallback path)
 # ---------------------------------------------------------------------------

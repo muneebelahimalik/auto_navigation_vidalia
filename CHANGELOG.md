@@ -4,6 +4,27 @@ All notable changes to this project are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/);
 versions are git tags on `main`.
 
+## [Unreleased] — headland U-turn reliability (not yet field-validated)
+
+Work toward the row-to-row turn milestone (built on the v0.1.0 baseline).
+
+### Added
+- **Filter (IMU/GPS) heading for the pivots.** `navigation/filter_heading.py`
+  subscribes to the filter service (`FilterState`, port 20001) and exposes the
+  fused absolute heading. `HeadlandTurn` now closes the two 90° pivots on this
+  heading when it is fresh and converged — robust to the wheel slip that an
+  in-place skid-steer pivot causes — and falls back to wheel-odometry heading
+  otherwise. The source is latched per turn and shown in the status line
+  (`R-UTURN:TURN_A[filter]`/`[wheel]`).
+- **`--headland-shift` (default 1.52 m):** the centre-to-centre SHIFT distance
+  to the next strip the robot straddles, made distinct from `--row-spacing`
+  (0.76 m, the in-strip soybean-row separation used by the detector).
+
+### Notes
+- Logic is unit-tested (filter-vs-wheel selection, latching, distinct shift
+  distance); the full turn still needs field validation (pivot accuracy,
+  re-acquisition of the next row). 93 tests pass.
+
 ## [v0.1.0] — 2026-06-23 — First field-validated row-follow baseline
 
 First version that autonomously follows a soybean centre-residue row in the

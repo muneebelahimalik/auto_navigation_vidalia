@@ -395,22 +395,35 @@ visible row ± half the row spacing.
 - ROI: y ∈ [0.8, 5.0] m (beyond ~5 m one pixel spans tens of cm), |x| ≤ 0.90 m
   in the ROBOT frame (keeps rows at ±0.38, excludes next rows at ±1.14).
 
-**End-of-row U-turn** (`HeadlandTurn`, closed-loop on wheel odometry):
+**End-of-row U-turn** (`HeadlandTurn`, closed-loop) — ⚠ not yet field-validated:
 
 ```
 ROW_END ─► HEADLAND ─────────────────────────────────────► ACQUIRE (next row)
             EXIT  (drive exit_dist straight, clear last plants)
-            TURN_A(pivot 90° toward next row — odometry heading feedback)
-            SHIFT (drive row_spacing straight to the adjacent strip)
+            TURN_A(pivot 90° toward next row — heading feedback)
+            SHIFT (drive headland_shift straight to the next strip)
             TURN_B(pivot 90° same direction — now aligned down next row)
 ```
 
 Turn direction alternates each row for **serpentine coverage** (right, left,
 right, …), starting from `--turn-dir` (default right).  The loop repeats until
-`--rows N` rows are complete, then DONE.  Odometry uses **measured** wheel speed
-(AmigaTpdo1) when the canbus telemetry is available, falling back to
-commanded-velocity dead-reckoning — both far more accurate than the previous
-fixed-time open-loop manoeuvre.
+`--rows N` rows are complete, then DONE.
+
+**Pivot heading source (`navigation/filter_heading.py`):** the two 90° pivots
+turn IN PLACE, where a 4-wheel skid-steer scrubs and slips, so wheel-integrated
+heading (AmigaTpdo1 `measured_angular_rate`) drifts — a 90° pivot can finish
+10–20° off.  The turn therefore prefers the **filter service absolute heading**
+(GPS+IMU `FilterState`, port 20001) when it is fresh and converged, falling back
+to wheel-odometry heading otherwise.  The choice is **latched at the start of
+each turn** so a pivot never mixes two heading references.  The active source is
+shown in the status line as `R-UTURN:TURN_A[filter]` / `[wheel]`.  Straight
+EXIT/SHIFT distances always use wheel odometry (accurate for straight driving).
+
+**SHIFT distance vs row spacing — two different numbers:** `--headland-shift`
+(default **1.52 m**) is the centre-to-centre distance to the NEXT strip the
+robot straddles; `--row-spacing` (default **0.76 m**) is the in-strip soybean-row
+separation the detector uses for peak pairing.  Do not conflate them — the turn
+shifts by `--headland-shift`, the detector pairs rows by `--row-spacing`.
 
 **Field geometry (Vidalia soybean field):**
 Two soybean rows flank the centre residue/stubble strip inside the wheel tracks
@@ -565,7 +578,8 @@ Re-run the sweep if the mount is disturbed.
 | `--auto` | off | Enable canbus and send velocity commands to wheels |
 | `--rows N` | 1 | Stop after N rows completed (serpentine when combined with `--headland`) |
 | `--headland` | off | **Closed-loop** headland U-turns between rows (odometry feedback) |
-| `--row-spacing M` | **0.76** | Lateral distance to the next strip after a turn; also the LiDAR dual-row peak-pairing prior + single-side fallback spacing, and the dual-camera single-row fallback spacing |
+| `--row-spacing M` | **0.76** | In-strip soybean-row separation: LiDAR dual-row peak-pairing prior + single-side fallback spacing, and the dual-camera single-row fallback spacing. NOT the headland shift distance |
+| `--headland-shift M` | **1.52** | Centre-to-centre distance the U-turn SHIFTs to the next strip the robot straddles (distinct from `--row-spacing`) |
 | `--turn-dir D` | **right** | Direction of the first U-turn (`right`/`left`); subsequent turns alternate |
 | `--headland-exit M` | **1.0** | Straight distance driven past the row end before the first pivot |
 | `--headland-speed M` | **0.15** | Forward speed during straight headland phases (m/s) |

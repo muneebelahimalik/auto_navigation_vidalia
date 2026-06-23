@@ -105,10 +105,12 @@ class RowNavigator:
         obstacle_clear_secs: float = 1.5,
         row_end_green: float = 0.04,
         row_spacing: float = 0.76,
+        headland_shift: float = 1.52,
         headland_exit_dist: float = 1.0,
         first_turn_sign: float = 1.0,
         headland_speed: float = 0.15,
         headland_turn_rate: float = 0.35,
+        heading_source=None,
         align_heading: bool = False,
         align_thresh: float = 0.14,
         align_rate: float = 0.20,
@@ -178,14 +180,18 @@ class RowNavigator:
         # Closed-loop headland U-turn driver (odometry feedback).  Built only
         # when an odometry source is available; otherwise headland turns are
         # disabled and ROW_END goes straight to DONE.
+        # SHIFT distance is the centre-to-centre distance to the NEXT strip the
+        # robot straddles (headland_shift, ~1.52 m) — distinct from the
+        # detector's row_spacing (0.76 m, the in-strip soybean-row separation).
         self._headland_turn = None
         if self.odometry is not None:
             self._headland_turn = HeadlandTurn(
                 self.odometry,
-                row_spacing=row_spacing,
+                row_spacing=headland_shift,
                 exit_dist=headland_exit_dist,
                 speed=headland_speed,
                 turn_rate=headland_turn_rate,
+                heading_source=heading_source,
             )
         self.align_heading = align_heading
         self.align_thresh = align_thresh
@@ -799,7 +805,8 @@ class RowNavigator:
                 acq_str = f" acq={self._acq_count}/{self.acquire_frames}"
         elif self.state == _S.HEADLAND and self._headland_turn is not None:
             turn_dir = "R" if self._headland_turn.turn_sign >= 0 else "L"
-            acq_str = f" {turn_dir}-UTURN:{self._headland_turn.phase}"
+            acq_str = (f" {turn_dir}-UTURN:{self._headland_turn.phase}"
+                       f"[{self._headland_turn.heading_source_name}]")
         else:
             acq_str = ""
         line = (

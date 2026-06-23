@@ -78,6 +78,7 @@ class HeadlandTurn:
         speed: float = 0.15,
         turn_rate: float = 0.35,
         angle_tol: float = 0.05,
+        heading_source=None,
     ) -> None:
         self.odometry = odometry
         self.row_spacing = row_spacing
@@ -85,18 +86,34 @@ class HeadlandTurn:
         self.speed = speed
         self.turn_rate = turn_rate
         self.angle_tol = angle_tol
+        # Optional absolute-heading source (FilterHeading): when fresh+converged
+        # the 90° pivots close on it instead of the slip-prone wheel-integrated
+        # heading.  The choice is latched at begin() so a pivot never mixes two
+        # heading references mid-turn.
+        self.heading_source = heading_source
 
         self._phase = "DONE"
         self._sign = 1.0          # +1 = right (CW), -1 = left (CCW)
         self._d0 = 0.0            # odometry distance at current phase start
-        self._th0 = 0.0           # odometry heading at current phase start
+        self._th0 = 0.0           # heading at current phase start
+        self._use_filter = False  # latched per turn in begin()
 
     # ------------------------------------------------------------------
     def begin(self, turn_sign: float) -> None:
         """Start a new U-turn.  ``turn_sign``: +1 = right, -1 = left."""
         self._sign = 1.0 if turn_sign >= 0 else -1.0
+        # Latch the pivot heading source for the whole turn: prefer the filter
+        # (IMU/GPS absolute heading) when it is usable, else wheel odometry.
+        self._use_filter = bool(
+            self.heading_source is not None and getattr(self.heading_source, "usable", False)
+        )
         self._phase = "EXIT"
         self._mark()
+
+    @property
+    def heading_source_name(self) -> str:
+        """Which heading reference the current turn is using (for status/logs)."""
+        return "filter" if self._use_filter else "wheel"
 
     @property
     def phase(self) -> str:
@@ -150,9 +167,15 @@ class HeadlandTurn:
         return 0.0, 0.0
 
     # ------------------------------------------------------------------
+    def _heading(self) -> float:
+        """Current heading (rad) from the latched source for this turn."""
+        if self._use_filter:
+            return float(self.heading_source.heading)
+        return float(self.odometry.theta)
+
     def _mark(self) -> None:
         self._d0 = float(self.odometry.distance)
-        self._th0 = float(self.odometry.theta)
+        self._th0 = self._heading()
 
     def _advance(self, phase: str) -> None:
         self._phase = phase
@@ -162,4 +185,4 @@ class HeadlandTurn:
         return abs(float(self.odometry.distance) - self._d0)
 
     def _angle_since(self) -> float:
-        return abs(_ang_norm(float(self.odometry.theta) - self._th0))
+        return abs(_ang_norm(self._heading() - self._th0))
