@@ -43,6 +43,12 @@ from lidar.lidar_driver import LidarDriver
 from lidar.obstacle_filter import LIDAR_MOUNT_HEIGHT, tilt_correct_pts
 
 
+async def ainput(prompt: str = "") -> str:
+    """Non-blocking input — keeps the event loop alive while waiting for Enter."""
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, input, prompt)
+
+
 def _sector_name(az_deg: float) -> str:
     az = az_deg % 360.0
     for name, centre in [("fwd", 0.0), ("right", 90.0), ("rear", 180.0), ("left", 270.0)]:
@@ -52,18 +58,25 @@ def _sector_name(az_deg: float) -> str:
     return "other"
 
 
-async def collect_scans(lidar, n: int, tilt_rad: float = 0.0, self_r: float = 1.5) -> list[np.ndarray]:
+async def collect_scans(stream, n: int, tilt_rad: float = 0.0,
+                        self_r: float = 1.5) -> list[np.ndarray]:
+    """Collect n scans from a persistent stream using __anext__() — never closes it."""
     scans = []
-    async for pts in lidar.scan_stream_np():
+    for _ in range(n):
+        pts = await stream.__anext__()
         if len(pts):
             rng = np.hypot(pts[:, 0], pts[:, 1])
             pts = pts[rng >= self_r]
             if tilt_rad:
                 pts = tilt_correct_pts(pts, tilt_rad)
         scans.append(pts)
-        if len(scans) >= n:
-            break
     return scans
+
+
+async def drain(stream, n: int = 3) -> None:
+    """Discard n scans to flush packets buffered while the event loop was idle."""
+    for _ in range(n):
+        await stream.__anext__()
 
 
 def find_new_cluster(with_pts: np.ndarray, baseline_pts: np.ndarray,
@@ -142,82 +155,89 @@ async def main() -> None:
     print("====================================================================")
 
     async with LidarDriver() as lidar:
-        # ---- Step 1: baseline (no object) --------------------------------
-        input("\nStep 1: Remove ALL objects from around the robot.\n"
-              "  Press Enter to capture baseline …")
+        stream = lidar.scan_stream_np()
+
+        # ---- Step 1: baseline (no object) ------------------------------------
+        await ainput("\nStep 1: Remove ALL objects from around the robot.\n"
+                     "  Press Enter to capture baseline …")
+        await drain(stream)
         print(f"  Capturing {args.scans} baseline scans …", flush=True)
-        baseline_scans = await collect_scans(lidar, args.scans, tilt_rad, args.self_radius)
+        baseline_scans = await collect_scans(stream, args.scans, tilt_rad, args.self_radius)
         baseline = stacked(baseline_scans)
         print(f"  Baseline: {len(baseline)} total points captured.")
 
-        # ---- Step 2: object DIRECTLY IN FRONT ----------------------------
-        input(f"\nStep 2: Place the bucket at exactly {args.expect_range:.1f} m "
-              "DIRECTLY IN FRONT of the robot (on the Y+ axis).\n"
-              "  Press Enter to capture …")
+        # ---- Step 2: object DIRECTLY IN FRONT --------------------------------
+        await ainput(f"\nStep 2: Place the bucket at exactly {args.expect_range:.1f} m "
+                     "DIRECTLY IN FRONT of the robot (on the Y+ axis).\n"
+                     "  Press Enter to capture …")
+        await drain(stream)
         print(f"  Capturing {args.scans} scans …", flush=True)
-        front_scans = await collect_scans(lidar, args.scans, tilt_rad, args.self_radius)
+        front_scans = await collect_scans(stream, args.scans, tilt_rad, args.self_radius)
         front_pts = stacked(front_scans)
         front_result = find_new_cluster(front_pts, baseline, args.expect_range, args.range_tol)
 
-        # ---- Step 3: object DIRECTLY TO THE RIGHT ------------------------
-        input(f"\nStep 3: Move the bucket to {args.expect_range:.1f} m "
-              "DIRECTLY TO THE RIGHT of the robot (on the X+ axis).\n"
-              "  Press Enter to capture …")
+        # ---- Step 3: object DIRECTLY TO THE RIGHT ----------------------------
+        await ainput(f"\nStep 3: Move the bucket to {args.expect_range:.1f} m "
+                     "DIRECTLY TO THE RIGHT of the robot (on the X+ axis).\n"
+                     "  Press Enter to capture …")
+        await drain(stream)
         print(f"  Capturing {args.scans} scans …", flush=True)
-        right_scans = await collect_scans(lidar, args.scans, tilt_rad, args.self_radius)
+        right_scans = await collect_scans(stream, args.scans, tilt_rad, args.self_radius)
         right_pts = stacked(right_scans)
         right_result = find_new_cluster(right_pts, baseline, args.expect_range, args.range_tol)
 
-        # ---- Report -------------------------------------------------------
-        print("\n====================================================================")
-        print("  RESULTS")
-        print("====================================================================")
-        print_result(f"FRONT bucket (expect: y=+{args.expect_range:.1f}m, x=0, az≈0°, sector=fwd)",
-                     front_result)
-        print_result(f"RIGHT bucket (expect: x=+{args.expect_range:.1f}m, y=0, az≈90°, sector=right)",
-                     right_result)
+        await stream.aclose()
 
-        if front_result and right_result:
-            print("\n  INTERPRETATION:")
-            az_front = front_result["azimuth"]
-            if az_front > 180:
-                az_front -= 360
-            print(f"  Front bucket azimuth = {front_result['azimuth']:.1f}°  "
-                  f"(expected 0° — offset = {az_front:+.1f}°)")
+    # ---- Report ---------------------------------------------------------------
+    print("\n====================================================================")
+    print("  RESULTS")
+    print("====================================================================")
+    print_result(f"FRONT bucket (expect: y=+{args.expect_range:.1f}m, x=0, az≈0°, sector=fwd)",
+                 front_result)
+    print_result(f"RIGHT bucket (expect: x=+{args.expect_range:.1f}m, y=0, az≈90°, sector=right)",
+                 right_result)
 
-            az_right = right_result["azimuth"]
-            if az_right > 180:
-                az_right -= 360
-            az_right_error = az_right - 90.0
-            if az_right_error > 180:
-                az_right_error -= 360
-            print(f"  Right bucket azimuth = {right_result['azimuth']:.1f}°  "
-                  f"(expected 90° — offset = {az_right_error:+.1f}°)")
+    if front_result and right_result:
+        print("\n  INTERPRETATION:")
+        az_front = front_result["azimuth"]
+        if az_front > 180:
+            az_front -= 360
+        print(f"  Front bucket azimuth = {front_result['azimuth']:.1f}°  "
+              f"(expected 0° — offset = {az_front:+.1f}°)")
 
-            yaw_err = 0.5 * (az_front + az_right_error)
-            print(f"  Estimated sensor yaw error ≈ {yaw_err:+.1f}°")
-            if abs(yaw_err) < 10:
-                print("  → Sensor yaw is CORRECT (within ±10°). No code change needed.")
-            else:
-                print(f"  → Sensor yaw is OFF by ~{yaw_err:.0f}°.")
-                print(f"     The driver must apply a yaw rotation of {-yaw_err:.0f}° to the raw points.")
-                print(f"     Add --lidar-yaw {-yaw_err:.0f} to the run command.")
+        az_right = right_result["azimuth"]
+        if az_right > 180:
+            az_right -= 360
+        az_right_error = az_right - 90.0
+        if az_right_error > 180:
+            az_right_error -= 360
+        print(f"  Right bucket azimuth = {right_result['azimuth']:.1f}°  "
+              f"(expected 90° — offset = {az_right_error:+.1f}°)")
 
-        print("\n  RAW NEAREST per SECTOR (averaged over all scans with front bucket):")
-        for az_centre, name in [(0.0, "fwd"), (90.0, "right"), (180.0, "rear"), (270.0, "left")]:
-            if len(front_pts) == 0:
-                continue
-            az_pts = np.degrees(np.arctan2(front_pts[:, 0], front_pts[:, 1])) % 360.0
-            diff = np.abs(((az_pts - az_centre + 180) % 360) - 180)
-            in_sector = front_pts[diff <= 30]
-            if len(in_sector):
-                rng = np.hypot(in_sector[:, 0], in_sector[:, 1])
-                print(f"    {name:5s}: n={len(in_sector):5d}  nearest={rng.min():.3f} m  "
-                      f"median_rng={np.median(rng):.3f} m")
-            else:
-                print(f"    {name:5s}: n=0  (no returns)")
+        yaw_err = 0.5 * (az_front + az_right_error)
+        print(f"  Estimated sensor yaw error ≈ {yaw_err:+.1f}°")
+        if abs(yaw_err) < 10:
+            print("  → Sensor yaw is CORRECT (within ±10°). No code change needed.")
+        else:
+            print(f"  → Sensor yaw is OFF by ~{yaw_err:.0f}°.")
+            print(f"     The driver must apply a yaw rotation of {-yaw_err:.0f}° to the raw points.")
+            print(f"     Add --lidar-yaw {-yaw_err:.0f} to the run command.")
 
-        print()
+    print("\n  RAW NEAREST per SECTOR (front-bucket scans):")
+    for az_centre, name in [(0.0, "fwd"), (90.0, "right"), (180.0, "rear"), (270.0, "left")]:
+        if len(front_pts) == 0:
+            continue
+        az_pts = np.degrees(np.arctan2(front_pts[:, 0], front_pts[:, 1])) % 360.0
+        diff = np.abs(((az_pts - az_centre + 180) % 360) - 180)
+        in_sector = front_pts[diff <= 30]
+        if len(in_sector):
+            rng = np.hypot(in_sector[:, 0], in_sector[:, 1])
+            print(f"    {name:5s}: n={len(in_sector):5d}  nearest={rng.min():.3f} m  "
+                  f"median_rng={np.median(rng):.3f} m")
+        else:
+            print(f"    {name:5s}: n=0  (no returns)")
+
+    print()
 
 
 if __name__ == "__main__":
