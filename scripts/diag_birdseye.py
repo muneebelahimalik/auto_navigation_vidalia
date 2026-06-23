@@ -80,19 +80,40 @@ def correct(pts: np.ndarray, yaw_rad: float, tilt_rad: float) -> np.ndarray:
     return pts
 
 
-def ground_ramp_slope(pts: np.ndarray) -> float:
-    """Least-squares slope of ground-relative height vs forward distance over a
-    near-ground band (|h| < 0.4 m, 1.5–6 m forward).  ~0 means flat ground; a
-    positive/large value means an uncorrected pitch.  Used by --tilt-sweep to
-    pick the tilt angle that flattens the ground."""
+def ground_ramp_slope(pts: np.ndarray) -> tuple[float, float]:
+    """Robust ground-flatness metric for the forward row-following ROI.
+
+    Returns (slope, ground_level):
+      * slope        — m of height per m of forward distance; ~0 = flat ground.
+      * ground_level — fitted ground height (m) at 3.75 m forward; should be ~0
+                       at the correct tilt (large negative = over-rotation).
+
+    Population-stable: in each 0.5 m forward range-bin the GROUND is taken as
+    the 15th-percentile height (robust to crop/obstacles above it), so the fit
+    tracks the true ground surface regardless of where the |h| window would
+    fall — unlike a fixed |h|<band filter, which slides with tilt and biases
+    the "flattest" answer toward over-tilting.
+    """
     if len(pts) < 50:
-        return float("nan")
-    h = pts[:, 2] + LIDAR_MOUNT_HEIGHT
-    y = pts[:, 1]
-    band = (y > 1.5) & (y < 6.0) & (np.abs(h) < 0.4) & (pts[:, 0] > -2) & (pts[:, 0] < 2)
-    if band.sum() < 50:
-        return float("nan")
-    return float(np.polyfit(y[band], h[band], 1)[0])
+        return float("nan"), float("nan")
+    roi = pts[(pts[:, 1] > 1.5) & (pts[:, 1] < 6.0) & (np.abs(pts[:, 0]) < 1.0)]
+    if len(roi) < 50:
+        return float("nan"), float("nan")
+    h = roi[:, 2] + LIDAR_MOUNT_HEIGHT
+    y = roi[:, 1]
+    edges = np.arange(1.5, 6.01, 0.5)
+    idx = np.digitize(y, edges)
+    yc, gc = [], []
+    for b in range(1, len(edges)):
+        sel = idx == b
+        if sel.sum() < 10:
+            continue
+        yc.append(0.5 * (edges[b - 1] + edges[b]))
+        gc.append(np.percentile(h[sel], 15))   # ground = low percentile
+    if len(yc) < 3:
+        return float("nan"), float("nan")
+    slope, intercept = np.polyfit(np.array(yc), np.array(gc), 1)
+    return float(slope), float(slope * 3.75 + intercept)
 
 
 def save_png(pts: np.ndarray, out: str, max_range: float,
@@ -214,20 +235,21 @@ async def main() -> None:
     if args.tilt_sweep:
         lo, hi, step = (float(v) for v in args.tilt_sweep.split(":"))
         print(f"\n  Tilt sweep (yaw={args.lidar_yaw}° fixed, applied FIRST):")
-        print("    tilt(deg)   ground-ramp-slope (m/m, ~0 = flat)")
+        print("    tilt(deg)   ground-slope (m/m, ~0=flat)   ground@3.75m (m, ~0=correct)")
         best = None
         t = lo
         while t <= hi + 1e-6:
             p = correct(raw, yaw_rad, math.radians(t))
-            slope = ground_ramp_slope(p)
-            flag = ""
+            slope, glevel = ground_ramp_slope(p)
             if not math.isnan(slope) and (best is None or abs(slope) < abs(best[1])):
-                best = (t, slope)
-            print(f"    {t:7.1f}     {slope:+.4f}")
+                best = (t, slope, glevel)
+            print(f"    {t:7.1f}        {slope:+.4f}                  {glevel:+.3f}")
             t += step
         if best is not None:
             print(f"\n  >>> Flattest ground at --lidar-tilt {best[0]:.1f} "
-                  f"(slope {best[1]:+.4f}).  Set this on row_follow.py.")
+                  f"(slope {best[1]:+.4f}, ground@3.75m {best[2]:+.3f} m).")
+            print("      A good fit has slope≈0 AND ground level near 0; a large "
+                  "negative ground level means over-rotation.")
         tilt_rad = math.radians(best[0]) if best else tilt_rad
         args.lidar_tilt = best[0] if best else args.lidar_tilt
 
