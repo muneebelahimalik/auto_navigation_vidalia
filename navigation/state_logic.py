@@ -93,6 +93,35 @@ def approach_action(
     return "DRIVE"
 
 
+def post_turn_loss_action(
+    action: str,
+    post_turn: bool,
+    is_end: bool,
+) -> str:
+    """Re-route a FOLLOW loss that happens while still settling onto the NEXT
+    row right after a headland turn.
+
+    The U-turn → APPROACH → FOLLOW handoff lands the robot on the next row with
+    a marginal, partly-in-ROI view (field: n≈70 vs ≈700 on a well-centred row,
+    confidence flickering around the 0.35 threshold).  A normal FOLLOW loss
+    there drops to a *stationary* ACQUIRE — but a stationary sensor on a sparse,
+    half-visible row cannot improve its view, so it hangs at the row start
+    (field failure: "turned … then went to follow and acquire" and stuck).
+
+    While ``post_turn`` is set (from the end of the turn until the next-row lock
+    has settled a solid distance into FOLLOW) and the loss is NOT a real row end,
+    convert an ``"ACQUIRE"`` decision into ``"APPROACH"`` so the robot keeps
+    creeping straight forward and re-locks as the row fills the ROI.  The
+    creep is still bounded by ``approach_max_dist`` (via ``approach_action``), so
+    a genuinely missing row still stops rather than driving on forever.
+
+    Pass-through for every other case (mid-field losses, row ends, WAIT).
+    """
+    if action == "ACQUIRE" and post_turn and not is_end:
+        return "APPROACH"
+    return action
+
+
 def acquire_rowend_escape(
     came_from_follow: bool,
     rowend_count: int,

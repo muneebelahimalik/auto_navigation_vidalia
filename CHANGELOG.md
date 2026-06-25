@@ -19,6 +19,19 @@ Work toward the row-to-row turn milestone (built on the v0.1.0 baseline).
   the LiDAR is touched (`--range 3`, read the straight-ahead azimuth).
 
 ### Fixed (cont.)
+- **Stuck in ACQUIRE right after the U-turn — "turned … then went to follow
+  and acquire" and hung.** The U-turn → APPROACH → FOLLOW handoff lands on the
+  next row with a marginal, partly-in-ROI view (field: n≈70 vs ≈700 on a
+  well-centred row, confidence flickering around the 0.35 threshold). FOLLOW
+  then dropped to a *stationary* ACQUIRE after ~0.3 m — and a stationary sensor
+  on a sparse, half-visible row cannot improve its view, so it hung at the row
+  start. New **post-turn settling window** (`state_logic.post_turn_loss_action`):
+  from the end of the turn until the robot has driven `post_turn_settle_dist`
+  (2.0 m) of continuous FOLLOW down the new row, a non-row-end FOLLOW loss
+  re-enters **APPROACH** (keeps creeping forward) instead of stalling in
+  ACQUIRE — the moving sensor fills the ROI and re-locks. Still bounded by
+  `--approach-max-dist`, so a genuinely missing row stops rather than driving
+  off the field. Status shows `APPROACH … SETTLE`. Unit-tested.
 - **FOLLOW→ACQUIRE hang at the real row end.** At a row end with residual sparse
   clutter (~40 straggler/weed returns flickering in the ROI) `row_end_confidence`
   never crossed 0.70, and/or a short row left `row_dist` under `row_end_min_dist`,

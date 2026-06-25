@@ -1,7 +1,7 @@
 """Unit tests for navigation/state_logic.py — pure navigator branch logic."""
 from navigation.state_logic import (
     follow_loss_is_row_end, follow_loss_action, approach_action,
-    acquire_rowend_escape)
+    acquire_rowend_escape, post_turn_loss_action)
 
 APPROACH_FRAMES = 3
 APPROACH_MAX = 3.0
@@ -117,6 +117,37 @@ def test_approach_stops_at_field_edge():
 def test_approach_follow_beats_stop_at_max_dist():
     """If the row locks on the same scan the max distance is reached, follow."""
     assert appr(APPROACH_FRAMES, APPROACH_MAX) == "FOLLOW"
+
+
+# ---------------------------------------------------------------------------
+# post_turn_loss_action — keep creeping onto the next row after a U-turn
+# ---------------------------------------------------------------------------
+
+def test_post_turn_marginal_loss_keeps_creeping():
+    """Field bug: after the U-turn the next-row lock is marginal (n≈70,
+    conf flickering), FOLLOW drops to a stationary ACQUIRE and the robot hangs.
+    While settling post-turn, a non-row-end ACQUIRE becomes APPROACH so the
+    robot keeps creeping forward and re-locks as the row fills the ROI."""
+    assert post_turn_loss_action("ACQUIRE", True, False) == "APPROACH"
+
+
+def test_post_turn_does_not_hijack_row_end():
+    """A real row end during settling still routes to the row end, never creep."""
+    assert post_turn_loss_action("ROW_END", True, True) == "ROW_END"
+    # An ACQUIRE that IS classified a row end is left alone too.
+    assert post_turn_loss_action("ACQUIRE", True, True) == "ACQUIRE"
+
+
+def test_post_turn_passes_through_when_settled():
+    """Once settled (post_turn cleared), a mid-field loss drops to ACQUIRE as
+    normal — no perpetual creeping."""
+    assert post_turn_loss_action("ACQUIRE", False, False) == "ACQUIRE"
+
+
+def test_post_turn_leaves_wait_alone():
+    """WAIT (brief dropout) is untouched in every case."""
+    assert post_turn_loss_action("WAIT", True, False) == "WAIT"
+    assert post_turn_loss_action("WAIT", False, False) == "WAIT"
 
 
 # ---------------------------------------------------------------------------

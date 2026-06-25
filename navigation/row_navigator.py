@@ -38,7 +38,7 @@ from lidar.obstacle_filter import tilt_correct_pts, yaw_correct_pts
 from navigation.headland import HeadlandTurn
 from navigation.state_logic import (
     follow_loss_is_row_end, follow_loss_action, approach_action,
-    acquire_rowend_escape)
+    acquire_rowend_escape, post_turn_loss_action)
 from navigation.row_controller import PurePursuitController
 from navigation.row_perception import RowDetector, RowEstimate
 from navigation.row_safety import SafetyMonitor
@@ -226,6 +226,8 @@ class RowNavigator:
         self._acq_miss_count: int = 0     # consecutive low-conf scans while in ACQUIRE
         self._came_from_follow: bool = False  # ACQUIRE entered from FOLLOW (row-end escape)
         self._acq_rowend_count: int = 0   # consecutive empty-crop scans while in ACQUIRE
+        self._post_turn: bool = False     # settling onto the next row after a headland turn
+        self._post_turn_settle_dist: float = 2.0  # row_dist in FOLLOW that ends post-turn settling
         self._last_green: Optional[float] = None  # latest camera green fraction (row-end cross-check)
         self._turn_sign = 1.0             # last headland turn direction (for status)
         self._t_prev = time.monotonic()
@@ -601,6 +603,11 @@ class RowNavigator:
         return 0.0, 0.0
 
     def _step_follow(self, est, dt: float) -> tuple[float, float]:
+        # Post-turn settling: once we have driven a solid distance down the new
+        # row, the lock is established — stop treating early losses specially.
+        if self._post_turn and self._row_dist >= self._post_turn_settle_dist:
+            self._post_turn = False
+
         if self._row_end_reached(est):
             self._row_end_count += 1
         else:
@@ -640,9 +647,19 @@ class RowNavigator:
                 self._follow_miss_count, is_end,
                 row_end_frames=self.row_end_frames,
                 follow_miss_thresh=self.follow_miss_thresh)
+            # Still settling onto the row just after a headland turn?  A
+            # marginal early loss should keep creeping forward (APPROACH), not
+            # stall in a stationary ACQUIRE that can never improve a sparse,
+            # half-in-ROI view of the new row.
+            action = post_turn_loss_action(action, self._post_turn, is_end)
             if action == "ROW_END":
                 self._follow_miss_count = 0
                 self._enter(_S.ROW_END)
+                return 0.0, 0.0
+            if action == "APPROACH":
+                self._follow_miss_count = 0
+                self._acq_count = 0
+                self._enter(_S.APPROACH)
                 return 0.0, 0.0
             if action == "ACQUIRE":
                 self._follow_miss_count = 0
@@ -707,6 +724,11 @@ class RowNavigator:
             # into the next row (APPROACH) until perception re-acquires it.
             self._acq_count = 0
             self._approach_dist = 0.0
+            # Settling window: the next-row lock is marginal (partly in-ROI)
+            # until the robot has driven a solid distance down it.  While this
+            # is set, an early FOLLOW loss keeps creeping forward (back to
+            # APPROACH) instead of stalling in a stationary ACQUIRE.
+            self._post_turn = True
             self._enter(_S.APPROACH)
             return 0.0, 0.0
         return linear, angular
@@ -911,7 +933,8 @@ class RowNavigator:
             acq_str = (f" {turn_dir}-UTURN:{self._headland_turn.phase}"
                        f"[{self._headland_turn.heading_source_name}]")
         elif self.state == _S.APPROACH:
-            acq_str = (f" ENTER {self._approach_dist:.1f}/{self.approach_max_dist:.1f}m"
+            tag = "SETTLE" if self._post_turn else "ENTER"
+            acq_str = (f" {tag} {self._approach_dist:.1f}/{self.approach_max_dist:.1f}m"
                        f" acq={self._acq_count}/{self.approach_acquire_frames}")
         else:
             acq_str = ""
