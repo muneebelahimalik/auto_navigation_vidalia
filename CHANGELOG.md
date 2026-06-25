@@ -8,6 +8,16 @@ versions are git tags on `main`.
 
 Work toward the row-to-row turn milestone (built on the v0.1.0 baseline).
 
+### Changed
+- **LiDAR yaw re-calibrated 71° → 66°** after a mount disturbance (lens
+  cleaning rotated the sensor ~5°). Measured with the new `diag_birdseye.py`
+  forward-object locator (a straight-ahead bucket read +5.4° at yaw 71, 0.0° at
+  yaw 66). Pitch independently re-confirmed at 21.5°. `--lidar-yaw` default
+  updated in `row_follow.py` / `diag_birdseye.py`.
+- **`diag_birdseye.py` forward-object locator** added: reports the azimuth of
+  elevated forward objects so the mount yaw can be re-verified to ~1° any time
+  the LiDAR is touched (`--range 3`, read the straight-ahead azimuth).
+
 ### Added
 - **Filter (IMU/GPS) heading for the pivots.** `navigation/filter_heading.py`
   subscribes to the filter service (`FilterState`, port 20001) and exposes the

@@ -10,7 +10,7 @@ Copy the PNG off the robot with:
     scp farm-ng-user-laserweeding@100.66.121.56:/tmp/birdseye.png .
 
 Usage examples:
-    # Default: field-calibrated yaw=71° + tilt=21.5° applied, forward view:
+    # Default: field-calibrated yaw=66° + tilt=21.5° applied, forward view:
     python3 scripts/diag_birdseye.py
 
     # Re-derive the pitch that flattens the ground (yaw applied first):
@@ -257,8 +257,9 @@ async def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--scans", type=int, default=5)
-    ap.add_argument("--lidar-yaw", type=float, default=71.0, metavar="DEG",
-                    help="Mount yaw correction (CCW positive). Default 71 (confirmed for this robot).")
+    ap.add_argument("--lidar-yaw", type=float, default=66.0, metavar="DEG",
+                    help="Mount yaw correction (CCW positive). Default 66 (re-calibrated "
+                         "2026-06 via the object locator; was 71).")
     ap.add_argument("--lidar-tilt", type=float, default=21.5, metavar="DEG",
                     help="Nose-down pitch correction (degrees), applied AFTER yaw. "
                          "Default 21.5 (field-calibrated). Use --tilt-sweep to re-derive.")

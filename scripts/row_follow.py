@@ -650,11 +650,13 @@ def main() -> None:
                              "diag_birdseye.py --tilt-sweep: the 15° body lean resolves into a "
                              "~21.5° robot-frame pitch once the 71° yaw is corrected; this is the "
                              "angle that flattens the forward ground ramp).")
-    parser.add_argument("--lidar-yaw", type=float, default=71.0, metavar="DEG",
+    parser.add_argument("--lidar-yaw", type=float, default=66.0, metavar="DEG",
                         help="Yaw of the LiDAR mount relative to robot forward, CCW positive "
-                             "(degrees, default: 71 — data-verified: sensor Y+ is 71° CCW of "
-                             "robot forward). Applied FIRST (after self-filter, before tilt) so "
-                             "the tilt then rotates the pitch about the robot's left-right axis.")
+                             "(degrees, default: 66 — re-calibrated 2026-06 after a mount "
+                             "disturbance; was 71. Verify with diag_birdseye.py object locator "
+                             "if the mount is touched). Applied FIRST (after self-filter, before "
+                             "tilt) so the tilt then rotates the pitch about the robot's "
+                             "left-right axis.")
     parser.add_argument("--debug", action="store_true",
                         help="Stream a LiDAR height profile instead of navigating")
     parser.add_argument("--save-dir", default="", metavar="PATH",
