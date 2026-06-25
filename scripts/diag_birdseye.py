@@ -39,6 +39,54 @@ from lidar.lidar_driver import LidarDriver
 from lidar.obstacle_filter import LIDAR_MOUNT_HEIGHT, tilt_correct_pts, yaw_correct_pts
 
 
+def locate_forward_objects(pts: np.ndarray, applied_yaw_deg: float) -> None:
+    """Report the centroid + azimuth of elevated forward objects (e.g. buckets
+    placed for a yaw check).  An object placed straight ahead should sit at
+    azimuth ~0°; its measured azimuth IS the residual yaw error, and the
+    corrected mount yaw is ``applied_yaw − azimuth`` (verified by simulation).
+    """
+    if not len(pts):
+        return
+    h = pts[:, 2] + LIDAR_MOUNT_HEIGHT
+    rng = np.hypot(pts[:, 0], pts[:, 1])
+    base = pts[(np.abs(pts[:, 0]) < 1.5) & (pts[:, 1] > 1.0) & (pts[:, 1] < 4.0)]
+    if len(base) < 50:
+        print("\n  Object locator: too few floor points to estimate level.")
+        return
+    floor = float(np.percentile(base[:, 2] + LIDAR_MOUNT_HEIGHT, 50))
+    elev = (h > floor + 0.12) & (pts[:, 1] > 0.5) & (rng < 4.0)
+    e = pts[elev]
+    print(f"\n  Forward object locator (floor≈{floor:+.2f} m, elevation > +0.12 m, "
+          f"range < 4 m):")
+    if len(e) < 20:
+        print("    no elevated forward objects found")
+        return
+    az = np.degrees(np.arctan2(e[:, 0], e[:, 1]))   # 0 = forward, + = right
+    order = np.argsort(az)
+    e, az = e[order], az[order]
+    # Greedy cluster on an azimuth gap.
+    clusters, start = [], 0
+    for i in range(1, len(az) + 1):
+        if i == len(az) or az[i] - az[i - 1] > 8.0:
+            clusters.append(e[start:i])
+            start = i
+    centre_az = None
+    for c in clusters:
+        if len(c) < 15:
+            continue
+        cx, cy = float(np.median(c[:, 0])), float(np.median(c[:, 1]))
+        caz = math.degrees(math.atan2(cx, cy))
+        print(f"    n={len(c):4d}  x={cx:+.2f} y={cy:+.2f}  "
+              f"range={math.hypot(cx, cy):.2f} m  azimuth={caz:+.1f}°")
+        if abs(cx) < 0.9 and abs(caz) < 20.0:   # the straight-ahead object
+            centre_az = caz
+    if centre_az is not None:
+        print(f"    >>> straight-ahead object azimuth = {centre_az:+.1f}° "
+              f"→ residual yaw error.  Corrected --lidar-yaw = "
+              f"{applied_yaw_deg - centre_az:.1f}  (= {applied_yaw_deg:.0f} − "
+              f"{centre_az:+.1f}).  |error|<~1.5° is within placement tolerance.")
+
+
 async def collect_raw(n: int, self_r: float) -> np.ndarray:
     """Collect n self-filtered scans WITHOUT any yaw/tilt correction applied."""
     queue: asyncio.Queue[np.ndarray] = asyncio.Queue()
@@ -298,6 +346,8 @@ async def main() -> None:
                 bar = "#" * int(40 * hist[i] / hmax)
                 mark = " <-crop" if 0.03 <= c <= 0.30 else ""
                 print(f"    {c:+.2f} m | {hist[i]:5d} {bar}{mark}")
+
+    locate_forward_objects(pts, args.lidar_yaw)
 
     save_png(pts, args.out, args.range, args.lidar_yaw, args.lidar_tilt)
     print(f"\n  Copy off the robot:")
