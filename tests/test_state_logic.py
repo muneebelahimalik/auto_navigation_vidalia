@@ -1,5 +1,15 @@
 """Unit tests for navigation/state_logic.py — pure navigator branch logic."""
-from navigation.state_logic import follow_loss_is_row_end, follow_loss_action
+from navigation.state_logic import (
+    follow_loss_is_row_end, follow_loss_action, approach_action)
+
+APPROACH_FRAMES = 3
+APPROACH_MAX = 3.0
+
+
+def appr(acq_count, dist):
+    return approach_action(
+        acq_count, dist,
+        approach_acquire_frames=APPROACH_FRAMES, approach_max_dist=APPROACH_MAX)
 
 ROW_END_FRAMES = 15
 FOLLOW_MISS_THRESH = 4
@@ -78,3 +88,31 @@ def test_short_non_row_end_loss_waits():
     """A 1–3 scan dropout that isn't a row end just pauses."""
     assert action(1, False) == "WAIT"
     assert action(FOLLOW_MISS_THRESH - 1, False) == "WAIT"
+
+
+# ---------------------------------------------------------------------------
+# approach_action — post-turn drive-into-next-row leg
+# ---------------------------------------------------------------------------
+
+def test_approach_drives_until_row_found():
+    """No row yet, within range → keep creeping forward (the fix for the robot
+    hanging stationary in the headland after the U-turn)."""
+    assert appr(0, 0.0) == "DRIVE"
+    assert appr(2, 1.5) == "DRIVE"          # 2 confident frames, not yet 3
+
+
+def test_approach_hands_off_to_follow_when_locked():
+    assert appr(APPROACH_FRAMES, 1.0) == "FOLLOW"
+    assert appr(APPROACH_FRAMES + 2, 0.5) == "FOLLOW"
+
+
+def test_approach_stops_at_field_edge():
+    """Drove the full search distance without finding a row → stop, don't drive
+    on blindly (field edge or the turn overshot)."""
+    assert appr(0, APPROACH_MAX) == "STOP"
+    assert appr(1, APPROACH_MAX + 0.5) == "STOP"
+
+
+def test_approach_follow_beats_stop_at_max_dist():
+    """If the row locks on the same scan the max distance is reached, follow."""
+    assert appr(APPROACH_FRAMES, APPROACH_MAX) == "FOLLOW"

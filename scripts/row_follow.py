@@ -427,6 +427,8 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
         first_turn_sign=(1.0 if args.turn_dir == "right" else -1.0),
         headland_speed=args.headland_speed,
         headland_turn_rate=args.headland_turn_rate,
+        approach_speed=args.approach_speed,
+        approach_max_dist=args.approach_max_dist,
         heading_source=filter_heading,
         align_heading=args.align_heading,
         align_rate=args.align_speed,
@@ -574,6 +576,13 @@ def main() -> None:
                              "the next strip the robot straddles (default: 1.52). This is "
                              "the strip-to-strip distance and is DISTINCT from --row-spacing "
                              "(the in-strip soybean-row separation used by the detector).")
+    parser.add_argument("--approach-speed", type=float, default=0.12, metavar="M",
+                        help="Forward speed (m/s) of the post-turn APPROACH leg that drives "
+                             "the robot into the next row until perception re-acquires it "
+                             "(default: 0.12).")
+    parser.add_argument("--approach-max-dist", type=float, default=3.0, metavar="M",
+                        help="Max distance (m) the APPROACH leg drives searching for the next "
+                             "row before stopping (field edge / overshoot guard; default: 3.0).")
     parser.add_argument("--headland-exit", type=float, default=1.0, metavar="M",
                         help="Straight distance (m) driven past the row end before the "
                              "first pivot, to clear the body of the last plants (default: 1.0).")

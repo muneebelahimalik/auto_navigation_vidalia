@@ -19,6 +19,13 @@ Work toward the row-to-row turn milestone (built on the v0.1.0 baseline).
   the LiDAR is touched (`--range 3`, read the straight-ahead azimuth).
 
 ### Added
+- **APPROACH leg closes the row-to-row loop.** The U-turn ends at the headland
+  margin pointing down the next row but with no crop in the ROI yet; the old
+  code entered a stationary ACQUIRE there and hung forever (field failure:
+  "nothing in front, goes to ACQUIRE and stuck"). New `APPROACH` state creeps
+  forward (`--approach-speed`) into the next row until perception re-locks, then
+  hands to FOLLOW; stops after `--approach-max-dist` if no row is found (field
+  edge / overshoot). Decision in `state_logic.approach_action`, unit-tested.
 - **Filter (IMU/GPS) heading for the pivots.** `navigation/filter_heading.py`
   subscribes to the filter service (`FilterState`, port 20001) and exposes the
   fused absolute heading. `HeadlandTurn` now closes the two 90° pivots on this

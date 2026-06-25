@@ -398,12 +398,26 @@ visible row ± half the row spacing.
 **End-of-row U-turn** (`HeadlandTurn`, closed-loop) — ⚠ not yet field-validated:
 
 ```
-ROW_END ─► HEADLAND ─────────────────────────────────────► ACQUIRE (next row)
+ROW_END ─► HEADLAND ──────────────────────────► APPROACH ──► FOLLOW (next row)
             EXIT  (drive exit_dist straight, clear last plants)
             TURN_A(pivot 90° toward next row — heading feedback)
             SHIFT (drive headland_shift straight to the next strip)
             TURN_B(pivot 90° same direction — now aligned down next row)
+                                                  └─ APPROACH: creep forward into
+                                                     the next row until perception
+                                                     re-locks, then hand to FOLLOW
 ```
+
+**APPROACH leg (critical for the loop to close):** the U-turn ends at the
+headland margin *pointing down the next row but with no crop yet in the ROI*.
+Entering a stationary ACQUIRE there hangs forever (field failure: robot stuck
+after the turn with "nothing in front").  Instead the navigator enters
+**APPROACH** — it creeps forward at `--approach-speed` (0.12 m/s) until the next
+row is solidly detected (`acquire_conf` for a few scans), then hands off to
+FOLLOW, whose pure-pursuit corrects any residual lateral error.  Bounded by
+`--approach-max-dist` (3.0 m): if no row is found in that distance (true field
+edge, or the turn overshot) the robot STOPS rather than driving on blindly.
+Status shows `ENTER 1.2/3.0m acq=2/3`.
 
 Turn direction alternates each row for **serpentine coverage** (right, left,
 right, …), starting from `--turn-dir` (default right).  The loop repeats until
@@ -587,6 +601,8 @@ Re-run the sweep if the mount is disturbed.
 | `--headland-exit M` | **1.0** | Straight distance driven past the row end before the first pivot |
 | `--headland-speed M` | **0.15** | Forward speed during straight headland phases (m/s) |
 | `--headland-turn-rate R` | **0.35** | Pivot rate during the two 90° turns (rad/s) |
+| `--approach-speed M` | **0.12** | Forward speed of the post-turn APPROACH leg that drives into the next row until perception re-locks (m/s) |
+| `--approach-max-dist M` | **3.0** | Max distance the APPROACH leg searches for the next row before stopping (field-edge / overshoot guard, m) |
 | `--slam` | off | Enable SLAM odometry integration (currently no-op) |
 | `--speed M` | 0.30 | Max forward speed m/s |
 | `--lidar-tilt DEG` | **21.5** | Nose-down PITCH correction (degrees), applied AFTER `--lidar-yaw`. The body lean resolves into a ~21.5° robot-frame pitch once the yaw is corrected; field-calibrated via `diag_birdseye.py --tilt-sweep 20.5:22.5:0.25` (ground slope → 0 at 21.5°, unchanged across the yaw re-calibration) |
@@ -997,6 +1013,8 @@ OAK-D defaults: hfov=73°, vfov=54°, 640×400 → scale factor ≈ 0.91.
 | Camera midpoint biased ~0.10 m toward each camera, heading off 2–3° | Whole-cloud PCA over two row stripes with unequal visible extents (outer row's near end outside FOV) tilts the principal axis | Two-pass cluster-centred PCA in `_side_from_mask` — pass 2 centres each row cluster on its own centroid before the PCA |
 | Crop vanishes (n collapses ~450→46, FOLLOW→ACQUIRE, robot stops) when the field slopes/undulates | Absolute crop-height band `h ∈ [0.03, 0.30]` assumes flat ground; a fixed mount-tilt correction under-/over-rotates on a grade so the ground (and the crop on it) ramps out of the band (~5° grade shifts a 5 m return by 0.44 m) | Terrain-adaptive band in `RowDetector._ground_slope`: estimate the forward ground slope per scan (20th-pct of z per 0.5 m range-bin, slope-only → robust to furrow/soil bimodality, no-op on flat/canopy-only) and detrend `h_eff = h − slope·y`; `--no-ground-detrend` reverts; live `grade=±N°` in status. Tests `test_graded_field_crop_*` |
 | Crop vanishes on a terrain DIP (ROI ground ~0.35 m below h=0; canopy sunk below the 0.03 m floor → only ~14 in-band pts, stall) — distinct from a slope | A uniform level offset (not a ramp): the local ground sits below the flat-calibrated `h=0`, so the absolute band floats above the (correctly elevated) canopy and clips it from below | Level shift in `RowDetector.update`: when a real ground+canopy column is present (ROI height spread > `ground_level_spread`=0.35 m) and its median sits below 0, lower the band by `min(0, P50)` so it rides the local ground; gate keeps canopy-only/flat data on the absolute band; only ever lowers. Live `drop=−N.Nm` in status. Tests `test_terrain_dip_crop_*` |
+| Spurious headland turn mid-row on a slope | The row-end escalation fired after only 4 consecutive low-conf scans; a brief crop dropout on a slope (n flickering 0↔700) hit 4 quickly and was misread as a row end | `follow_loss_action`: a real row end needs a LONG CONTINUOUS absence (`row_end_frames`=15); the miss counter resets the instant crop returns, so an intermittent dropout can never reach it. Tests `test_slope_dropout_does_not_turn` |
+| Robot stuck after the U-turn ("nothing in front", goes to ACQUIRE and hangs) | The turn ends at the headland margin with no crop yet in the ROI; ACQUIRE is stationary so it never sees the next row | New **APPROACH** state (`row_navigator._step_approach` / `state_logic.approach_action`): after the turn, creep forward at `--approach-speed` until the next row is solidly detected → FOLLOW; stop after `--approach-max-dist` if none found. Tests `test_approach_*` |
 
 ---
 

@@ -36,7 +36,8 @@ from canbus.canbus_interface import CanbusInterface
 from lidar.lidar_driver import LidarDriver
 from lidar.obstacle_filter import tilt_correct_pts, yaw_correct_pts
 from navigation.headland import HeadlandTurn
-from navigation.state_logic import follow_loss_is_row_end, follow_loss_action
+from navigation.state_logic import (
+    follow_loss_is_row_end, follow_loss_action, approach_action)
 from navigation.row_controller import PurePursuitController
 from navigation.row_perception import RowDetector, RowEstimate
 from navigation.row_safety import SafetyMonitor
@@ -77,10 +78,14 @@ class _S:
     ROW_END = "ROW_END"
     OBSTACLE_WAIT = "OBSTACLE_WAIT"
     HEADLAND = "HEADLAND"
+    APPROACH = "APPROACH"      # post-turn: drive into the next row until it locks
     DONE = "DONE"
 
 
-_HEADLAND_STATES = (_S.HEADLAND,)
+# States that make up the headland manoeuvre — paused (not aborted) when the
+# safety monitor trips, and resumed in place.  APPROACH is the final leg that
+# drives the robot forward into the next row until perception re-acquires it.
+_HEADLAND_STATES = (_S.HEADLAND, _S.APPROACH)
 
 
 class RowNavigator:
@@ -111,6 +116,9 @@ class RowNavigator:
         first_turn_sign: float = 1.0,
         headland_speed: float = 0.15,
         headland_turn_rate: float = 0.35,
+        approach_speed: float = 0.12,
+        approach_max_dist: float = 3.0,
+        approach_acquire_frames: int = 3,
         heading_source=None,
         align_heading: bool = False,
         align_thresh: float = 0.14,
@@ -174,6 +182,10 @@ class RowNavigator:
         self.row_end_green = row_end_green
         self.row_spacing = row_spacing
         self.headland_exit_dist = headland_exit_dist
+        self.approach_speed = approach_speed
+        self.approach_max_dist = approach_max_dist
+        self.approach_acquire_frames = approach_acquire_frames
+        self._approach_dist = 0.0
         self.first_turn_sign = 1.0 if first_turn_sign >= 0 else -1.0
         self.headland_speed = headland_speed
         self.headland_turn_rate = headland_turn_rate
@@ -449,10 +461,15 @@ class RowNavigator:
             if self.odometry is not None:
                 d_before = self.odometry.distance
                 self.odometry.tick(linear, angular, dt)
+                step = max(0.0, self.odometry.distance - d_before)
                 if self.state == _S.FOLLOW:
-                    self._row_dist += max(0.0, self.odometry.distance - d_before)
+                    self._row_dist += step
+                elif self.state == _S.APPROACH:
+                    self._approach_dist += step
             elif self.state == _S.FOLLOW:
                 self._row_dist += max(0.0, linear * dt)
+            elif self.state == _S.APPROACH:
+                self._approach_dist += max(0.0, linear * dt)
 
             await self._drive(linear, angular)
             self._print_status(est, safety, linear, angular)
@@ -496,6 +513,8 @@ class RowNavigator:
             return self._step_row_end()
         if st == _S.HEADLAND:
             return self._step_headland(dt)
+        if st == _S.APPROACH:
+            return self._step_approach(est)
         return 0.0, 0.0   # DONE
 
     # ------------------------------------------------------------------
@@ -661,11 +680,47 @@ class RowNavigator:
             return 0.0, 0.0
         linear, angular = self._headland_turn.step(dt)
         if self._headland_turn.done:
+            # The turn ends at the headland margin with no crop immediately
+            # ahead, so a stationary ACQUIRE here would hang forever (field
+            # failure: robot stuck after the U-turn).  Instead drive forward
+            # into the next row (APPROACH) until perception re-acquires it.
             self._acq_count = 0
-            self._row_dist = 0.0
-            self._enter(_S.ACQUIRE)
+            self._approach_dist = 0.0
+            self._enter(_S.APPROACH)
             return 0.0, 0.0
         return linear, angular
+
+    def _step_approach(self, est) -> tuple[float, float]:
+        """Drive forward into the next row until perception locks on.
+
+        After the U-turn the robot sits at the headland margin pointing down
+        the next row but with no crop yet in the ROI.  Creep straight forward
+        (the closed-loop turn left it roughly aligned) and hand off to FOLLOW
+        as soon as the row is solidly detected; FOLLOW's pure-pursuit then
+        corrects any residual lateral error.  Bounded by approach_max_dist so a
+        genuinely missing next row (field edge / overshoot) stops the robot
+        rather than driving on forever.
+        """
+        if est.confidence >= self.acquire_conf and est.valid:
+            self._acq_count += 1
+        else:
+            self._acq_count = 0
+        action = approach_action(
+            self._acq_count, self._approach_dist,
+            approach_acquire_frames=self.approach_acquire_frames,
+            approach_max_dist=self.approach_max_dist)
+        if action == "FOLLOW":
+            self._enter(_S.FOLLOW)
+            self._row_dist = 0.0
+            self._row_end_count = 0
+            self._follow_miss_count = 0
+            return 0.0, 0.0
+        if action == "STOP":
+            print(f"\n[navigator] APPROACH: no next row within "
+                  f"{self.approach_max_dist:.1f} m — stopping (field edge?).")
+            self._enter(_S.DONE)
+            return 0.0, 0.0
+        return self.approach_speed, 0.0
 
     # ------------------------------------------------------------------
     def _enter(self, state: str) -> None:
@@ -687,10 +742,12 @@ class RowNavigator:
                 # noisy +31° measurement, sending the robot into a spiral).
                 if prev_state != _S.OBSTACLE_WAIT:
                     self.ekf.reset()
-            if state == _S.ACQUIRE and prev_state == _S.HEADLAND:
+            if state == _S.APPROACH and prev_state == _S.HEADLAND:
                 # New row: the smoothed estimates accumulated while the ROI
                 # swept across the headland are garbage; without a reset their
                 # outlier gates fight the first detections of the next row.
+                if self.ekf is not None:
+                    self.ekf.reset()
                 if hasattr(self.detector, "reset"):
                     self.detector.reset()
                 if self.vis_detector is not None and hasattr(self.vis_detector, "reset"):
@@ -826,6 +883,9 @@ class RowNavigator:
             turn_dir = "R" if self._headland_turn.turn_sign >= 0 else "L"
             acq_str = (f" {turn_dir}-UTURN:{self._headland_turn.phase}"
                        f"[{self._headland_turn.heading_source_name}]")
+        elif self.state == _S.APPROACH:
+            acq_str = (f" ENTER {self._approach_dist:.1f}/{self.approach_max_dist:.1f}m"
+                       f" acq={self._acq_count}/{self.approach_acquire_frames}")
         else:
             acq_str = ""
         line = (

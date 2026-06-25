@@ -66,3 +66,29 @@ def follow_loss_action(
         return "ACQUIRE"
     return "WAIT"
 
+
+def approach_action(
+    acquire_count: int,
+    approach_dist: float,
+    *,
+    approach_acquire_frames: int,
+    approach_max_dist: float,
+) -> str:
+    """Decide what the post-turn APPROACH leg should do.
+
+    After a headland U-turn the robot drives forward into the next row until
+    perception re-acquires it (a stationary ACQUIRE there hangs forever because
+    no crop is in the ROI yet).
+
+      * ``"FOLLOW"`` — the next row is solidly detected (``acquire_count`` confident
+        scans): hand control to the row follower.
+      * ``"STOP"``   — driven ``approach_max_dist`` without finding a row (field
+        edge or the turn overshot): stop rather than drive on blindly.
+      * ``"DRIVE"``  — keep creeping forward and searching.
+    """
+    if acquire_count >= approach_acquire_frames:
+        return "FOLLOW"
+    if approach_dist >= approach_max_dist:
+        return "STOP"
+    return "DRIVE"
+
