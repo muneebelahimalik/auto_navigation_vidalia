@@ -37,7 +37,8 @@ from lidar.lidar_driver import LidarDriver
 from lidar.obstacle_filter import tilt_correct_pts, yaw_correct_pts
 from navigation.headland import HeadlandTurn
 from navigation.state_logic import (
-    follow_loss_is_row_end, follow_loss_action, approach_action)
+    follow_loss_is_row_end, follow_loss_action, approach_action,
+    acquire_rowend_escape)
 from navigation.row_controller import PurePursuitController
 from navigation.row_perception import RowDetector, RowEstimate
 from navigation.row_safety import SafetyMonitor
@@ -223,6 +224,8 @@ class RowNavigator:
         self._cam_cloud_buf: list = []   # rolling 3-frame camera depth buffer
         self._follow_miss_count: int = 0  # consecutive low-conf scans while in FOLLOW
         self._acq_miss_count: int = 0     # consecutive low-conf scans while in ACQUIRE
+        self._came_from_follow: bool = False  # ACQUIRE entered from FOLLOW (row-end escape)
+        self._acq_rowend_count: int = 0   # consecutive empty-crop scans while in ACQUIRE
         self._last_green: Optional[float] = None  # latest camera green fraction (row-end cross-check)
         self._turn_sign = 1.0             # last headland turn direction (for status)
         self._t_prev = time.monotonic()
@@ -536,6 +539,24 @@ class RowNavigator:
 
     # ------------------------------------------------------------------
     def _step_acquire(self, est) -> tuple[float, float]:
+        # Row-end escape: if we dropped to ACQUIRE from FOLLOW (we were on a
+        # row) and the crop band ahead is now genuinely empty for a sustained
+        # period, the row has ENDED — go to ROW_END (→ headland) instead of
+        # hunting forever for a row that isn't there.  Without this, a row end
+        # with residual sparse clutter (which keeps the FOLLOW-exit row-end
+        # check from tripping) leaves the robot stuck in ACQUIRE at the field
+        # edge.  Uses the same continuous-absence requirement as a real row end.
+        if self._came_from_follow:
+            if est.row_end_confidence >= self.row_end_conf:
+                self._acq_rowend_count += 1
+            else:
+                self._acq_rowend_count = 0
+            if acquire_rowend_escape(self._came_from_follow,
+                                     self._acq_rowend_count,
+                                     row_end_frames=self.row_end_frames):
+                self._enter(_S.ROW_END)
+                return 0.0, 0.0
+
         if self.ekf is not None:
             # EKF-aware: once the filter absorbs ≥2 real measurements its
             # std_lateral drops to ~0.04 m and stays below 0.08 m through
@@ -734,6 +755,12 @@ class RowNavigator:
                 print(f"\n[navigator] {prev_state} -> {state}{est_hdg}")
             else:
                 print(f"\n[navigator] {prev_state} -> {state}")
+            if state == _S.ACQUIRE:
+                # Remember whether we arrived here by LOSING a row we were
+                # following (vs starting up / post-turn): only then may ACQUIRE
+                # escape to ROW_END on a sustained empty crop band.
+                self._came_from_follow = (prev_state == _S.FOLLOW)
+                self._acq_rowend_count = 0
             if state == _S.ACQUIRE and self.ekf is not None:
                 # Don't reset EKF when resuming from OBSTACLE_WAIT — the robot
                 # was stationary, so the EKF state (heading, lateral) is still

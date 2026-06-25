@@ -1,6 +1,7 @@
 """Unit tests for navigation/state_logic.py — pure navigator branch logic."""
 from navigation.state_logic import (
-    follow_loss_is_row_end, follow_loss_action, approach_action)
+    follow_loss_is_row_end, follow_loss_action, approach_action,
+    acquire_rowend_escape)
 
 APPROACH_FRAMES = 3
 APPROACH_MAX = 3.0
@@ -116,3 +117,35 @@ def test_approach_stops_at_field_edge():
 def test_approach_follow_beats_stop_at_max_dist():
     """If the row locks on the same scan the max distance is reached, follow."""
     assert appr(APPROACH_FRAMES, APPROACH_MAX) == "FOLLOW"
+
+
+# ---------------------------------------------------------------------------
+# acquire_rowend_escape — unstick ACQUIRE at a row end
+# ---------------------------------------------------------------------------
+
+ROW_END_FRAMES_ESC = 15
+
+
+def escape(came_from_follow, count):
+    return acquire_rowend_escape(
+        came_from_follow, count, row_end_frames=ROW_END_FRAMES_ESC)
+
+
+def test_acquire_escapes_to_rowend_after_following():
+    """Stuck in ACQUIRE after FOLLOW with the crop band empty long enough → the
+    row ended, escape to ROW_END (the field bug: residual clutter sent FOLLOW
+    to ACQUIRE and it hung forever at the row end)."""
+    assert escape(True, ROW_END_FRAMES_ESC) is True
+    assert escape(True, ROW_END_FRAMES_ESC + 10) is True
+
+
+def test_acquire_no_escape_at_startup():
+    """ACQUIRE not entered from FOLLOW (startup / post-turn) must NOT escape —
+    there is no row behind us to have 'ended'."""
+    assert escape(False, 100) is False
+
+
+def test_acquire_no_escape_before_sustained():
+    """A brief empty patch in ACQUIRE is not yet a row end."""
+    assert escape(True, ROW_END_FRAMES_ESC - 1) is False
+    assert escape(True, 0) is False

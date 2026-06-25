@@ -92,3 +92,26 @@ def approach_action(
         return "STOP"
     return "DRIVE"
 
+
+def acquire_rowend_escape(
+    came_from_follow: bool,
+    rowend_count: int,
+    *,
+    row_end_frames: int,
+) -> bool:
+    """True when a stalled ACQUIRE should escape to ROW_END (the headland).
+
+    The FOLLOW-exit row-end check can be fooled into dropping to ACQUIRE at a
+    real row end — e.g. residual sparse clutter (a few straggler/weed returns)
+    keeps ``row_end_confidence`` below threshold, or a short row leaves
+    ``row_dist`` under ``row_end_min_dist``.  ACQUIRE is otherwise a dead end
+    (stationary, hunting forever for a row that isn't there), so the robot hangs
+    at the field edge.
+
+    When ACQUIRE was entered *from FOLLOW* (``came_from_follow`` — we were
+    actively on a row, not at startup or post-turn) and the crop band ahead has
+    been genuinely empty for ``row_end_frames`` consecutive scans
+    (``rowend_count``), the row has ended → escape to ROW_END.
+    """
+    return came_from_follow and rowend_count >= row_end_frames
+

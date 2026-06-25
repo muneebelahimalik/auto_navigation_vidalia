@@ -18,6 +18,16 @@ Work toward the row-to-row turn milestone (built on the v0.1.0 baseline).
   elevated forward objects so the mount yaw can be re-verified to ~1° any time
   the LiDAR is touched (`--range 3`, read the straight-ahead azimuth).
 
+### Fixed (cont.)
+- **FOLLOW→ACQUIRE hang at the real row end.** At a row end with residual sparse
+  clutter (~40 straggler/weed returns flickering in the ROI) `row_end_confidence`
+  never crossed 0.70, and/or a short row left `row_dist` under `row_end_min_dist`,
+  so the FOLLOW-exit check fell to the ACQUIRE branch — which had no row-end
+  escape and hung forever hunting for a row that isn't there. New **ACQUIRE
+  row-end escape** (`state_logic.acquire_rowend_escape`): when ACQUIRE was entered
+  *from FOLLOW* and the crop band is empty for `row_end_frames` consecutive scans,
+  go to ROW_END → headland. Unit-tested.
+
 ### Added
 - **APPROACH leg closes the row-to-row loop.** The U-turn ends at the headland
   margin pointing down the next row but with no crop in the ROI yet; the old
