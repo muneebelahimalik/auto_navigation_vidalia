@@ -34,3 +34,35 @@ def follow_loss_is_row_end(
         which should re-ACQUIRE rather than turn.
     """
     return row_dist >= row_end_min_dist and row_end_confidence >= row_end_conf
+
+
+def follow_loss_action(
+    miss_count: int,
+    is_end: bool,
+    *,
+    row_end_frames: int,
+    follow_miss_thresh: int,
+) -> str:
+    """Decide what a low-confidence FOLLOW scan should do.
+
+    ``miss_count`` is how many CONSECUTIVE sub-threshold scans have occurred
+    (it resets to 0 the instant crop reappears, so an *intermittent* dropout —
+    e.g. crop flickering out on a slope — never accumulates it).  ``is_end`` is
+    ``follow_loss_is_row_end(...)``.
+
+    Returns one of:
+      * ``"ROW_END"`` — a real row end: the geometry looks like an end AND the
+        crop has been *continuously* absent for ``row_end_frames`` scans.  The
+        long continuous requirement is what stops a brief slope dropout (where
+        the crop keeps reappearing and resets ``miss_count``) from faking a row
+        end and triggering a spurious headland turn.
+      * ``"ACQUIRE"`` — not a row end (crop still partly present) and the lock
+        has been poor for ``follow_miss_thresh`` scans: re-acquire.
+      * ``"WAIT"`` — pause in FOLLOW (v=0) and keep waiting; not yet conclusive.
+    """
+    if is_end:
+        return "ROW_END" if miss_count >= row_end_frames else "WAIT"
+    if miss_count >= follow_miss_thresh:
+        return "ACQUIRE"
+    return "WAIT"
+

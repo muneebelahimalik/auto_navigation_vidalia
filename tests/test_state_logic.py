@@ -1,5 +1,14 @@
 """Unit tests for navigation/state_logic.py — pure navigator branch logic."""
-from navigation.state_logic import follow_loss_is_row_end
+from navigation.state_logic import follow_loss_is_row_end, follow_loss_action
+
+ROW_END_FRAMES = 15
+FOLLOW_MISS_THRESH = 4
+
+
+def action(miss_count, is_end):
+    return follow_loss_action(
+        miss_count, is_end,
+        row_end_frames=ROW_END_FRAMES, follow_miss_thresh=FOLLOW_MISS_THRESH)
 
 MIN_DIST = 1.5
 END_CONF = 0.70
@@ -37,3 +46,35 @@ def test_thresholds_are_inclusive():
 def test_just_below_thresholds_is_not_row_end():
     assert is_end(MIN_DIST - 0.01, 1.0) is False
     assert is_end(6.6, END_CONF - 0.01) is False
+
+
+# ---------------------------------------------------------------------------
+# follow_loss_action — what a low-confidence FOLLOW scan should do
+# ---------------------------------------------------------------------------
+
+def test_slope_dropout_does_not_turn():
+    """Regression: a brief crop dropout on a slope (looks like a row end via
+    distance+end-conf, but only a few consecutive misses) must NOT turn — the
+    field bug where the robot took a headland turn mid-row on a slope."""
+    assert action(1, True) == "WAIT"
+    assert action(4, True) == "WAIT"      # 4 was the old (buggy) trigger
+    assert action(14, True) == "WAIT"
+
+
+def test_sustained_absence_is_row_end():
+    """A long CONTINUOUS absence past a real row IS the row end → turn."""
+    assert action(ROW_END_FRAMES, True) == "ROW_END"
+    assert action(ROW_END_FRAMES + 5, True) == "ROW_END"
+
+
+def test_non_row_end_loss_reacquires():
+    """Crop still partly present (not a row end) and a sustained poor lock →
+    re-acquire, never turn."""
+    assert action(FOLLOW_MISS_THRESH, False) == "ACQUIRE"
+    assert action(20, False) == "ACQUIRE"
+
+
+def test_short_non_row_end_loss_waits():
+    """A 1–3 scan dropout that isn't a row end just pauses."""
+    assert action(1, False) == "WAIT"
+    assert action(FOLLOW_MISS_THRESH - 1, False) == "WAIT"

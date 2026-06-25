@@ -36,7 +36,7 @@ from canbus.canbus_interface import CanbusInterface
 from lidar.lidar_driver import LidarDriver
 from lidar.obstacle_filter import tilt_correct_pts, yaw_correct_pts
 from navigation.headland import HeadlandTurn
-from navigation.state_logic import follow_loss_is_row_end
+from navigation.state_logic import follow_loss_is_row_end, follow_loss_action
 from navigation.row_controller import PurePursuitController
 from navigation.row_perception import RowDetector, RowEstimate
 from navigation.row_safety import SafetyMonitor
@@ -101,7 +101,7 @@ class RowNavigator:
         acquire_conf: float = 0.35,
         acquire_frames: int = 5,
         row_end_conf: float = 0.70,
-        row_end_frames: int = 8,
+        row_end_frames: int = 15,
         row_end_min_dist: float = 1.5,
         obstacle_clear_secs: float = 1.5,
         row_end_green: float = 0.04,
@@ -586,27 +586,30 @@ class RowNavigator:
 
         if est.confidence < min_conf:
             self._follow_miss_count += 1
-            if self._follow_miss_count >= self.follow_miss_thresh:
+            # Crop running out trips BOTH the row-end signal and the miss
+            # counter at once, so the loss must be classified.  A REAL row end
+            # needs a long CONTINUOUS crop absence (row_end_frames); a brief
+            # dropout on a slope keeps reappearing and resets the counter, so it
+            # can never reach that and fake a headland turn.  A non-row-end loss
+            # (crop still partly present) re-acquires after follow_miss_thresh.
+            is_end = follow_loss_is_row_end(
+                self._row_dist, est.row_end_confidence,
+                row_end_min_dist=self.row_end_min_dist,
+                row_end_conf=self.row_end_conf)
+            action = follow_loss_action(
+                self._follow_miss_count, is_end,
+                row_end_frames=self.row_end_frames,
+                follow_miss_thresh=self.follow_miss_thresh)
+            if action == "ROW_END":
                 self._follow_miss_count = 0
-                # Crop running out trips BOTH the row-end signal and the
-                # low-confidence miss counter at the same instant, and the miss
-                # counter (4) is shorter than row_end_frames (8), so without
-                # this check the row END is always misread as a lost lock and
-                # the headland turn never starts.  When we have driven a real
-                # row (past row_end_min_dist) and the crop band ahead is
-                # genuinely empty (high row_end_confidence), this sustained loss
-                # IS the row end → ROW_END (→ headland).  Otherwise it is a true
-                # mid-row loss → ACQUIRE to re-lock.
-                if follow_loss_is_row_end(
-                        self._row_dist, est.row_end_confidence,
-                        row_end_min_dist=self.row_end_min_dist,
-                        row_end_conf=self.row_end_conf):
-                    self._enter(_S.ROW_END)
-                else:
-                    self._enter(_S.ACQUIRE)
-                    self._acq_count = 0
+                self._enter(_S.ROW_END)
                 return 0.0, 0.0
-            # Not enough consecutive misses — pause in FOLLOW, wait for row to reappear.
+            if action == "ACQUIRE":
+                self._follow_miss_count = 0
+                self._enter(_S.ACQUIRE)
+                self._acq_count = 0
+                return 0.0, 0.0
+            # WAIT: pause in FOLLOW (v=0), wait for the row to reappear.
             return 0.0, 0.0
         self._follow_miss_count = 0
 

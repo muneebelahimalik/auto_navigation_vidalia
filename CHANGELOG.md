@@ -31,15 +31,17 @@ Work toward the row-to-row turn milestone (built on the v0.1.0 baseline).
   (0.76 m, the in-strip soybean-row separation used by the detector).
 
 ### Fixed
-- **Row end never reached the headland turn.** Crop running out trips both the
-  row-end signal and the low-confidence miss counter at once, and the miss
-  counter (4) is shorter than the row-end confirmation (8), so `FOLLOW` always
-  fell through to `ACQUIRE` and the turn never started (field-observed: followed
-  6.6 m, crop ended, went to ACQUIRE). When the miss counter trips, the navigator
-  now routes to `ROW_END` if a real row was driven (`row_dist ≥ row_end_min_dist`)
-  and the crop band ahead is genuinely empty (`row_end_confidence ≥ row_end_conf`),
-  else `ACQUIRE`. Logic extracted to dependency-free `navigation/state_logic.py`
-  and unit-tested (`test_state_logic.py`).
+- **Row end never reached the headland turn**, then **spurious turns on slopes.**
+  Crop running out trips both the row-end signal and the low-confidence miss
+  counter at once. First fix routed the miss to `ROW_END` when a real row had
+  been driven and the band ahead was empty — but a 4-frame trigger then misread
+  a brief crop **dropout on a slope** (crop flickering 0↔700) as a row end and
+  started a headland turn mid-row. Final logic (`navigation/state_logic.py
+  follow_loss_action`): a real row end requires a *long continuous* crop absence
+  (`row_end_frames`, raised 8→15) — the miss counter resets the instant crop
+  reappears, so an intermittent slope dropout can never accumulate it; a
+  non-row-end loss re-acquires after `follow_miss_thresh`; otherwise wait.
+  Unit-tested incl. the slope-dropout regression (`action(4, True) == "WAIT"`).
 
 ### Notes
 - Logic is unit-tested (filter-vs-wheel selection, latching, distinct shift
