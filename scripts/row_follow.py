@@ -427,8 +427,10 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
         first_turn_sign=(1.0 if args.turn_dir == "right" else -1.0),
         headland_speed=args.headland_speed,
         headland_turn_rate=args.headland_turn_rate,
+        headland_radius=args.headland_radius,
         approach_speed=args.approach_speed,
         approach_max_dist=args.approach_max_dist,
+        post_turn_max_dist=args.post_turn_max_dist,
         heading_source=filter_heading,
         align_heading=args.align_heading,
         align_rate=args.align_speed,
@@ -457,9 +459,11 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
     print(f"  mode    : {'AUTONOMOUS — robot WILL move' if args.auto else 'perception-only (no motion)'}")
     print(f"  rows    : {args.rows}   headland turns: {'on' if args.headland else 'off'}")
     if args.headland:
-        print(f"  headland: U-turn first={args.turn_dir} (then alternating)  "
-              f"row_spacing={args.row_spacing:.2f}m  exit={args.headland_exit:.2f}m  "
-              f"speed={args.headland_speed:.2f}m/s  turn={args.headland_turn_rate:.2f}rad/s")
+        radius_str = (f"{args.headland_radius:.2f}m" if args.headland_radius > 0.0
+                      else f"auto ({args.headland_shift / 2:.2f}m)")
+        print(f"  headland: arc U-turn first={args.turn_dir} (then alternating)  "
+              f"shift={args.headland_shift:.2f}m  radius={radius_str}  "
+              f"exit={args.headland_exit:.2f}m  rate={args.headland_turn_rate:.2f}rad/s")
     print(f"  speed   : {args.speed:.2f} m/s max   SLAM map: {'on' if args.slam else 'off'}")
     print(f"  crop    : h=[{args.crop_min:.2f},{args.crop_max:.2f}]m  roi_x=±{args.roi_x:.2f}m")
     print(f"  safety  : fwd_h={args.obstacle_height:.2f}m  tire_h={tire_h:.2f}m  "
@@ -583,15 +587,29 @@ def main() -> None:
     parser.add_argument("--approach-max-dist", type=float, default=3.0, metavar="M",
                         help="Max distance (m) the APPROACH leg drives searching for the next "
                              "row before stopping (field edge / overshoot guard; default: 3.0).")
+    parser.add_argument("--post-turn-max-dist", type=float, default=5.0, metavar="M",
+                        help="Cumulative distance (m) the robot may travel after a U-turn "
+                             "(APPROACH creep + any short FOLLOW segments) without establishing "
+                             "a stable down-row FOLLOW before stopping — a hard guard against "
+                             "driving off the end of the field (default: 5.0).")
     parser.add_argument("--headland-exit", type=float, default=1.0, metavar="M",
                         help="Straight distance (m) driven past the row end before the "
-                             "first pivot, to clear the body of the last plants (default: 1.0).")
+                             "arc, to clear the body of the last plants AND give the LiDAR "
+                             "room to confirm the row really ended (blind inside ~1.5 m); if "
+                             "crop reappears during this leg the turn aborts back to FOLLOW "
+                             "(default: 1.0).")
     parser.add_argument("--headland-speed", type=float, default=0.15, metavar="M",
-                        help="Forward speed (m/s) during the straight headland phases "
+                        help="Forward speed (m/s) during the straight headland EXIT phase "
                              "(default: 0.15).")
     parser.add_argument("--headland-turn-rate", type=float, default=0.35, metavar="R",
-                        help="Pivot rate (rad/s) during the two 90° headland turns "
-                             "(default: 0.35).")
+                        help="Angular rate (rad/s) of the headland U-turn arc "
+                             "(default: 0.35). Arc forward speed = radius × this rate.")
+    parser.add_argument("--headland-radius", type=float, default=0.0, metavar="M",
+                        help="Headland U-turn arc radius (m). Default 0 = auto "
+                             "(headland_shift / 2, the maximum-radius semicircle that lands "
+                             "on the next strip). A moving arc scrubs far less than an "
+                             "in-place pivot, so the wheel-heading-closed turn reaches a true "
+                             "180°.")
     parser.add_argument("--slam", action="store_true",
                         help="Build an occupancy-grid map in the background")
     parser.add_argument("--speed", type=float, default=0.30, metavar="M",

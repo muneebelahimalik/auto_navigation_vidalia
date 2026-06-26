@@ -280,7 +280,7 @@ async for event, message in EventClient(config).subscribe(config.subscriptions[0
 | `navigation/row_navigator.py` | State machine: ACQUIRE → FOLLOW → ROW_END → HEADLAND / OBSTACLE_WAIT; `/dev/shm` bridge writer |
 | `navigation/row_navigator_cam.py` | Camera-only state machine (same states + closed-loop headland) |
 | `navigation/row_perception.py` | PCA-based LiDAR row detector; single-row + dual-row (midpoint) modes |
-| `navigation/headland.py` | **Closed-loop U-turn** driver (odometry feedback); EXIT→TURN_A→SHIFT→TURN_B |
+| `navigation/headland.py` | **Closed-loop arc U-turn** driver (odometry/filter heading feedback); EXIT→ARC (180° semicircle, radius = shift/2) |
 | `navigation/odometry.py` | Wheel odometry (measured AmigaTpdo1 speed; commanded-velocity fallback) |
 | `navigation/row_safety.py` | Three-zone obstacle monitor (forward + left/right tire tracks) |
 | `navigation/row_controller.py` | Pure-pursuit speed/steering controller |
@@ -399,14 +399,26 @@ visible row ± half the row spacing.
 
 ```
 ROW_END ─► HEADLAND ──────────────────────────► APPROACH ──► FOLLOW (next row)
-            EXIT  (drive exit_dist straight, clear last plants)
-            TURN_A(pivot 90° toward next row — heading feedback)
-            SHIFT (drive headland_shift straight to the next strip)
-            TURN_B(pivot 90° same direction — now aligned down next row)
+            EXIT (drive exit_dist straight, clear last plants;
+                  abort back to FOLLOW if crop reappears — blind-spot guard)
+            ARC  (smooth 180° arc, radius = shift/2 — the maximum-radius
+                  semicircle that lands on the next strip)
                                                   └─ APPROACH: creep forward into
                                                      the next row until perception
                                                      re-locks, then hand to FOLLOW
 ```
+
+**Why an arc, not in-place pivots (field-critical):** the previous design
+pivoted 90° in place twice (`TURN_A`/`TURN_B`).  A 4-wheel skid-steer **scrubs**
+all four wheels when pivoting in place, so the wheel-derived
+`measured_angular_rate` (AmigaTpdo1) badly over-reports the body rotation — in
+the field each commanded "90°" pivot finished ~45°, the two summed to ~90°
+instead of 180°, the robot ended up pointing *across* the rows and **drove off
+the field**.  A rolling **arc** scrubs far less, so the heading-closed turn
+reaches a true 180°.  The largest radius that still lands on the next strip is a
+**semicircle of radius = `headland_shift / 2`** (≈0.76 m); `--headland-radius`
+overrides it, `--headland-turn-rate` is the arc's angular rate (arc forward
+speed = radius × rate).
 
 **APPROACH leg (critical for the loop to close):** the U-turn ends at the
 headland margin *pointing down the next row but with no crop yet in the ROI*.
@@ -417,21 +429,34 @@ row is solidly detected (`acquire_conf` for a few scans), then hands off to
 FOLLOW, whose pure-pursuit corrects any residual lateral error.  Bounded by
 `--approach-max-dist` (3.0 m): if no row is found in that distance (true field
 edge, or the turn overshot) the robot STOPS rather than driving on blindly.
-Status shows `ENTER 1.2/3.0m acq=2/3`.
+Status shows `ENTER 1.2/3.0m acq=2/3` (or `SETTLE …` once it has handed to a
+first, still-marginal FOLLOW on the new row).
+
+**Off-the-field guard:** `--post-turn-max-dist` (default 5.0 m) bounds the TOTAL
+distance travelled after a U-turn (APPROACH creep + any short, un-settled FOLLOW
+segments) before a stable down-row FOLLOW is established; if spent without
+settling, the robot STOPS instead of hunting off the end of the field.
+
+**Blind-spot row-end confirmation:** the VLP-16 is blind inside ~1.5 m, so the
+last plants in the near zone (or a brief sparse patch) can read as a row end.
+The straight EXIT leg doubles as a confirmation — if solid crop reappears in the
+ROI during EXIT (before any rotation) the row had not actually ended and the
+turn **aborts back to FOLLOW** (`headland_abort_frames`, default 3).  This is
+the "take a little extra distance unless obstacle" check; a real obstacle still
+pauses the leg via the safety monitor.
 
 Turn direction alternates each row for **serpentine coverage** (right, left,
 right, …), starting from `--turn-dir` (default right).  The loop repeats until
 `--rows N` rows are complete, then DONE.
 
-**Pivot heading source (`navigation/filter_heading.py`):** the two 90° pivots
-turn IN PLACE, where a 4-wheel skid-steer scrubs and slips, so wheel-integrated
-heading (AmigaTpdo1 `measured_angular_rate`) drifts — a 90° pivot can finish
-10–20° off.  The turn therefore prefers the **filter service absolute heading**
-(GPS+IMU `FilterState`, port 20001) when it is fresh and converged, falling back
-to wheel-odometry heading otherwise.  The choice is **latched at the start of
-each turn** so a pivot never mixes two heading references.  The active source is
-shown in the status line as `R-UTURN:TURN_A[filter]` / `[wheel]`.  Straight
-EXIT/SHIFT distances always use wheel odometry (accurate for straight driving).
+**Arc heading source (`navigation/filter_heading.py`):** the arc still closes on
+heading, and even a rolling arc accumulates some wheel-heading error, so the
+turn prefers the **filter service absolute heading** (GPS+IMU `FilterState`,
+port 20001) when it is fresh and converged, falling back to wheel-odometry
+heading otherwise.  The choice is **latched at the start of each turn** so a turn
+never mixes two heading references.  The active source is shown in the status
+line as `R-UTURN:ARC[filter]` / `[wheel]`.  The straight EXIT distance always
+uses wheel odometry (accurate for straight driving).
 
 **SHIFT distance vs row spacing — two different numbers:** `--headland-shift`
 (default **1.52 m**) is the centre-to-centre distance to the NEXT strip the
@@ -598,11 +623,13 @@ Re-run the sweep if the mount is disturbed.
 | `--row-spacing M` | **0.76** | In-strip soybean-row separation: LiDAR dual-row peak-pairing prior + single-side fallback spacing, and the dual-camera single-row fallback spacing. NOT the headland shift distance |
 | `--headland-shift M` | **1.52** | Centre-to-centre distance the U-turn SHIFTs to the next strip the robot straddles (distinct from `--row-spacing`) |
 | `--turn-dir D` | **right** | Direction of the first U-turn (`right`/`left`); subsequent turns alternate |
-| `--headland-exit M` | **1.0** | Straight distance driven past the row end before the first pivot |
-| `--headland-speed M` | **0.15** | Forward speed during straight headland phases (m/s) |
-| `--headland-turn-rate R` | **0.35** | Pivot rate during the two 90° turns (rad/s) |
+| `--headland-exit M` | **1.0** | Straight distance driven past the row end before the arc; doubles as the blind-spot row-end confirmation (turn aborts back to FOLLOW if crop reappears during it) |
+| `--headland-speed M` | **0.15** | Forward speed during the straight headland EXIT phase (m/s) |
+| `--headland-turn-rate R` | **0.35** | Angular rate (rad/s) of the U-turn arc; arc forward speed = radius × this rate |
+| `--headland-radius M` | **0** (auto) | U-turn arc radius (m); 0 = auto = `headland_shift / 2` (max-radius semicircle that lands on the next strip). A moving arc scrubs far less than an in-place pivot, so the heading-closed turn reaches a true 180° |
 | `--approach-speed M` | **0.12** | Forward speed of the post-turn APPROACH leg that drives into the next row until perception re-locks (m/s) |
 | `--approach-max-dist M` | **3.0** | Max distance the APPROACH leg searches for the next row before stopping (field-edge / overshoot guard, m) |
+| `--post-turn-max-dist M` | **5.0** | Cumulative distance after a U-turn (APPROACH creep + short un-settled FOLLOW segments) before a stable down-row FOLLOW is required; hard guard against driving off the field |
 | `--slam` | off | Enable SLAM odometry integration (currently no-op) |
 | `--speed M` | 0.30 | Max forward speed m/s |
 | `--lidar-tilt DEG` | **21.5** | Nose-down PITCH correction (degrees), applied AFTER `--lidar-yaw`. The body lean resolves into a ~21.5° robot-frame pitch once the yaw is corrected; field-calibrated via `diag_birdseye.py --tilt-sweep 20.5:22.5:0.25` (ground slope → 0 at 21.5°, unchanged across the yaw re-calibration) |
@@ -683,9 +710,9 @@ Re-run the sweep if the mount is disturbed.
        │  U-turn complete                                         ▼
        │  ┌──────────────────┐   more rows + --headland    ┌──────────────┐
        └──│     HEADLAND     │◄────────────────────────────│   ROW_END    │
-          │ EXIT→TURN_A→     │                             └──────┬───────┘
-          │ SHIFT→TURN_B     │   last row (no --headland)         │
-          │ (odometry loop)  │                                    ▼
+          │ EXIT→ARC (180°   │                             └──────┬───────┘
+          │ semicircle arc,  │   last row (no --headland)         │
+          │ radius shift/2)  │                                    ▼
           └──────────────────┘                            ┌──────────────┐
                                                           │     DONE     │
                                                           └──────────────┘
@@ -1017,6 +1044,9 @@ OAK-D defaults: hfov=73°, vfov=54°, 640×400 → scale factor ≈ 0.91.
 | Robot stuck after the U-turn ("nothing in front", goes to ACQUIRE and hangs) | The turn ends at the headland margin with no crop yet in the ROI; ACQUIRE is stationary so it never sees the next row | New **APPROACH** state (`row_navigator._step_approach` / `state_logic.approach_action`): after the turn, creep forward at `--approach-speed` until the next row is solidly detected → FOLLOW; stop after `--approach-max-dist` if none found. Tests `test_approach_*` |
 | Robot goes FOLLOW→ACQUIRE at the real row end and hangs (never reaches the turn) | The FOLLOW-exit row-end check was fooled: residual sparse clutter (~40 straggler/weed pts) kept `row_end_confidence` below 0.70, and/or a short row left `row_dist` < `row_end_min_dist`, so it fell to the ACQUIRE ("lost lock") branch — and ACQUIRE had no row-end escape, hunting forever for a row that isn't there | **ACQUIRE row-end escape** (`_step_acquire` / `state_logic.acquire_rowend_escape`): when ACQUIRE was entered FROM FOLLOW (we were on a row) and the crop band ahead is empty for `row_end_frames` consecutive scans → ROW_END (→ headland). Tests `test_acquire_escapes_*` |
 | After the U-turn the robot follows the next row briefly (~0.3 m) then drops to ACQUIRE and hangs | The U-turn→APPROACH→FOLLOW handoff lands on the next row with a marginal, partly-in-ROI view (n≈70 vs ≈700 centred, conf flickering around 0.35); FOLLOW dropped to a *stationary* ACQUIRE, and a stationary sensor on a sparse half-visible row can't improve its view | **Post-turn settling window** (`state_logic.post_turn_loss_action`): from the end of the turn until `post_turn_settle_dist` (2.0 m) of continuous FOLLOW down the new row, a non-row-end FOLLOW loss re-enters **APPROACH** (keep creeping forward) instead of stalling in ACQUIRE — the moving sensor fills the ROI and re-locks; still bounded by `--approach-max-dist`. Status shows `SETTLE`. Tests `test_post_turn_*` |
+| U-turn runs all phases on wheel heading but the robot physically rotates only ~90°, ends up pointing across the rows and drives off the field | An in-place pivot on a 4-wheel skid-steer scrubs all wheels, so the wheel-derived `measured_angular_rate` over-reports body rotation — each "90°" pivot finished ~45°, two summed to ~90° not 180° | **Arc U-turn** (`headland.py` rewritten EXIT→ARC): drive a smooth 180° semicircle of radius `shift/2` instead of two in-place pivots; a rolling arc scrubs far less so the heading-closed turn reaches a true 180°. `--headland-radius` overrides. Tests `test_arc_*` |
+| Robot drives off the end of the field after a turn, "following" spurious crop returns | The post-turn settling guard only bounded the APPROACH creep; a confident-but-wrong long FOLLOW lock (or repeated ping-pong) escaped the bound | **Cumulative post-turn guard** (`post_turn_max_dist`, 5.0 m): bounds total travel after a U-turn (APPROACH + short FOLLOW segments) before a stable down-row FOLLOW is required, else STOP |
+| Row end declared early on the LiDAR near blind spot (< 1.5 m) | The last plants in the near zone leave the ROI sparse, reading as a row end before the row truly ends | **Blind-spot EXIT confirmation** (`_step_headland`): the turn's straight EXIT leg aborts back to FOLLOW if solid crop reappears in the ROI before any rotation (`headland_abort_frames`); a real obstacle still pauses the leg via the safety monitor |
 
 ---
 

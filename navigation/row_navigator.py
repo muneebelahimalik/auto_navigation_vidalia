@@ -117,9 +117,11 @@ class RowNavigator:
         first_turn_sign: float = 1.0,
         headland_speed: float = 0.15,
         headland_turn_rate: float = 0.35,
+        headland_radius: float = 0.0,
         approach_speed: float = 0.12,
         approach_max_dist: float = 3.0,
         approach_acquire_frames: int = 3,
+        post_turn_max_dist: float = 5.0,
         heading_source=None,
         align_heading: bool = False,
         align_thresh: float = 0.14,
@@ -186,6 +188,7 @@ class RowNavigator:
         self.approach_speed = approach_speed
         self.approach_max_dist = approach_max_dist
         self.approach_acquire_frames = approach_acquire_frames
+        self.post_turn_max_dist = post_turn_max_dist
         self._approach_dist = 0.0
         self.first_turn_sign = 1.0 if first_turn_sign >= 0 else -1.0
         self.headland_speed = headland_speed
@@ -205,6 +208,7 @@ class RowNavigator:
                 exit_dist=headland_exit_dist,
                 speed=headland_speed,
                 turn_rate=headland_turn_rate,
+                turn_radius=(headland_radius if headland_radius > 0.0 else None),
                 heading_source=heading_source,
             )
         self.align_heading = align_heading
@@ -228,6 +232,9 @@ class RowNavigator:
         self._acq_rowend_count: int = 0   # consecutive empty-crop scans while in ACQUIRE
         self._post_turn: bool = False     # settling onto the next row after a headland turn
         self._post_turn_settle_dist: float = 2.0  # row_dist in FOLLOW that ends post-turn settling
+        self._post_turn_dist: float = 0.0  # cumulative travel since the turn (settling guard)
+        self._headland_abort_count: int = 0  # consecutive solid-crop frames during EXIT
+        self.headland_abort_frames: int = 3  # frames of re-found crop to abort a turn
         self._last_green: Optional[float] = None  # latest camera green fraction (row-end cross-check)
         self._turn_sign = 1.0             # last headland turn direction (for status)
         self._t_prev = time.monotonic()
@@ -467,14 +474,19 @@ class RowNavigator:
                 d_before = self.odometry.distance
                 self.odometry.tick(linear, angular, dt)
                 step = max(0.0, self.odometry.distance - d_before)
-                if self.state == _S.FOLLOW:
-                    self._row_dist += step
-                elif self.state == _S.APPROACH:
-                    self._approach_dist += step
-            elif self.state == _S.FOLLOW:
-                self._row_dist += max(0.0, linear * dt)
+            else:
+                step = max(0.0, linear * dt)
+            if self.state == _S.FOLLOW:
+                self._row_dist += step
             elif self.state == _S.APPROACH:
-                self._approach_dist += max(0.0, linear * dt)
+                self._approach_dist += step
+            # Cumulative travel since the U-turn until a stable down-row FOLLOW
+            # is established — counts BOTH the APPROACH creep and any short,
+            # un-settled FOLLOW segments.  Bounds how far the robot may search
+            # for the next row before giving up, so it can never drive off the
+            # end of the field hunting for a row that isn't there.
+            if self._post_turn and self.state in (_S.FOLLOW, _S.APPROACH):
+                self._post_turn_dist += step
 
             await self._drive(linear, angular)
             self._print_status(est, safety, linear, angular)
@@ -517,7 +529,7 @@ class RowNavigator:
         if st == _S.ROW_END:
             return self._step_row_end()
         if st == _S.HEADLAND:
-            return self._step_headland(dt)
+            return self._step_headland(dt, est)
         if st == _S.APPROACH:
             return self._step_approach(est)
         return 0.0, 0.0   # DONE
@@ -706,16 +718,40 @@ class RowNavigator:
             self._turn_sign = self.first_turn_sign * (
                 1.0 if self._rows_done % 2 == 1 else -1.0)
             self._headland_turn.begin(self._turn_sign)
+            self._headland_abort_count = 0
             self._enter(_S.HEADLAND)
         else:
             self._enter(_S.DONE)
         return 0.0, 0.0
 
-    def _step_headland(self, dt: float) -> tuple[float, float]:
+    def _step_headland(self, dt: float, est=None) -> tuple[float, float]:
         """Closed-loop headland U-turn (odometry feedback via HeadlandTurn)."""
         if self._headland_turn is None:
             self._enter(_S.DONE)
             return 0.0, 0.0
+
+        # Blind-spot guard: the VLP-16 is blind inside ~1.5 m, so a brief sparse
+        # patch (or the last plants sitting in the near zone) can read as a row
+        # end.  The turn opens with a straight EXIT leg — drive that little bit
+        # of extra distance forward and, if solid crop comes back into the ROI,
+        # the row had NOT actually ended: abort the turn and resume FOLLOW.
+        # Only during EXIT (before any rotation), so an abort never leaves the
+        # robot half-turned.
+        if (est is not None and self._headland_turn.phase == "EXIT"
+                and est.valid and est.confidence >= self.acquire_conf):
+            self._headland_abort_count += 1
+            if self._headland_abort_count >= self.headland_abort_frames:
+                print(f"\n[navigator] row end was a LiDAR blind-spot gap — crop "
+                      f"reappeared during EXIT; resuming FOLLOW.")
+                self._headland_abort_count = 0
+                self._rows_done = max(0, self._rows_done - 1)  # undo the row-end count
+                self._enter(_S.FOLLOW)
+                self._row_end_count = 0
+                self._follow_miss_count = 0
+                return self.controller.compute(est)
+        else:
+            self._headland_abort_count = 0
+
         linear, angular = self._headland_turn.step(dt)
         if self._headland_turn.done:
             # The turn ends at the headland margin with no crop immediately
@@ -729,6 +765,7 @@ class RowNavigator:
             # is set, an early FOLLOW loss keeps creeping forward (back to
             # APPROACH) instead of stalling in a stationary ACQUIRE.
             self._post_turn = True
+            self._post_turn_dist = 0.0
             self._enter(_S.APPROACH)
             return 0.0, 0.0
         return linear, angular
@@ -744,6 +781,16 @@ class RowNavigator:
         genuinely missing next row (field edge / overshoot) stops the robot
         rather than driving on forever.
         """
+        # Cumulative settling guard: if the robot has travelled the whole
+        # post-turn budget (APPROACH creep + any short FOLLOW segments) without
+        # establishing a stable down-row FOLLOW, the next row isn't there —
+        # stop rather than keep driving off the end of the field.
+        if self._post_turn and self._post_turn_dist >= self.post_turn_max_dist:
+            print(f"\n[navigator] post-turn: no stable row within "
+                  f"{self.post_turn_max_dist:.1f} m of the U-turn — stopping "
+                  f"(field edge / turn overshoot).")
+            self._enter(_S.DONE)
+            return 0.0, 0.0
         if est.confidence >= self.acquire_conf and est.valid:
             self._acq_count += 1
         else:

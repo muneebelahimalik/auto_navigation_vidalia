@@ -16,10 +16,15 @@ class FakeOdo:
     def __init__(self):
         self.distance = 0.0
         self.theta = 0.0
+        self.x = 0.0
+        self.y = 0.0
 
     def apply(self, v, w, dt):
         self.distance += abs(v) * dt
+        theta_mid = self.theta + 0.5 * w * dt
         self.theta += w * dt
+        self.x += v * math.cos(theta_mid) * dt
+        self.y += v * math.sin(theta_mid) * dt
 
 
 def run_turn(turn_sign, row_spacing=0.76, exit_dist=1.0):
@@ -40,37 +45,52 @@ def run_turn(turn_sign, row_spacing=0.76, exit_dist=1.0):
 
 
 def test_right_uturn_phase_sequence_and_geometry():
-    odo, turn, phases = run_turn(+1.0)
+    odo, turn, phases = run_turn(+1.0, row_spacing=1.52)
     assert turn.done
-    assert phases[:4] == ["EXIT", "TURN_A", "SHIFT", "TURN_B"]
-    # Two 90-deg pivots clockwise => net heading ~ -pi (right U-turn).
-    assert odo.theta == pytest.approx(-math.pi, abs=0.15)
-    # Straight segments: exit + shift.
-    assert odo.distance == pytest.approx(1.0 + 0.76, abs=0.05)
+    assert phases[:2] == ["EXIT", "ARC"]
+    # A 180-deg clockwise arc => net heading ~ -pi (right U-turn).
+    assert odo.theta == pytest.approx(-math.pi, abs=0.1)
+    # Distance = exit + arc length (pi * radius), radius = shift/2 = 0.76.
+    expected = 1.0 + math.pi * 0.76
+    assert odo.distance == pytest.approx(expected, abs=0.05)
 
 
 def test_left_uturn_mirrors_heading():
     odo, turn, _ = run_turn(-1.0)
     assert turn.done
-    assert odo.theta == pytest.approx(+math.pi, abs=0.15)
+    assert odo.theta == pytest.approx(+math.pi, abs=0.1)
 
 
-def test_pivot_commands_are_in_place():
+def test_arc_command_is_a_moving_turn_not_a_pivot():
+    """The turn must ARC (linear > 0), not pivot in place — an in-place pivot
+    scrubs the wheels and the wheel heading over-reads, which is the field bug
+    where the U-turn only reached ~90°."""
     odo = FakeOdo()
-    turn = HeadlandTurn(odo, exit_dist=0.0)   # skip EXIT instantly
+    turn = HeadlandTurn(odo, row_spacing=1.52, exit_dist=0.0)  # skip EXIT
     turn.begin(+1.0)
     v, w = turn.step(0.05)
-    assert turn.phase == "TURN_A"
-    assert v == 0.0
+    assert turn.phase == "ARC"
+    assert v > 0.0                            # moving arc, not a pivot
     assert w < 0.0                            # right turn = clockwise = negative
+    # Radius defaults to shift/2; forward speed = radius * turn_rate.
+    assert v == pytest.approx(0.76 * 0.35, abs=1e-9)
 
 
-def test_headland_shift_uses_distinct_distance():
-    """SHIFT must use the headland shift distance (passed as row_spacing here),
-    independent of the detector's in-strip row spacing."""
-    odo, turn, _ = run_turn(+1.0, row_spacing=1.52, exit_dist=1.0)
-    assert turn.done
-    assert odo.distance == pytest.approx(1.0 + 1.52, abs=0.05)   # exit + shift
+def test_arc_radius_is_half_the_shift():
+    """The default arc is the maximum-radius semicircle that lands on the next
+    strip: lateral displacement over the 180° arc equals the shift distance."""
+    odo, turn, _ = run_turn(+1.0, row_spacing=1.52, exit_dist=0.0)
+    assert turn.turn_radius == pytest.approx(0.76)
+    # Initial heading is +x, so the lateral displacement of a 180° arc is along
+    # y and equals 2 * radius = shift; net x returns to ~0 (semicircle).
+    assert abs(odo.y) == pytest.approx(1.52, abs=0.05)
+    assert abs(odo.x) == pytest.approx(0.0, abs=0.05)
+
+
+def test_explicit_turn_radius_overrides_default():
+    odo = FakeOdo()
+    turn = HeadlandTurn(odo, row_spacing=1.52, turn_radius=0.5, exit_dist=0.0)
+    assert turn.turn_radius == 0.5
 
 
 # ---------------------------------------------------------------------------

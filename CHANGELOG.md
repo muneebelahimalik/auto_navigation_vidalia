@@ -8,6 +8,35 @@ versions are git tags on `main`.
 
 Work toward the row-to-row turn milestone (built on the v0.1.0 baseline).
 
+### Changed — arc U-turn (replaces in-place pivots)
+- **The U-turn now drives a smooth maximum-radius arc instead of two in-place
+  pivots.** Field failure: the robot ran all four pivot phases on wheel heading
+  yet physically rotated only ~90°, ended up pointing across the rows, and drove
+  off the field. Root cause: a 4-wheel skid-steer **scrubs** when pivoting in
+  place, so the wheel-derived `measured_angular_rate` badly over-reports the
+  body rotation — each "90°" pivot finished ~45°. A rolling **arc** scrubs far
+  less, so the heading-closed turn reaches a true 180°. The largest radius that
+  still lands on the next strip is a **semicircle of radius = shift/2**
+  (`navigation/headland.py` rewritten: phases `EXIT → ARC → DONE`). New
+  `--headland-radius` overrides the auto radius; `--headland-turn-rate` is now
+  the arc's angular rate (arc forward speed = radius × rate). Re-tested in
+  `tests/test_headland_odometry.py` (arc geometry, lateral displacement = shift,
+  moving-not-pivot command, filter-heading path).
+
+### Added — turn safety & robustness
+- **Hard guard against driving off the field.** A cumulative `post_turn_max_dist`
+  (default 5.0 m, `--post-turn-max-dist`) bounds the total distance travelled
+  after a U-turn — APPROACH creep plus any short, un-settled FOLLOW segments —
+  before a stable down-row FOLLOW is established. If the budget is spent without
+  settling, the robot STOPS rather than hunting off the end of the field.
+- **Row-end blind-spot confirmation.** The VLP-16 is blind inside ~1.5 m, so a
+  brief sparse patch or the last plants in the near zone can read as a row end.
+  The turn's straight EXIT leg now doubles as a confirmation: if solid crop
+  reappears in the ROI during EXIT (before any rotation), the row had not
+  actually ended — the turn **aborts back to FOLLOW** (`_step_headland`,
+  `headland_abort_frames`). This is the "take a little extra distance unless
+  obstacle" check; the safety monitor still pauses the leg on a real obstacle.
+
 ### Changed
 - **LiDAR yaw re-calibrated 71° → 66°** after a mount disturbance (lens
   cleaning rotated the sensor ~5°). Measured with the new `diag_birdseye.py`

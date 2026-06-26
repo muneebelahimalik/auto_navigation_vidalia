@@ -2,34 +2,41 @@
 """
 headland.py — Closed-loop headland U-turn onto the adjacent row.
 
-The previous headland manoeuvre was open-loop dead-reckoning: each phase ran for
-a fixed number of seconds at the commanded speed, so wheel slip, control latency
-and speed ramp-up all accumulated into large heading and position errors — the
-robot routinely finished the turn pointing several degrees off the next row.
+The first design dead-reckoned each phase for a fixed time; the second closed
+the loop on odometry but turned with **in-place pivots** (linear = 0, spin in
+place).  On a 4-wheel skid-steer an in-place pivot is the worst case for
+heading feedback: every wheel scrubs sideways, so the wheel-derived
+``measured_angular_rate`` over-reports the body rotation badly.  In the field a
+commanded 90° pivot finished closer to ~45°, and the two pivots summed to ~90°
+instead of 180° — the robot ended up pointing *across* the rows and drove off
+the field.
 
-``HeadlandTurn`` instead closes the loop on wheel odometry (measured wheel speed
-when the canbus telemetry is available, commanded-velocity dead-reckoning as a
-fallback).  Each phase advances only when the measured distance or heading
-change reaches its target, so the turn is accurate regardless of slip or latency.
+``HeadlandTurn`` now drives a **smooth constant-radius arc** instead.  Rolling
+the wheels through an arc scrubs far less than pivoting in place, so the
+heading estimate is much more accurate, and the largest radius that still lands
+the robot on the next strip is a **semicircle of radius = shift / 2** (a tighter
+radius would need a straight cross-segment; a wider one would overshoot the
+strip).  This is the "bigger radius" turn — maximally gentle for the geometry.
 
 U-turn geometry (right-hand turn shown; left mirrors the angular sign):
 
-        row N (just finished)          row N+1 (next)
+        row N (just finished)        row N+1 (next strip, `shift` over)
               │                              │
               │  ▲ heading in                ▼ heading out
-              │  │                           │
-        ──────┘  EXIT ──► TURN_A ──► SHIFT ──► TURN_B ──►
-                 (clear     (pivot     (cross    (pivot
-                  row end)   90°)       to next   90°)
-                                        strip)
+              │  │      ____arc____          │
+        ──────┘  EXIT ─/           \─────────┘
+                 (clear   semicircle, radius shift/2,
+                  row end)  turning a full 180°
 
 Phases
 ------
-EXIT    drive straight ``exit_dist`` m to carry the body past the last plants.
-TURN_A  pivot 90° toward the next row (in place; linear = 0).
-SHIFT   drive straight ``row_spacing`` m across to the adjacent strip.
-TURN_B  pivot 90° the same direction → now aligned down the next row.
-DONE    manoeuvre complete; hand control back to ACQUIRE.
+EXIT  drive straight ``exit_dist`` m to carry the body past the last plants
+      and give the LiDAR (which is blind inside ~1.5 m) room to confirm the row
+      really ended.
+ARC   drive a constant-radius arc (linear = radius·turn_rate, angular =
+      ±turn_rate) until the heading has swept a full 180° → now aligned back
+      down the next row.
+DONE  manoeuvre complete; hand control to APPROACH.
 
 The serpentine (boustrophedon) coverage pattern alternates turn direction every
 row: right U-turn, then left, then right …  The caller passes ``turn_sign`` to
@@ -47,7 +54,7 @@ def _ang_norm(a: float) -> float:
 
 
 class HeadlandTurn:
-    """Odometry-closed-loop U-turn driver.
+    """Odometry-closed-loop arc U-turn driver.
 
     Parameters
     ----------
@@ -56,18 +63,29 @@ class HeadlandTurn:
         CCW positive).  ``WheelOdometry`` satisfies this with measured wheel
         speed when available, commanded-velocity dead-reckoning otherwise.
     row_spacing : float
-        Lateral distance (m) to the adjacent strip the robot should straddle next.
+        Centre-to-centre distance (m) to the adjacent strip the robot should
+        straddle next (the headland *shift*).  Sets the arc radius to half this
+        so a 180° semicircle lands exactly on the next strip, unless
+        ``turn_radius`` is given explicitly.
     exit_dist : float
-        Straight distance (m) driven before the first pivot, to clear the row end.
+        Straight distance (m) driven before the arc, to clear the row end.
     speed : float
-        Forward speed (m/s) during the straight EXIT and SHIFT phases.
+        Forward speed (m/s) during the straight EXIT phase.
     turn_rate : float
-        Pivot rate (rad/s) during the two 90° turns.
+        Angular rate (rad/s) during the arc.  The arc's forward speed is
+        ``radius · turn_rate`` so the path is a true circle of that radius.
     angle_tol : float
-        Heading tolerance (rad) for completing each pivot.
+        Heading tolerance (rad) for completing the 180° arc.
+    turn_radius : float, optional
+        Explicit arc radius (m).  Defaults to ``row_spacing / 2`` (the
+        maximum-radius semicircle that lands on the next strip).
+    heading_source : object, optional
+        Absolute-heading source (FilterHeading): when fresh+converged the arc
+        closes on it instead of the slip-prone wheel-integrated heading.  The
+        choice is latched at ``begin()`` so a turn never mixes two references.
     """
 
-    PHASES = ("EXIT", "TURN_A", "SHIFT", "TURN_B", "DONE")
+    PHASES = ("EXIT", "ARC", "DONE")
 
     def __init__(
         self,
@@ -78,6 +96,7 @@ class HeadlandTurn:
         speed: float = 0.15,
         turn_rate: float = 0.35,
         angle_tol: float = 0.05,
+        turn_radius: float | None = None,
         heading_source=None,
     ) -> None:
         self.odometry = odometry
@@ -86,10 +105,13 @@ class HeadlandTurn:
         self.speed = speed
         self.turn_rate = turn_rate
         self.angle_tol = angle_tol
-        # Optional absolute-heading source (FilterHeading): when fresh+converged
-        # the 90° pivots close on it instead of the slip-prone wheel-integrated
-        # heading.  The choice is latched at begin() so a pivot never mixes two
-        # heading references mid-turn.
+        # Maximum-radius semicircle by default: R = shift/2 lands a 180° arc
+        # exactly on the next strip.  A caller may override for a tighter or
+        # wider turn (wider needs more headland room and overshoots the strip,
+        # which APPROACH + pure-pursuit then corrects laterally).
+        self.turn_radius = (
+            float(turn_radius) if turn_radius is not None else 0.5 * float(row_spacing)
+        )
         self.heading_source = heading_source
 
         self._phase = "DONE"
@@ -102,8 +124,8 @@ class HeadlandTurn:
     def begin(self, turn_sign: float) -> None:
         """Start a new U-turn.  ``turn_sign``: +1 = right, -1 = left."""
         self._sign = 1.0 if turn_sign >= 0 else -1.0
-        # Latch the pivot heading source for the whole turn: prefer the filter
-        # (IMU/GPS absolute heading) when it is usable, else wheel odometry.
+        # Latch the heading source for the whole turn: prefer the filter
+        # (IMU/GPS absolute heading) when usable, else wheel odometry.
         self._use_filter = bool(
             self.heading_source is not None and getattr(self.heading_source, "usable", False)
         )
@@ -134,10 +156,13 @@ class HeadlandTurn:
         ``dt`` is accepted for interface symmetry; progress is measured from
         odometry, not integrated here.
         """
-        # Pivot toward the next row: a right (CW) turn is negative angular
-        # velocity in the CCW-positive convention used by the canbus.
-        pivot = -self._sign * self.turn_rate
-        target_pivot = (math.pi / 2.0) - self.angle_tol
+        # Arc command: a right (CW) turn is negative angular velocity in the
+        # CCW-positive canbus convention.  Forward speed = radius·rate so the
+        # path is a circle of `turn_radius`.
+        arc_w = -self._sign * self.turn_rate
+        arc_v = self.turn_radius * self.turn_rate
+        # Full 180° U-turn (minus a small tolerance so we stop on time).
+        target_arc = math.pi - self.angle_tol
 
         # Re-evaluate after each phase change so a completed phase does not
         # waste a zero-command frame.
@@ -145,24 +170,14 @@ class HeadlandTurn:
             phase = self._phase
             if phase == "EXIT":
                 if self._dist_since() >= self.exit_dist:
-                    self._advance("TURN_A")
+                    self._advance("ARC")
                     continue
                 return self.speed, 0.0
-            if phase == "TURN_A":
-                if self._angle_since() >= target_pivot:
-                    self._advance("SHIFT")
-                    continue
-                return 0.0, pivot
-            if phase == "SHIFT":
-                if self._dist_since() >= self.row_spacing:
-                    self._advance("TURN_B")
-                    continue
-                return self.speed, 0.0
-            if phase == "TURN_B":
-                if self._angle_since() >= target_pivot:
+            if phase == "ARC":
+                if self._angle_since() >= target_arc:
                     self._advance("DONE")
                     continue
-                return 0.0, pivot
+                return arc_v, arc_w
             return 0.0, 0.0  # DONE
         return 0.0, 0.0
 
