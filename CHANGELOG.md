@@ -37,7 +37,22 @@ Work toward the row-to-row turn milestone (built on the v0.1.0 baseline).
   `tests/test_slam.py` (correction round-trip, ground-rejection regression, ICP,
   occupancy grid, engine smoke tests).
 
-### Changed — IMU-measured U-turn (replaces perception-only arc)
+### Changed — U-turn rotation from wheel heading when the IMU is offline
+- **The filter/IMU heading isn't published in the test field** (the filter
+  service needs a GPS fix it doesn't have), so the IMU-gated turn ran on its
+  arc-length fallback and **under-rotated** (~135°), landing the robot angled
+  across the rows. Fix: when the IMU heading isn't live, measure rotation from
+  the **wheel-odometry heading** (`measured_angular_rate`, always available)
+  scaled by `--turn-scrub-comp` (default 0.6) — it over-reports on a skid-steer
+  arc, but unlike a fixed arc length it *responds to how much the robot is
+  actually turning*, and the on-screen `rot=NNN[wheel]` makes `scrub_comp`
+  a one-run calibration. The arc angular rate now also **eases in** (smoothstep
+  over `ramp_dist`) so the skid-steer doesn't lurch. `--reacquire-conf` default
+  raised to 0.72 (rejects the grass that fooled it at the headland). Status:
+  `R-UTURN:ARC rot=NNN[imu|wheel] …`. Unit-tested (wheel fallback, IMU-preferred,
+  arc ease-in).
+
+### Changed — IMU-measured U-turn (wheel-heading fallback added above)
 - **The U-turn now measures real rotation with the IMU.** The perception-only
   arc still failed in the field: the open-loop arc under-rotated (slip makes the
   real radius ~1.7× the commanded 1.0 m, so "done" was only ~90° of rotation),

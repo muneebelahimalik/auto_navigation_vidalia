@@ -88,6 +88,8 @@ class HeadlandTurn:
         turn_radius: float | None = None,
         max_turn_frac: float = 3.0,
         heading_source=None,
+        scrub_comp: float = 0.6,
+        ramp_dist: float = 0.6,
     ) -> None:
         self.odometry = odometry
         self.row_spacing = row_spacing
@@ -97,23 +99,35 @@ class HeadlandTurn:
         self.turn_radius = float(turn_radius) if turn_radius and turn_radius > 0.0 else 1.0
         self.max_turn_frac = max_turn_frac
         self.heading_source = heading_source
+        # Wheel-odometry heading over-reports body rotation on a skid-steer arc;
+        # multiply its cumulative change by scrub_comp to estimate the REAL
+        # rotation (calibrate against the on-screen rot= readout).  Only used
+        # when the IMU/filter heading is not live.
+        self.scrub_comp = scrub_comp
+        # Ease the arc angular rate in over the first ramp_dist metres of arc so
+        # the skid-steer doesn't lurch (smoother, less initial scrub).
+        self.ramp_dist = max(1e-3, ramp_dist)
 
         self._phase = "DONE"
         self._sign = 1.0
         self._d0 = 0.0            # odometry distance at current phase start
         self._capped = False
-        # IMU heading accumulation during ARC
-        self._cum_heading = 0.0   # cumulative |Δ heading| since ARC start (rad)
-        self._hprev = None        # previous heading sample (rad) or None
-        self._heading_ok = False  # filter heading was fresh during the arc
+        # Rotation accumulation during ARC (cumulative |Δheading|, rad)
+        self._cum_imu = 0.0
+        self._cum_wheel = 0.0
+        self._imu_prev = None
+        self._wheel_prev = None
+        self._imu_ok = False      # filter heading was fresh during the arc
 
     # ------------------------------------------------------------------
     def begin(self, turn_sign: float) -> None:
         self._sign = 1.0 if turn_sign >= 0 else -1.0
         self._capped = False
-        self._cum_heading = 0.0
-        self._hprev = None
-        self._heading_ok = False
+        self._cum_imu = 0.0
+        self._cum_wheel = 0.0
+        self._imu_prev = None
+        self._wheel_prev = None
+        self._imu_ok = False
         self._phase = "EXIT"
         self._d0 = float(self.odometry.distance)
 
@@ -145,17 +159,24 @@ class HeadlandTurn:
 
     @property
     def heading_rotation(self) -> float:
-        """Cumulative real rotation since the arc began (rad), from the IMU."""
-        return self._cum_heading
+        """Best estimate of REAL rotation since the arc began (rad).
+
+        Prefers the IMU/filter heading (true rotation); otherwise uses the
+        wheel-odometry heading scaled by ``scrub_comp`` (the skid-steer arc
+        over-reports, so scrub_comp < 1 brings it down to the real rotation).
+        """
+        if self._imu_ok:
+            return self._cum_imu
+        return self._cum_wheel * self.scrub_comp
 
     @property
     def heading_tracking(self) -> bool:
-        """True when the IMU/filter heading is live and measuring the rotation."""
-        return self._heading_ok
+        """True when a live rotation estimate (IMU or wheel) is available."""
+        return self._imu_ok or self._cum_wheel > 0.0
 
     @property
     def heading_source_name(self) -> str:
-        return "imu" if self._heading_ok else "arc"
+        return "imu" if self._imu_ok else "wheel"
 
     # ------------------------------------------------------------------
     def finish(self) -> None:
@@ -165,20 +186,31 @@ class HeadlandTurn:
 
     # ------------------------------------------------------------------
     def _accumulate_heading(self) -> None:
+        # Wheel-odometry heading (always available; over-reports).
+        wcur = float(self.odometry.theta)
+        if self._wheel_prev is not None:
+            self._cum_wheel += abs(_ang_norm(wcur - self._wheel_prev))
+        self._wheel_prev = wcur
+        # IMU/filter heading (preferred when fresh).
         src = self.heading_source
-        if src is None or not getattr(src, "fresh", False):
-            return
-        cur = float(src.heading)
-        if self._hprev is not None:
-            self._cum_heading += abs(_ang_norm(cur - self._hprev))
-        self._hprev = cur
-        self._heading_ok = True
+        if src is not None and getattr(src, "fresh", False):
+            icur = float(src.heading)
+            if self._imu_prev is not None:
+                self._cum_imu += abs(_ang_norm(icur - self._imu_prev))
+            self._imu_prev = icur
+            self._imu_ok = True
+
+    # ------------------------------------------------------------------
+    def _arc_command(self) -> tuple[float, float]:
+        # Ease the angular rate in over the first ramp_dist of arc for a smooth,
+        # low-scrub entry; forward speed tracks it so the path stays a circle.
+        frac = min(1.0, self.arc_len / self.ramp_dist)
+        ease = frac * frac * (3.0 - 2.0 * frac)   # smoothstep
+        rate = self.turn_rate * (0.3 + 0.7 * ease)
+        return self.turn_radius * rate, -self._sign * rate
 
     # ------------------------------------------------------------------
     def step(self, dt: float) -> tuple[float, float]:
-        arc_w = -self._sign * self.turn_rate
-        arc_v = self.turn_radius * self.turn_rate
-
         # Re-evaluate after a phase change so a completed phase does not waste a
         # zero/straight-command frame.
         for _ in range(len(self.PHASES)):
@@ -186,7 +218,8 @@ class HeadlandTurn:
                 if abs(float(self.odometry.distance) - self._d0) >= self.exit_dist:
                     self._phase = "ARC"
                     self._d0 = float(self.odometry.distance)
-                    self._hprev = None    # start heading accumulation fresh
+                    self._imu_prev = None    # start heading accumulation fresh
+                    self._wheel_prev = None
                     continue
                 return self.speed, 0.0
 
@@ -198,7 +231,7 @@ class HeadlandTurn:
                     self._phase = "DONE"
                     self._capped = True
                     return 0.0, 0.0
-                return arc_v, arc_w
+                return self._arc_command()
 
             return 0.0, 0.0  # DONE
         return 0.0, 0.0

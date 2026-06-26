@@ -428,6 +428,7 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
         headland_speed=args.headland_speed,
         headland_turn_rate=args.headland_turn_rate,
         headland_radius=args.headland_radius,
+        turn_scrub_comp=args.turn_scrub_comp,
         reacquire_conf=args.reacquire_conf,
         approach_speed=args.approach_speed,
         approach_max_dist=args.approach_max_dist,
@@ -462,10 +463,10 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
     if args.headland:
         radius_str = (f"{args.headland_radius:.2f}m" if args.headland_radius > 0.0
                       else "auto (1.00m)")
-        print(f"  headland: perception-closed arc U-turn first={args.turn_dir} "
+        print(f"  headland: IMU/perception arc U-turn first={args.turn_dir} "
               f"(then alternating)  radius={radius_str}  "
               f"exit={args.headland_exit:.2f}m  rate={args.headland_turn_rate:.2f}rad/s  "
-              f"reacq-conf={args.reacquire_conf:.2f}")
+              f"reacq-conf={args.reacquire_conf:.2f}  scrub-comp={args.turn_scrub_comp:.2f}")
     print(f"  speed   : {args.speed:.2f} m/s max   SLAM map: {'on' if args.slam else 'off'}")
     print(f"  crop    : h=[{args.crop_min:.2f},{args.crop_max:.2f}]m  roi_x=±{args.roi_x:.2f}m")
     print(f"  safety  : fwd_h={args.obstacle_height:.2f}m  tire_h={tire_h:.2f}m  "
@@ -613,10 +614,19 @@ def main() -> None:
                              "trust wheel heading to count 180°, which a skid-steer "
                              "over-reports). A bigger radius scrubs less and sweeps the next "
                              "row through view more slowly, making the re-lock easier.")
-    parser.add_argument("--reacquire-conf", type=float, default=0.55, metavar="C",
+    parser.add_argument("--turn-scrub-comp", type=float, default=0.6, metavar="K",
+                        help="Skid-steer scrub compensation for the U-turn rotation "
+                             "estimate when the IMU/filter heading is NOT live (status "
+                             "shows rot=…[wheel]). Wheel heading over-reports body "
+                             "rotation on an arc; the real rotation ≈ wheel × this factor "
+                             "(default: 0.6). Calibrate: watch the rot= readout during a "
+                             "turn — if the robot physically completes 180° when rot reads "
+                             "~120°, set this to 0.6×180/120≈0.9; if rot reads ~240° at a "
+                             "real 180°, set ~0.45. Ignored when rot=…[imu].")
+    parser.add_argument("--reacquire-conf", type=float, default=0.72, metavar="C",
                         help="Row-detection confidence (0–1) required — together with small "
                              "heading error and offset, for a few consecutive scans — to end "
-                             "the U-turn and enter FOLLOW on the next row (default: 0.55). "
+                             "the U-turn and enter FOLLOW on the next row (default: 0.72). "
                              "Raise if the turn ends early on a mis-aligned glimpse; lower if "
                              "it keeps arcing past a good lock.")
     parser.add_argument("--slam", action="store_true",

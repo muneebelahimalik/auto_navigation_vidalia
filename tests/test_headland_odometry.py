@@ -70,8 +70,25 @@ def test_arc_command_is_a_moving_turn_not_a_pivot():
     assert turn.phase == "ARC"
     assert v > 0.0                            # moving arc, not a pivot
     assert w < 0.0                            # right turn = clockwise = negative
-    # Arc forward speed = radius * turn_rate.
-    assert v == pytest.approx(1.0 * 0.30, abs=1e-9)
+    # Path is a circle of the configured radius: v / |w| == radius throughout
+    # the ramp (forward speed tracks the eased angular rate).
+    assert v / abs(w) == pytest.approx(1.0, abs=1e-6)
+
+
+def test_arc_eases_in_then_reaches_full_rate():
+    """The angular rate ramps up (smooth, low-scrub entry) to the full rate."""
+    odo = FakeOdo()
+    turn = _make(odo, exit_dist=0.0, turn_radius=1.0, turn_rate=0.30, ramp_dist=0.6)
+    turn.begin(+1.0)
+    dt = 0.05
+    w0 = abs(turn.step(dt)[1])               # first tick, arc_len ~ 0
+    odo.apply(*turn.step(dt), dt)
+    for _ in range(200):                     # drive well past ramp_dist
+        v, w = turn.step(dt)
+        odo.apply(v, w, dt)
+    w_full = abs(turn.step(dt)[1])
+    assert w0 < 0.30                          # eased in (not full rate at the start)
+    assert w_full == pytest.approx(0.30, abs=1e-6)   # reaches full rate
 
 
 def test_left_turn_is_counterclockwise():
@@ -147,18 +164,43 @@ def test_imu_rotation_unwraps_past_180():
     assert turn.heading_rotation >= math.radians(200)
 
 
-def test_heading_not_tracking_when_filter_stale():
+def test_wheel_heading_fallback_when_filter_stale():
+    """With no live IMU the turn falls back to the WHEEL heading (always
+    available), scaled by scrub_comp to estimate the real (under-)rotation —
+    the field case where rot=…[wheel]."""
     odo = FakeOdo()
     filt = FakeFilter(fresh=False)
-    turn = _make(odo, exit_dist=0.0, turn_radius=1.0, heading_source=filt)
+    turn = _make(odo, exit_dist=0.0, turn_radius=1.0, heading_source=filt,
+                 scrub_comp=0.5)
     turn.begin(+1.0)
     dt = 0.05
-    for _ in range(50):
+    for _ in range(40):
         v, w = turn.step(dt)
         odo.apply(v, w, dt)
-    assert turn.heading_tracking is False
-    assert turn.heading_rotation == 0.0
-    assert turn.heading_source_name == "arc"
+    assert turn.heading_source_name == "wheel"
+    assert turn.heading_tracking is True
+    # heading_rotation = cumulative wheel heading × scrub_comp (within one step,
+    # since accumulation samples theta just before each integration).
+    assert turn.heading_rotation == pytest.approx(abs(odo.theta) * 0.5, abs=0.01)
+
+
+def test_imu_preferred_over_wheel_when_fresh():
+    """When the IMU is fresh it is used even though the wheel heading is also
+    accumulating."""
+    odo = FakeOdo()
+    filt = FakeFilter(fresh=True)
+    turn = _make(odo, exit_dist=0.0, turn_radius=1.0, heading_source=filt,
+                 scrub_comp=0.5)
+    turn.begin(+1.0)
+    dt = 0.05
+    true_h = 0.0
+    for _ in range(40):
+        v, w = turn.step(dt)
+        true_h += w * dt * 0.8               # body (and IMU) lag the command
+        filt.heading = true_h
+        odo.apply(v, w, dt)                  # wheel heading = commanded (no slip here)
+    assert turn.heading_source_name == "imu"
+    assert turn.heading_rotation == pytest.approx(abs(true_h), abs=0.02)
 
 
 def test_finish_ends_the_turn_without_cap():
