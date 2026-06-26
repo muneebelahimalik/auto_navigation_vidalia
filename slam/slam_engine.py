@@ -34,15 +34,20 @@ from slam.scan_matcher import (
     Pose2D,
     SLICE_MAX_GND,
     SLICE_MIN_GND,
+    correct_scan,
     deskew_scan,
     downsample,
     extract_2d_slice,
     icp_2d,
     remove_outliers,
+    robot_xyz_to_world,
+    scan_to_xyz,
     sensor_to_world,
     voxel_downsample,
+    voxel_downsample_3d,
 )
 from slam.occupancy_grid import OccupancyGrid
+from slam.voxel_map import VoxelMap
 
 # ---------- LiDAR mount correction (field-calibrated, matches row-follow) -----
 # The VLP-16 is mounted yawed ~66° and pitched ~21.5° nose-down.  SLAM must
@@ -86,6 +91,7 @@ class SlamState:
     last_icp_error: float = 0.0
     loop_closures: int = 0
     odom_scans: int = 0   # scans where wheel odometry was used as warm start
+    map3d_voxels: int = 0  # occupied voxels in the 3-D map (0 if disabled)
 
 
 class SlamEngine:
@@ -110,6 +116,10 @@ class SlamEngine:
         tilt_deg: float = _DEFAULT_TILT_DEG,
         slice_min: float = SLICE_MIN_GND,
         slice_max: float = SLICE_MAX_GND,
+        build_3d: bool = False,
+        voxel_3d: float = 0.15,
+        map3d_z_min: float = -1.0,
+        map3d_z_max: float = 5.0,
     ) -> None:
         self._grid = OccupancyGrid(grid_size_m, grid_resolution)
         self._icp_points = icp_points
@@ -118,6 +128,14 @@ class SlamEngine:
         self._tilt_rad = math.radians(tilt_deg)
         self._slice_min = slice_min
         self._slice_max = slice_max
+
+        # Optional 3-D voxel map, registered with the same 2-D pose used for the
+        # occupancy grid (2.5-D mapping — see slam/voxel_map.py).
+        self._voxel_3d = voxel_3d
+        self._map3d: Optional[VoxelMap] = (
+            VoxelMap(voxel=voxel_3d, z_min=map3d_z_min, z_max=map3d_z_max)
+            if build_3d else None
+        )
 
         self._pose = Pose2D()
         self._prev_pose: Optional[Pose2D] = None
@@ -261,6 +279,15 @@ class SlamEngine:
         pts_local = deskew_scan(pts_local, fwd_speed)
         pts_ds = remove_outliers(voxel_downsample(pts_local, 0.15))
 
+        # Full corrected 3-D cloud (robot frame) for the optional 3-D map.
+        # Built once here; registered with the final pose at the end of the scan.
+        full_robot_3d = None
+        if self._map3d is not None:
+            full_robot_3d = voxel_downsample_3d(
+                correct_scan(scan_to_xyz(scan), self._yaw_rad, self._tilt_rad),
+                voxel=max(0.05, 0.5 * self._voxel_3d),
+            )
+
         with self._lock:
             if odom_delta is not None:
                 ds, dtheta = odom_delta
@@ -313,6 +340,12 @@ class SlamEngine:
         if self._scan_count % self._map_update_every == 0:
             self._grid.update_scan(pose_est.x, pose_est.y, pts_ds_world)
 
+        # 3-D map: register the full corrected cloud with the final 2-D pose.
+        if self._map3d is not None and full_robot_3d is not None:
+            world3d = robot_xyz_to_world(full_robot_3d, pose_est)
+            with self._lock:
+                self._map3d.add_points(world3d)
+
     # ------------------------------------------------------------------
     def get_state(self) -> SlamState:
         """Return a snapshot of the current SLAM state (thread-safe)."""
@@ -324,12 +357,24 @@ class SlamEngine:
                 last_icp_error=self._last_icp_err,
                 loop_closures=self._loop_closures,
                 odom_scans=self._odom_scans,
+                map3d_voxels=self._map3d.count if self._map3d is not None else 0,
             )
 
     def get_map(self) -> np.ndarray:
         """Return Nx2 world-frame coordinates of all occupied map cells."""
         return self._grid.get_occupied_world()
 
+    def get_3d_points(self) -> np.ndarray:
+        """Return the Nx3 world-frame 3-D map points (empty if 3-D is off)."""
+        if self._map3d is None:
+            return np.zeros((0, 3), dtype=np.float32)
+        with self._lock:
+            return self._map3d.to_points()
+
     @property
     def cell_count(self) -> int:
         return self._grid.cell_count
+
+    @property
+    def map3d_count(self) -> int:
+        return self._map3d.count if self._map3d is not None else 0

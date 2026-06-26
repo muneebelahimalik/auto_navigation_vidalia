@@ -163,15 +163,15 @@ python3 scripts/cam_follow.py --auto --hsv-h-lo 10 --hsv-h-hi 25 --hsv-s-lo 25
 python3 scripts/cam_follow.py --auto --rows 4 --headland
 ```
 
-### LiDAR Field Mapping — native 2-D SLAM (mapping only, NOT navigation)
+### LiDAR Field Mapping — native SLAM (mapping only, NOT navigation)
 
-`scripts/slam_mapper.py` builds a 2-D occupancy-grid map of the field from the
-VLP-16 while you drive (manually or via row-follow). It is **mapping only** — it
-never commands the wheels. Pipeline (`slam/`): yaw/tilt-correct the raw cloud →
-horizontal slice → deskew → trimmed 2-D ICP scan-matching (wheel-odometry
-warm-start when the canbus is up, constant-velocity otherwise) → periodic
-scan-to-map ICP loop closure → log-odds occupancy grid with ray-cast free-space
-clearing. Ctrl+C saves `maps/<ts>/map.npz` + `map.png`.
+`scripts/slam_mapper.py` builds a map of the field from the VLP-16 while you
+drive (manually or via row-follow). It is **mapping only** — it never commands
+the wheels. Pipeline (`slam/`): yaw/tilt-correct the raw cloud → horizontal slice
+→ deskew → trimmed 2-D ICP scan-matching (wheel-odometry warm-start when the
+canbus is up, constant-velocity otherwise) → periodic scan-to-map ICP loop
+closure → log-odds occupancy grid with ray-cast free-space clearing. Ctrl+C
+saves `maps/<ts>/map.npz` + `map.png` (and `map3d.ply` with `--map-3d`).
 
 ```bash
 source /farm_ng_image/venv/bin/activate
@@ -185,7 +185,26 @@ python3 scripts/slam_mapper.py --slice-min 0.20
 
 # Override mount calibration (defaults match the row-follow stack):
 python3 scripts/slam_mapper.py --lidar-yaw 66 --lidar-tilt 21.5
+
+# 3-D field map (point cloud) alongside the 2-D grid:
+python3 scripts/slam_mapper.py --map-3d                  # → maps/<ts>/map3d.ply
+python3 scripts/slam_mapper.py --map-3d --voxel-3d 0.10  # denser
 ```
+
+**3-D mapping (`--map-3d`) — 2.5-D, mapping only.** A ground robot moves on the
+2-D ground manifold, so full 6-DOF 3-D SLAM is unnecessary (and fragile in
+feature-sparse fields, heavy on the Jetson). Instead the **2-D SLAM pose**
+(x, y, heading — already loop-closure-corrected) registers every **full
+yaw/tilt-corrected 3-D scan** into a world-frame voxel map (`slam/voxel_map.py`,
+one point per voxel so map size grows with field area, not scan count). On
+Ctrl+C it writes `map3d.ply` (binary, height-coloured — opens in CloudCompare /
+MeshLab / Foxglove) + `map3d.npz`. Map z is **height above the local ground
+plane** (ground ≈ 0, crop ≈ 0.05–0.30 m, obstacles taller); the robot's own
+elevation is not tracked, so absolute terrain elevation is not captured (a true
+DEM would need 3-D pose / GPS-IMU z). Loop closures snap the pose, which can
+leave a faint seam in the cloud at revisits — acceptable for lawnmower coverage.
+`--map-3d` (off by default), `--voxel-3d M` (0.15 m; smaller = denser, more
+memory). Regression-locked in `tests/test_slam.py`.
 
 **Critical — same yaw/tilt correction as row-follow.** SLAM yaw/tilt-corrects
 the raw VLP-16 cloud into the robot frame (`slam/scan_matcher.py::correct_scan`,
@@ -203,6 +222,8 @@ the crop for a structure-only map. Regression-locked in `tests/test_slam.py`.
 | `--lidar-tilt DEG` | **21.5** | Nose-down pitch correction (applied AFTER yaw) |
 | `--slice-min M` | **0.05** | Slice lower bound, ground-relative m (includes crop; raise to 0.20 for structure-only) |
 | `--slice-max M` | **1.50** | Slice upper bound, ground-relative m |
+| `--map-3d` | off | Also build a 3-D point-cloud map → `map3d.ply` + `.npz` |
+| `--voxel-3d M` | **0.15** | 3-D voxel size (m); smaller = denser, more memory |
 | `--icp-points N` | 400 | ICP subsample count |
 | `--map-every N` | 1 | Update the grid every N scans |
 | `--autosave N` / `--no-autosave` | 60 s | Periodic auto-save interval |

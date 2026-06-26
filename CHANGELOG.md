@@ -8,6 +8,19 @@ versions are git tags on `main`.
 
 Work toward the row-to-row turn milestone (built on the v0.1.0 baseline).
 
+### Added — 3-D field mapping (`--map-3d`, mapping only)
+- **3-D point-cloud map of the field**, built on the corrected 2-D SLAM pose
+  (2.5-D: a ground robot's 3-DOF pose + the static tilt correction registers the
+  full 3-D scan — no fragile 6-DOF SLAM needed). `slam/voxel_map.py` accumulates
+  one point per voxel (size grows with field area, not scan count);
+  `slam/scan_matcher.robot_xyz_to_world` registers each full corrected cloud with
+  the loop-closed pose. `slam_mapper.py --map-3d` writes `map3d.ply` (binary,
+  height-coloured, opens in CloudCompare/MeshLab/Foxglove) + `map3d.npz`; status
+  line shows the live voxel count. Map z is height above the local ground plane
+  (robot elevation isn't tracked → not an absolute DEM). New `--voxel-3d`
+  (0.15 m default). Unit-tested in `tests/test_slam.py` (voxel dedup, pose
+  registration, PLY round-trip, engine 3-D build).
+
 ### Fixed — native LiDAR SLAM mapping (mapping only, not navigation)
 - **SLAM now yaw/tilt-corrects the cloud, like the row-follow stack.** The 2-D
   SLAM mapper (`scripts/slam_mapper.py`, `slam/`) was slicing the **raw**

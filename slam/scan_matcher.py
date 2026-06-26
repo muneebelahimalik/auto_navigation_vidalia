@@ -60,6 +60,23 @@ def sensor_to_world(pts: np.ndarray, pose: Pose2D) -> np.ndarray:
     return pts @ _R(pose.theta).T + np.array([pose.x, pose.y])
 
 
+def robot_xyz_to_world(pts_robot: np.ndarray, pose: Pose2D) -> np.ndarray:
+    """Register a robot-frame Nx3 cloud into the world frame using a 2-D pose.
+
+    The (x, y) of each point is rotated by the pose heading and translated by
+    the pose position; ``z`` is converted to height above the ground plane
+    (``z + LIDAR_MOUNT_HEIGHT``).  This is the 3-D registration used for field
+    mapping: a ground robot's 3-DOF pose plus the static tilt correction is
+    enough to place the full 3-D geometry — the robot's own elevation is not
+    tracked, so map z is height above the LOCAL ground, not absolute elevation.
+    """
+    if len(pts_robot) == 0:
+        return np.zeros((0, 3), dtype=np.float64)
+    xy = pts_robot[:, :2] @ _R(pose.theta).T + np.array([pose.x, pose.y])
+    z = pts_robot[:, 2:3] + LIDAR_MOUNT_HEIGHT
+    return np.hstack([xy, z])
+
+
 def scan_to_xyz(scan: List[VelodynePoint]) -> np.ndarray:
     """Stack a VLP-16 scan into an Nx3 float64 array of (x, y, z) sensor coords."""
     if not scan:
@@ -123,6 +140,16 @@ def voxel_downsample(pts: np.ndarray, voxel: float = 0.15) -> np.ndarray:
 def downsample(pts: np.ndarray, n: int = 400) -> np.ndarray:
     """Voxel-grid downsample (replaces random sampling to preserve structure)."""
     return voxel_downsample(pts, 0.15)
+
+
+def voxel_downsample_3d(pts: np.ndarray, voxel: float = 0.10) -> np.ndarray:
+    """Keep one point per 3-D voxel cell (Nx3 in, Nx3 out)."""
+    if len(pts) == 0:
+        return pts
+    keys = np.floor(pts / voxel).astype(np.int64)
+    packed = keys[:, 0] * 73856093 + keys[:, 1] * 19349663 + keys[:, 2] * 83492791
+    _, idx = np.unique(packed, return_index=True)
+    return pts[idx]
 
 
 def deskew_scan(pts: np.ndarray, fwd_speed: float, scan_period: float = 0.1) -> np.ndarray:

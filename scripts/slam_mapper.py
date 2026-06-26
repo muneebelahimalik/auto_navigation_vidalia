@@ -220,10 +220,12 @@ def _status_line(state, cell_count: int, hz: float) -> str:
     p = state.pose
     deg = (math.degrees(p.theta) + 180.0) % 360.0 - 180.0  # wrap to [-180, +180]
     odom_str = f"odom={state.odom_scans}" if state.odom_scans > 0 else "odom=off"
+    map3d_str = f"3d={state.map3d_voxels:,} | " if state.map3d_voxels > 0 else ""
     return (
         f"\rscan={state.scan_count:5d} | "
         f"x={p.x:+6.2f} y={p.y:+6.2f} θ={deg:+6.1f}° | "
         f"map={cell_count:,} cells | "
+        f"{map3d_str}"
         f"icp={state.last_icp_error:.3f} m | "
         f"lc={state.loop_closures} | "
         f"{odom_str} | "
@@ -233,13 +235,18 @@ def _status_line(state, cell_count: int, hz: float) -> str:
 
 def _do_save(engine: SlamEngine, save_dir: Path) -> Path:
     state = engine.get_state()
-    return save_map(engine._grid, state.trajectory, save_dir)
+    pts_3d = engine.get_3d_points() if engine.map3d_count > 0 else None
+    return save_map(engine._grid, state.trajectory, save_dir, points_3d=pts_3d)
 
 
 def _print_save_result(engine: SlamEngine, out: Path) -> None:
     print(f"\n[slam_mapper] Saved:")
     print(f"  {out / 'map.npz'}")
     print(f"  {out / 'map.png'}")
+    if engine.map3d_count > 0:
+        print(f"  {out / 'map3d.ply'}   ({engine.map3d_count:,} pts — "
+              f"open in CloudCompare / MeshLab / Foxglove)")
+        print(f"  {out / 'map3d.npz'}")
     print()
     print("Copy PNG to your laptop:")
     print(f"  scp farm-ng-user-laserweeding@100.66.121.56:"
@@ -259,6 +266,8 @@ async def _run(args: argparse.Namespace, engine_ref: list) -> None:
         tilt_deg=args.lidar_tilt,
         slice_min=args.slice_min,
         slice_max=args.slice_max,
+        build_3d=args.map_3d,
+        voxel_3d=args.voxel_3d,
     )
     engine_ref.append(engine)
 
@@ -280,9 +289,12 @@ async def _run(args: argparse.Namespace, engine_ref: list) -> None:
 
     print()
     print("=" * 64)
-    print("  SLAM mapper — drive the robot to build a map")
+    map_mode = "2-D occupancy + 3-D point cloud" if args.map_3d else "2-D occupancy"
+    print(f"  SLAM mapper [{map_mode}] — drive the robot to build a map")
     print(f"  LiDAR correction: yaw={args.lidar_yaw:.1f}°  tilt={args.lidar_tilt:.1f}°"
           f"   slice h∈[{args.slice_min:.2f}, {args.slice_max:.2f}] m")
+    if args.map_3d:
+        print(f"  3-D map: voxel={args.voxel_3d:.2f} m → map3d.ply on exit")
     print("  Press Ctrl+C to stop and save the map.")
     print("=" * 64)
     print()
@@ -365,6 +377,13 @@ def main() -> None:
                              "as map structure). Raise to ~0.20 for structure-only.")
     parser.add_argument("--slice-max",   type=float, default=1.50, metavar="M",
                         help="Upper bound of the 2-D slice height band (default: 1.50).")
+    parser.add_argument("--map-3d",      action="store_true",
+                        help="Also accumulate a 3-D point-cloud map of the field "
+                             "(registered with the 2-D SLAM pose). Saves map3d.ply "
+                             "+ map3d.npz on exit.")
+    parser.add_argument("--voxel-3d",    type=float, default=0.15, metavar="M",
+                        help="Voxel size (m) of the 3-D map — one point per cell "
+                             "(default: 0.15; smaller = denser map, more memory).")
     args = parser.parse_args()
 
     engine_ref: list = []

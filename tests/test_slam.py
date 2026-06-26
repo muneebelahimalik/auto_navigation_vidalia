@@ -22,10 +22,14 @@ from slam.scan_matcher import (
     correct_scan,
     extract_2d_slice,
     icp_2d,
+    robot_xyz_to_world,
     sensor_to_world,
+    voxel_downsample_3d,
 )
 from slam.occupancy_grid import OccupancyGrid
 from slam.slam_engine import SlamEngine
+from slam.voxel_map import VoxelMap
+from slam.map_io import save_ply
 
 YAW = math.radians(66.0)
 TILT = math.radians(21.5)
@@ -187,3 +191,72 @@ def test_engine_maps_structure_and_tracks_pose():
     # Sensor never moved → pose should stay near the origin.
     assert abs(state.pose.x) < 0.5
     assert abs(state.pose.y) < 0.5
+
+
+# ---------------------------------------------------------------------------
+# 3-D mapping (2.5-D: 2-D pose registers the full 3-D cloud)
+# ---------------------------------------------------------------------------
+
+def test_voxel_map_dedups_and_drops_out_of_band():
+    vm = VoxelMap(voxel=0.10, z_min=-1.0, z_max=5.0)
+    # Three points in the same 0.10 m voxel → one cell.
+    same = np.array([[1.00, 2.00, 0.50], [1.04, 2.03, 0.52], [1.02, 2.01, 0.55]])
+    assert vm.add_points(same) == 1
+    assert vm.count == 1
+    # A point in a new voxel adds one; a sky point above z_max is dropped.
+    more = np.array([[1.40, 2.00, 0.50], [1.00, 2.00, 9.00]])
+    assert vm.add_points(more) == 1
+    assert vm.count == 2
+
+
+def test_robot_xyz_to_world_applies_pose_and_height():
+    # Robot at (10, 5) heading +90°: robot-forward (+y) maps to world +y→-x… check.
+    pts_robot = np.array([[0.0, 2.0, -0.75 + 0.30]])   # 2 m ahead, h = 0.30
+    pose = Pose2D(10.0, 5.0, math.pi / 2)
+    w = robot_xyz_to_world(pts_robot, pose)
+    # heading +90°: forward (+y) rotates to world -x → x = 10 - 2 = 8, y = 5.
+    assert w[0, 0] == pytest.approx(8.0, abs=1e-6)
+    assert w[0, 1] == pytest.approx(5.0, abs=1e-6)
+    # z is height above ground = z + mount height.
+    assert w[0, 2] == pytest.approx(0.30, abs=1e-6)
+
+
+def test_voxel_downsample_3d_collapses_duplicates():
+    pts = np.array([[0.01, 0.01, 0.01], [0.02, 0.02, 0.02], [5.0, 5.0, 5.0]])
+    out = voxel_downsample_3d(pts, voxel=0.10)
+    assert len(out) == 2          # first two share a voxel
+
+
+def test_engine_builds_3d_map_of_structure():
+    """With --map-3d the engine accumulates a 3-D point cloud including the
+    ground and the poles, registered with the SLAM pose."""
+    poles = []
+    for ang in np.linspace(0, 2 * math.pi, 24, endpoint=False):
+        px, py = 5.0 * math.cos(ang), 5.0 * math.sin(ang)
+        for z in np.linspace(-LIDAR_MOUNT_HEIGHT, -LIDAR_MOUNT_HEIGHT + 1.5, 12):
+            poles.append((px, py, z))
+    scan = _as_scan(_robot_to_raw(np.array(poles)))
+
+    engine = SlamEngine(grid_size_m=40.0, build_3d=True, voxel_3d=0.15)
+    for _ in range(4):
+        engine.process_scan(scan)
+    pts = engine.get_3d_points()
+    assert engine.map3d_count > 0
+    assert pts.shape[1] == 3
+    # Heights span roughly ground (~0) up to the pole tops (~1.5 m).
+    assert pts[:, 2].min() < 0.2
+    assert pts[:, 2].max() > 1.0
+
+
+def test_save_ply_round_trips(tmp_path):
+    pts = np.random.default_rng(0).uniform(-2, 2, size=(50, 3)).astype(np.float32)
+    out = tmp_path / "cloud.ply"
+    n = save_ply(out, pts)
+    assert n == 50
+    raw = out.read_bytes()
+    assert raw.startswith(b"ply\n")
+    assert b"binary_little_endian" in raw[:64]
+    assert b"element vertex 50" in raw
+    # header + 50 records × (3×float32 + 3×uint8) = 15 bytes each
+    header_end = raw.index(b"end_header\n") + len(b"end_header\n")
+    assert len(raw) - header_end == 50 * 15

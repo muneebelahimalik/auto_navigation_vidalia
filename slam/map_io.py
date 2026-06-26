@@ -217,6 +217,61 @@ def render_png(
 
 
 # ---------------------------------------------------------------------------
+# 3-D point-cloud export (binary PLY — opens in CloudCompare/MeshLab/Foxglove)
+# ---------------------------------------------------------------------------
+
+def _height_colors(z: np.ndarray) -> np.ndarray:
+    """Map heights to an RGB ramp (blue → cyan → green → yellow → red)."""
+    if len(z) == 0:
+        return np.zeros((0, 3), dtype=np.uint8)
+    lo = float(np.percentile(z, 2))
+    hi = float(np.percentile(z, 98))
+    if hi - lo < 1e-6:
+        hi = lo + 1.0
+    t = np.clip((z - lo) / (hi - lo), 0.0, 1.0)
+    # 4-segment ramp over t∈[0,1]
+    r = np.clip(np.minimum(4 * t - 1.5, -4 * t + 4.5), 0, 1)
+    g = np.clip(np.minimum(4 * t - 0.5, -4 * t + 3.5), 0, 1)
+    b = np.clip(np.minimum(4 * t + 0.5, -4 * t + 2.5), 0, 1)
+    return (np.column_stack([r, g, b]) * 255).astype(np.uint8)
+
+
+def save_ply(path: Path, pts: np.ndarray, colors: Optional[np.ndarray] = None) -> int:
+    """Write an Nx3 point cloud to a binary little-endian PLY with RGB.
+
+    Colours default to a height (z) ramp.  Returns the number of points written.
+    """
+    path = Path(path)
+    pts = np.asarray(pts, dtype=np.float32)
+    n = len(pts)
+    if colors is None:
+        colors = _height_colors(pts[:, 2]) if n else np.zeros((0, 3), np.uint8)
+    colors = np.asarray(colors, dtype=np.uint8)
+
+    header = (
+        "ply\n"
+        "format binary_little_endian 1.0\n"
+        f"element vertex {n}\n"
+        "property float x\nproperty float y\nproperty float z\n"
+        "property uchar red\nproperty uchar green\nproperty uchar blue\n"
+        "end_header\n"
+    ).encode("ascii")
+
+    rec = np.empty(n, dtype=np.dtype([
+        ("x", "<f4"), ("y", "<f4"), ("z", "<f4"),
+        ("r", "u1"), ("g", "u1"), ("b", "u1"),
+    ]))
+    if n:
+        rec["x"], rec["y"], rec["z"] = pts[:, 0], pts[:, 1], pts[:, 2]
+        rec["r"], rec["g"], rec["b"] = colors[:, 0], colors[:, 1], colors[:, 2]
+
+    with open(path, "wb") as f:
+        f.write(header)
+        f.write(rec.tobytes())
+    return n
+
+
+# ---------------------------------------------------------------------------
 # Save / load
 # ---------------------------------------------------------------------------
 
@@ -224,9 +279,13 @@ def save_map(
     grid: OccupancyGrid,
     trajectory: List[List[float]],
     save_dir: Path,
+    points_3d: Optional[np.ndarray] = None,
 ) -> Path:
     """
     Persist the map to <save_dir>/map.npz and render <save_dir>/map.png.
+
+    If ``points_3d`` (Nx3) is given, also write a 3-D point cloud to
+    <save_dir>/map3d.ply (height-coloured) and the raw points to map3d.npz.
     Returns save_dir.
     """
     save_dir = Path(save_dir)
@@ -243,6 +302,11 @@ def save_map(
 
     png_path = save_dir / "map.png"
     rendered = render_png(grid, trajectory, png_path)
+
+    if points_3d is not None and len(points_3d) > 0:
+        save_ply(save_dir / "map3d.ply", points_3d)
+        np.savez_compressed(save_dir / "map3d.npz",
+                            points=np.asarray(points_3d, dtype=np.float32))
 
     return save_dir
 
