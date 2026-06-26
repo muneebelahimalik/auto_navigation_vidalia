@@ -163,6 +163,51 @@ python3 scripts/cam_follow.py --auto --hsv-h-lo 10 --hsv-h-hi 25 --hsv-s-lo 25
 python3 scripts/cam_follow.py --auto --rows 4 --headland
 ```
 
+### LiDAR Field Mapping — native 2-D SLAM (mapping only, NOT navigation)
+
+`scripts/slam_mapper.py` builds a 2-D occupancy-grid map of the field from the
+VLP-16 while you drive (manually or via row-follow). It is **mapping only** — it
+never commands the wheels. Pipeline (`slam/`): yaw/tilt-correct the raw cloud →
+horizontal slice → deskew → trimmed 2-D ICP scan-matching (wheel-odometry
+warm-start when the canbus is up, constant-velocity otherwise) → periodic
+scan-to-map ICP loop closure → log-odds occupancy grid with ray-cast free-space
+clearing. Ctrl+C saves `maps/<ts>/map.npz` + `map.png`.
+
+```bash
+source /farm_ng_image/venv/bin/activate
+cd ~/auto_navigation_vidalia
+
+# Drive the robot (joystick / row-follow) while this maps; Ctrl+C to save:
+python3 scripts/slam_mapper.py
+
+# Structure-only map (exclude crop rows, keep posts/equipment/edges):
+python3 scripts/slam_mapper.py --slice-min 0.20
+
+# Override mount calibration (defaults match the row-follow stack):
+python3 scripts/slam_mapper.py --lidar-yaw 66 --lidar-tilt 21.5
+```
+
+**Critical — same yaw/tilt correction as row-follow.** SLAM yaw/tilt-corrects
+the raw VLP-16 cloud into the robot frame (`slam/scan_matcher.py::correct_scan`,
+**yaw first then tilt**) before slicing. Without it the 21.5° nose-down tilt
+ramps far-field ground returns up into the slice band — flat ground 6 m ahead
+reads h≈1.4 m — flooding the 2-D slice with ground that moves with the robot,
+which wrecks ICP and smears the map. The slice band defaults to h ∈ [0.05, 1.50]
+m so the crop rows are captured as map structure (the dominant repeatable
+feature in an open field, and what ICP locks onto); `--slice-min 0.20` excludes
+the crop for a structure-only map. Regression-locked in `tests/test_slam.py`.
+
+| `slam_mapper.py` flag | Default | Description |
+|---|---|---|
+| `--lidar-yaw DEG` | **66.0** | Mount yaw correction (applied FIRST) — matches row-follow |
+| `--lidar-tilt DEG` | **21.5** | Nose-down pitch correction (applied AFTER yaw) |
+| `--slice-min M` | **0.05** | Slice lower bound, ground-relative m (includes crop; raise to 0.20 for structure-only) |
+| `--slice-max M` | **1.50** | Slice upper bound, ground-relative m |
+| `--icp-points N` | 400 | ICP subsample count |
+| `--map-every N` | 1 | Update the grid every N scans |
+| `--autosave N` / `--no-autosave` | 60 s | Periodic auto-save interval |
+| `--no-odom` | off | Ignore wheel encoders (constant-velocity ICP warm-start only) |
+
 ### ROS 2 Visualization Bridge (Docker — on the Amiga Brain)
 
 ```bash

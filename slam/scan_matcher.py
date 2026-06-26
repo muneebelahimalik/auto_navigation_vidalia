@@ -25,10 +25,17 @@ from typing import List, Tuple
 import numpy as np
 
 from lidar.lidar_driver import VelodynePoint
-from lidar.obstacle_filter import LIDAR_MOUNT_HEIGHT
+from lidar.obstacle_filter import (
+    LIDAR_MOUNT_HEIGHT,
+    tilt_correct_pts,
+    yaw_correct_pts,
+)
 
-# Height band for the 2D slice (ground-relative metres)
-SLICE_MIN_GND = 0.20    # above ground
+# Height band for the 2D slice (ground-relative metres).  The lower bound sits
+# just above the flattened ground so the crop rows (soybean canopy ~0.05–0.30 m)
+# are captured as map structure — in an open field the rows ARE the dominant
+# repeatable feature, both for the map and for ICP correspondences.
+SLICE_MIN_GND = 0.05    # above ground
 SLICE_MAX_GND = 1.50    # above ground
 
 
@@ -53,23 +60,55 @@ def sensor_to_world(pts: np.ndarray, pose: Pose2D) -> np.ndarray:
     return pts @ _R(pose.theta).T + np.array([pose.x, pose.y])
 
 
+def scan_to_xyz(scan: List[VelodynePoint]) -> np.ndarray:
+    """Stack a VLP-16 scan into an Nx3 float64 array of (x, y, z) sensor coords."""
+    if not scan:
+        return np.zeros((0, 3), dtype=np.float64)
+    return np.array([(p.x, p.y, p.z) for p in scan], dtype=np.float64)
+
+
+def correct_scan(pts_xyz: np.ndarray, yaw_rad: float, tilt_rad: float) -> np.ndarray:
+    """Map raw sensor-frame points into the robot frame.
+
+    Applies the SAME correction the row-follow stack uses — **yaw first, then
+    tilt** (the two do not commute at the ~66° mount yaw).  After this the
+    cloud's +Y axis is robot-forward and ``z + LIDAR_MOUNT_HEIGHT`` is the true
+    ground-relative height, so the 2D slice is a genuine horizontal band and
+    the deskew (which assumes +Y = forward) acts along the right axis.
+    """
+    if len(pts_xyz) == 0:
+        return pts_xyz
+    if yaw_rad:
+        pts_xyz = yaw_correct_pts(pts_xyz, yaw_rad)
+    if tilt_rad:
+        pts_xyz = tilt_correct_pts(pts_xyz, tilt_rad)
+    return pts_xyz
+
+
 def extract_2d_slice(
     scan: List[VelodynePoint],
     min_gnd: float = SLICE_MIN_GND,
     max_gnd: float = SLICE_MAX_GND,
+    yaw_rad: float = 0.0,
+    tilt_rad: float = 0.0,
 ) -> np.ndarray:
     """
-    Project a 3D scan to 2D by keeping only the horizontal band
-    [min_gnd, max_gnd] metres above ground.
+    Project a 3D scan to a 2D horizontal slice in the ROBOT frame.
 
-    Returns Nx2 float64 array of (x, y) sensor-frame coords.
+    The raw scan is first yaw/tilt-corrected (see ``correct_scan``) so the
+    height band [min_gnd, max_gnd] is measured against the true ground plane —
+    without this the nose-down mount tilt ramps far-field ground returns up into
+    the band and floods the slice with moving ground, wrecking ICP and the map.
+
+    Returns Nx2 float64 array of (x, y) robot-frame coords.
     """
-    pts = [
-        (p.x, p.y)
-        for p in scan
-        if min_gnd <= (p.z + LIDAR_MOUNT_HEIGHT) <= max_gnd
-    ]
-    return np.array(pts, dtype=np.float64) if pts else np.zeros((0, 2), dtype=np.float64)
+    pts = scan_to_xyz(scan)
+    if len(pts) == 0:
+        return np.zeros((0, 2), dtype=np.float64)
+    pts = correct_scan(pts, yaw_rad, tilt_rad)
+    h = pts[:, 2] + LIDAR_MOUNT_HEIGHT
+    mask = (h >= min_gnd) & (h <= max_gnd)
+    return pts[mask][:, :2]
 
 
 def voxel_downsample(pts: np.ndarray, voxel: float = 0.15) -> np.ndarray:

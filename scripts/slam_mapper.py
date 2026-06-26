@@ -255,6 +255,10 @@ async def _run(args: argparse.Namespace, engine_ref: list) -> None:
     engine = SlamEngine(
         icp_points=args.icp_points,
         map_update_every=args.map_every,
+        yaw_deg=args.lidar_yaw,
+        tilt_deg=args.lidar_tilt,
+        slice_min=args.slice_min,
+        slice_max=args.slice_max,
     )
     engine_ref.append(engine)
 
@@ -277,6 +281,8 @@ async def _run(args: argparse.Namespace, engine_ref: list) -> None:
     print()
     print("=" * 64)
     print("  SLAM mapper — drive the robot to build a map")
+    print(f"  LiDAR correction: yaw={args.lidar_yaw:.1f}°  tilt={args.lidar_tilt:.1f}°"
+          f"   slice h∈[{args.slice_min:.2f}, {args.slice_max:.2f}] m")
     print("  Press Ctrl+C to stop and save the map.")
     print("=" * 64)
     print()
@@ -346,6 +352,19 @@ def main() -> None:
                         help="Update occupancy grid every N scans (default: 1)")
     parser.add_argument("--no-odom",     action="store_true",
                         help="Disable wheel odometry (use constant-velocity only)")
+    parser.add_argument("--lidar-yaw",   type=float, default=66.0, metavar="DEG",
+                        help="Sensor mount yaw correction (deg, CCW+); applied "
+                             "FIRST. Matches the row-follow calibration (default: 66).")
+    parser.add_argument("--lidar-tilt",  type=float, default=21.5, metavar="DEG",
+                        help="Sensor nose-down pitch correction (deg); applied "
+                             "AFTER yaw. Flattens far-field ground out of the slice "
+                             "band (default: 21.5).")
+    parser.add_argument("--slice-min",   type=float, default=0.05, metavar="M",
+                        help="Lower bound of the 2-D slice height band, ground-"
+                             "relative metres (default: 0.05 — includes crop rows "
+                             "as map structure). Raise to ~0.20 for structure-only.")
+    parser.add_argument("--slice-max",   type=float, default=1.50, metavar="M",
+                        help="Upper bound of the 2-D slice height band (default: 1.50).")
     args = parser.parse_args()
 
     engine_ref: list = []

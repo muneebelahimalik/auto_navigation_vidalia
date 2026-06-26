@@ -8,6 +8,22 @@ versions are git tags on `main`.
 
 Work toward the row-to-row turn milestone (built on the v0.1.0 baseline).
 
+### Fixed — native LiDAR SLAM mapping (mapping only, not navigation)
+- **SLAM now yaw/tilt-corrects the cloud, like the row-follow stack.** The 2-D
+  SLAM mapper (`scripts/slam_mapper.py`, `slam/`) was slicing the **raw**
+  sensor-frame cloud — it never applied the 66° yaw / 21.5° nose-down tilt
+  correction. With the tilt uncorrected, flat ground 6 m ahead reads h≈1.4 m and
+  falls *inside* the `[0.20, 1.50]` slice band, so the 2-D slice filled with
+  ramped ground that moves with the robot — degrading ICP and smearing the map
+  (and the deskew, which assumes +Y = forward, ran along the wrong axis at the
+  66° yaw). `slam/scan_matcher.py::correct_scan` now applies yaw→tilt before the
+  slice; `SlamEngine` and `slam_mapper.py` expose `--lidar-yaw` / `--lidar-tilt`
+  (defaults matching the row-follow calibration). The slice band now defaults to
+  h ∈ [0.05, 1.50] m so crop rows are captured as map structure (the dominant
+  feature in open fields); `--slice-min 0.20` gives a structure-only map. New
+  `tests/test_slam.py` (correction round-trip, ground-rejection regression, ICP,
+  occupancy grid, engine smoke tests).
+
 ### Changed — arc U-turn (replaces in-place pivots)
 - **The U-turn now drives a smooth maximum-radius arc instead of two in-place
   pivots.** Field failure: the robot ran all four pivot phases on wheel heading

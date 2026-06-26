@@ -32,6 +32,8 @@ import numpy as np
 from lidar.lidar_driver import VelodynePoint
 from slam.scan_matcher import (
     Pose2D,
+    SLICE_MAX_GND,
+    SLICE_MIN_GND,
     deskew_scan,
     downsample,
     extract_2d_slice,
@@ -41,6 +43,13 @@ from slam.scan_matcher import (
     voxel_downsample,
 )
 from slam.occupancy_grid import OccupancyGrid
+
+# ---------- LiDAR mount correction (field-calibrated, matches row-follow) -----
+# The VLP-16 is mounted yawed ~66° and pitched ~21.5° nose-down.  SLAM must
+# correct the raw cloud into the robot frame before slicing — see
+# scan_matcher.correct_scan and CLAUDE.md (LiDAR yaw/tilt calibration).
+_DEFAULT_YAW_DEG = 66.0
+_DEFAULT_TILT_DEG = 21.5
 
 # ---------- ICP / submap parameters -----------------------------------------
 # ICP result is rejected if mean error exceeds this (metres).
@@ -97,10 +106,18 @@ class SlamEngine:
         grid_resolution: float = 0.10,
         icp_points: int = 400,
         map_update_every: int = 1,
+        yaw_deg: float = _DEFAULT_YAW_DEG,
+        tilt_deg: float = _DEFAULT_TILT_DEG,
+        slice_min: float = SLICE_MIN_GND,
+        slice_max: float = SLICE_MAX_GND,
     ) -> None:
         self._grid = OccupancyGrid(grid_size_m, grid_resolution)
         self._icp_points = icp_points
         self._map_update_every = map_update_every
+        self._yaw_rad = math.radians(yaw_deg)
+        self._tilt_rad = math.radians(tilt_deg)
+        self._slice_min = slice_min
+        self._slice_max = slice_max
 
         self._pose = Pose2D()
         self._prev_pose: Optional[Pose2D] = None
@@ -231,7 +248,13 @@ class SlamEngine:
                      Used to deskew the point cloud for motion distortion caused
                      by the robot moving during the 100 ms VLP-16 scan window.
         """
-        pts_local = extract_2d_slice(scan)
+        pts_local = extract_2d_slice(
+            scan,
+            min_gnd=self._slice_min,
+            max_gnd=self._slice_max,
+            yaw_rad=self._yaw_rad,
+            tilt_rad=self._tilt_rad,
+        )
         if len(pts_local) < 20:
             return
 
