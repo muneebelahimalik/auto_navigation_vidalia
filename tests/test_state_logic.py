@@ -1,7 +1,8 @@
 """Unit tests for navigation/state_logic.py — pure navigator branch logic."""
 from navigation.state_logic import (
     follow_loss_is_row_end, follow_loss_action, approach_action,
-    acquire_rowend_escape, post_turn_loss_action)
+    acquire_rowend_escape, post_turn_loss_action, turn_reacquired)
+import math
 
 APPROACH_FRAMES = 3
 APPROACH_MAX = 3.0
@@ -117,6 +118,46 @@ def test_approach_stops_at_field_edge():
 def test_approach_follow_beats_stop_at_max_dist():
     """If the row locks on the same scan the max distance is reached, follow."""
     assert appr(APPROACH_FRAMES, APPROACH_MAX) == "FOLLOW"
+
+
+# ---------------------------------------------------------------------------
+# turn_reacquired — end the U-turn when the next row is lined up ahead
+# ---------------------------------------------------------------------------
+
+CONF = 0.55
+ALIGN = math.radians(11.5)
+OFF = 0.40
+
+
+def reacq(valid, conf, hdg, off):
+    return turn_reacquired(valid, conf, hdg, off,
+                           reacquire_conf=CONF, align_thresh=ALIGN, offset_thresh=OFF)
+
+
+def test_reacquire_fires_on_confident_aligned_centred_row():
+    """The next row is dead ahead, aligned and centred → end the turn."""
+    assert reacq(True, 0.80, math.radians(2.0), 0.05) is True
+    assert reacq(True, CONF, ALIGN, OFF) is True          # exactly at thresholds
+
+
+def test_reacquire_rejects_low_confidence():
+    """A faint/cross-row glimpse mid-rotation must not end the turn."""
+    assert reacq(True, 0.40, math.radians(2.0), 0.05) is False
+
+
+def test_reacquire_rejects_misaligned_row():
+    """Confident but the robot is still pointing well off the row → keep arcing."""
+    assert reacq(True, 0.90, math.radians(25.0), 0.05) is False
+
+
+def test_reacquire_rejects_off_centre_row():
+    """Confident and aligned but the strip is far to the side (not the one we
+    should straddle) → keep arcing."""
+    assert reacq(True, 0.90, math.radians(2.0), 0.80) is False
+
+
+def test_reacquire_rejects_invalid_estimate():
+    assert reacq(False, 0.90, 0.0, 0.0) is False
 
 
 # ---------------------------------------------------------------------------

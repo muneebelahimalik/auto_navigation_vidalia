@@ -428,6 +428,7 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
         headland_speed=args.headland_speed,
         headland_turn_rate=args.headland_turn_rate,
         headland_radius=args.headland_radius,
+        reacquire_conf=args.reacquire_conf,
         approach_speed=args.approach_speed,
         approach_max_dist=args.approach_max_dist,
         post_turn_max_dist=args.post_turn_max_dist,
@@ -460,10 +461,11 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
     print(f"  rows    : {args.rows}   headland turns: {'on' if args.headland else 'off'}")
     if args.headland:
         radius_str = (f"{args.headland_radius:.2f}m" if args.headland_radius > 0.0
-                      else f"auto ({args.headland_shift / 2:.2f}m)")
-        print(f"  headland: arc U-turn first={args.turn_dir} (then alternating)  "
-              f"shift={args.headland_shift:.2f}m  radius={radius_str}  "
-              f"exit={args.headland_exit:.2f}m  rate={args.headland_turn_rate:.2f}rad/s")
+                      else "auto (1.00m)")
+        print(f"  headland: perception-closed arc U-turn first={args.turn_dir} "
+              f"(then alternating)  radius={radius_str}  "
+              f"exit={args.headland_exit:.2f}m  rate={args.headland_turn_rate:.2f}rad/s  "
+              f"reacq-conf={args.reacquire_conf:.2f}")
     print(f"  speed   : {args.speed:.2f} m/s max   SLAM map: {'on' if args.slam else 'off'}")
     print(f"  crop    : h=[{args.crop_min:.2f},{args.crop_max:.2f}]m  roi_x=±{args.roi_x:.2f}m")
     print(f"  safety  : fwd_h={args.obstacle_height:.2f}m  tire_h={tire_h:.2f}m  "
@@ -601,15 +603,22 @@ def main() -> None:
     parser.add_argument("--headland-speed", type=float, default=0.15, metavar="M",
                         help="Forward speed (m/s) during the straight headland EXIT phase "
                              "(default: 0.15).")
-    parser.add_argument("--headland-turn-rate", type=float, default=0.35, metavar="R",
+    parser.add_argument("--headland-turn-rate", type=float, default=0.30, metavar="R",
                         help="Angular rate (rad/s) of the headland U-turn arc "
-                             "(default: 0.35). Arc forward speed = radius × this rate.")
+                             "(default: 0.30). Arc forward speed = radius × this rate.")
     parser.add_argument("--headland-radius", type=float, default=0.0, metavar="M",
-                        help="Headland U-turn arc radius (m). Default 0 = auto "
-                             "(headland_shift / 2, the maximum-radius semicircle that lands "
-                             "on the next strip). A moving arc scrubs far less than an "
-                             "in-place pivot, so the wheel-heading-closed turn reaches a true "
-                             "180°.")
+                        help="Headland U-turn arc radius (m). Default 0 = auto (1.0 m). "
+                             "The turn drives a gentle large-radius arc and keeps arcing "
+                             "until the LiDAR sees the next row lined up ahead (it does NOT "
+                             "trust wheel heading to count 180°, which a skid-steer "
+                             "over-reports). A bigger radius scrubs less and sweeps the next "
+                             "row through view more slowly, making the re-lock easier.")
+    parser.add_argument("--reacquire-conf", type=float, default=0.55, metavar="C",
+                        help="Row-detection confidence (0–1) required — together with small "
+                             "heading error and offset, for a few consecutive scans — to end "
+                             "the U-turn and enter FOLLOW on the next row (default: 0.55). "
+                             "Raise if the turn ends early on a mis-aligned glimpse; lower if "
+                             "it keeps arcing past a good lock.")
     parser.add_argument("--slam", action="store_true",
                         help="Build an occupancy-grid map in the background")
     parser.add_argument("--speed", type=float, default=0.30, metavar="M",

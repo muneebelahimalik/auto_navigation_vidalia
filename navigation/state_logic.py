@@ -93,6 +93,37 @@ def approach_action(
     return "DRIVE"
 
 
+def turn_reacquired(
+    valid: bool,
+    confidence: float,
+    heading_error: float,
+    lateral_offset: float,
+    *,
+    reacquire_conf: float,
+    align_thresh: float,
+    offset_thresh: float,
+) -> bool:
+    """True when, mid-U-turn, the next row is detected lined up AHEAD.
+
+    The headland turn keeps arcing until this fires (then hands to FOLLOW),
+    instead of trusting the wheel-odometry heading to know when 180° is reached
+    — on a skid-steer that heading over-reports rotation badly, so fixed-angle
+    turns under-rotated and ended pointing across the rows.
+
+    A genuine "lined up on the next strip" lock is confident AND aligned (small
+    heading error) AND roughly centred (small lateral offset) — all three, so a
+    brief glimpse of crop crossing the field of view mid-rotation does not count.
+    The caller additionally requires this to hold for several consecutive scans
+    and only after a minimum arc has been driven.
+    """
+    return (
+        valid
+        and confidence >= reacquire_conf
+        and abs(heading_error) <= align_thresh
+        and abs(lateral_offset) <= offset_thresh
+    )
+
+
 def post_turn_loss_action(
     action: str,
     post_turn: bool,

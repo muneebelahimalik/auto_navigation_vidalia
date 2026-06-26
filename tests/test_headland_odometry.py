@@ -1,7 +1,11 @@
 """Unit tests for navigation/headland.py and navigation/odometry.py.
 
-The headland U-turn is closed-loop on odometry, so the two are tested
-together: a kinematic integrator stands in for the real wheel telemetry.
+The headland U-turn is **perception-closed**: it drives a large-radius arc and
+keeps arcing until the navigator detects the next row aligned ahead (then calls
+finish()).  It uses odometry only for coarse arc-LENGTH guards — never the
+heading, which a skid-steer over-reports.  A kinematic integrator stands in for
+the wheel telemetry; the perception side is exercised in tests/test_state_logic
+(turn_reacquired) and the navigator.
 """
 import math
 
@@ -27,135 +31,121 @@ class FakeOdo:
         self.y += v * math.sin(theta_mid) * dt
 
 
-def run_turn(turn_sign, row_spacing=0.76, exit_dist=1.0):
+def _make(odo, **kw):
+    kw.setdefault("row_spacing", 1.52)
+    kw.setdefault("exit_dist", 1.0)
+    kw.setdefault("speed", 0.15)
+    kw.setdefault("turn_rate", 0.30)
+    return HeadlandTurn(odo, **kw)
+
+
+def test_exit_then_arc_sequence():
     odo = FakeOdo()
-    turn = HeadlandTurn(odo, row_spacing=row_spacing, exit_dist=exit_dist,
-                        speed=0.15, turn_rate=0.35)
-    turn.begin(turn_sign)
-    phases = [turn.phase]
+    turn = _make(odo, exit_dist=1.0, turn_radius=1.0)
+    turn.begin(+1.0)
+    assert turn.phase == "EXIT"
     dt = 0.05
-    for _ in range(20000):
+    saw_arc = False
+    for _ in range(2000):
         v, w = turn.step(dt)
-        if turn.done:
+        if turn.phase == "EXIT":
+            assert v > 0.0 and w == 0.0       # straight exit
+        if turn.phase == "ARC":
+            saw_arc = True
             break
         odo.apply(v, w, dt)
-        if turn.phase != phases[-1]:
-            phases.append(turn.phase)
-    return odo, turn, phases
-
-
-def test_right_uturn_phase_sequence_and_geometry():
-    odo, turn, phases = run_turn(+1.0, row_spacing=1.52)
-    assert turn.done
-    assert phases[:2] == ["EXIT", "ARC"]
-    # A 180-deg clockwise arc => net heading ~ -pi (right U-turn).
-    assert odo.theta == pytest.approx(-math.pi, abs=0.1)
-    # Distance = exit + arc length (pi * radius), radius = shift/2 = 0.76.
-    expected = 1.0 + math.pi * 0.76
-    assert odo.distance == pytest.approx(expected, abs=0.05)
-
-
-def test_left_uturn_mirrors_heading():
-    odo, turn, _ = run_turn(-1.0)
-    assert turn.done
-    assert odo.theta == pytest.approx(+math.pi, abs=0.1)
+    assert saw_arc
+    # Switched to ARC right after driving exit_dist straight.
+    assert odo.distance == pytest.approx(1.0, abs=0.05)
 
 
 def test_arc_command_is_a_moving_turn_not_a_pivot():
     """The turn must ARC (linear > 0), not pivot in place — an in-place pivot
-    scrubs the wheels and the wheel heading over-reads, which is the field bug
-    where the U-turn only reached ~90°."""
+    scrubs the wheels and the wheel heading over-reads (the field bug where the
+    U-turn only reached ~90°)."""
     odo = FakeOdo()
-    turn = HeadlandTurn(odo, row_spacing=1.52, exit_dist=0.0)  # skip EXIT
+    turn = _make(odo, exit_dist=0.0, turn_radius=1.0)  # skip EXIT
     turn.begin(+1.0)
     v, w = turn.step(0.05)
     assert turn.phase == "ARC"
     assert v > 0.0                            # moving arc, not a pivot
     assert w < 0.0                            # right turn = clockwise = negative
-    # Radius defaults to shift/2; forward speed = radius * turn_rate.
-    assert v == pytest.approx(0.76 * 0.35, abs=1e-9)
+    # Arc forward speed = radius * turn_rate.
+    assert v == pytest.approx(1.0 * 0.30, abs=1e-9)
 
 
-def test_arc_radius_is_half_the_shift():
-    """The default arc is the maximum-radius semicircle that lands on the next
-    strip: lateral displacement over the 180° arc equals the shift distance."""
-    odo, turn, _ = run_turn(+1.0, row_spacing=1.52, exit_dist=0.0)
-    assert turn.turn_radius == pytest.approx(0.76)
-    # Initial heading is +x, so the lateral displacement of a 180° arc is along
-    # y and equals 2 * radius = shift; net x returns to ~0 (semicircle).
-    assert abs(odo.y) == pytest.approx(1.52, abs=0.05)
-    assert abs(odo.x) == pytest.approx(0.0, abs=0.05)
+def test_left_turn_is_counterclockwise():
+    odo = FakeOdo()
+    turn = _make(odo, exit_dist=0.0)
+    turn.begin(-1.0)
+    _, w = turn.step(0.05)
+    assert w > 0.0                            # left = CCW = positive
 
 
 def test_explicit_turn_radius_overrides_default():
     odo = FakeOdo()
-    turn = HeadlandTurn(odo, row_spacing=1.52, turn_radius=0.5, exit_dist=0.0)
-    assert turn.turn_radius == 0.5
+    turn = _make(odo, turn_radius=1.4, exit_dist=0.0)
+    assert turn.turn_radius == 1.4
 
 
-# ---------------------------------------------------------------------------
-# Filter (IMU/GPS) heading source for the pivots
-# ---------------------------------------------------------------------------
-
-class FakeFilter:
-    """Absolute-heading stand-in with the FilterHeading interface."""
-    def __init__(self, usable=True):
-        self.heading = 0.0
-        self._usable = usable
-
-    @property
-    def usable(self):
-        return self._usable
-
-
-def run_turn_with_filter(usable=True, wheel_slip=0.7):
-    """Drive a turn where the filter heading is ground truth and the wheel
-    heading slips (scaled by wheel_slip), so the two diverge during pivots."""
+def test_default_radius_is_one_metre():
     odo = FakeOdo()
-    filt = FakeFilter(usable=usable)
-    turn = HeadlandTurn(odo, row_spacing=1.52, exit_dist=1.0,
-                        speed=0.15, turn_rate=0.35, heading_source=filt)
+    turn = _make(odo)                         # no turn_radius given
+    assert turn.turn_radius == pytest.approx(1.0)
+
+
+def test_not_ready_to_reacquire_until_min_arc_driven():
+    """ready_to_reacquire only after min_turn_frac of a nominal semicircle —
+    so the turn cannot end on the row just left or an early cross-row glimpse."""
+    odo = FakeOdo()
+    turn = _make(odo, exit_dist=0.0, turn_radius=1.0,
+                 min_turn_frac=0.55, max_turn_frac=3.0)
     turn.begin(+1.0)
+    nominal = math.pi * 1.0
     dt = 0.05
-    for _ in range(20000):
+    became_ready_at = None
+    for _ in range(5000):
         v, w = turn.step(dt)
         if turn.done:
             break
-        odo.distance += abs(v) * dt
-        odo.theta += w * dt * wheel_slip      # wheel heading under-reads (slip)
-        filt.heading += w * dt                # filter = true heading
-    return odo, turn, filt
+        if turn.ready_to_reacquire and became_ready_at is None:
+            became_ready_at = turn.arc_len
+        odo.apply(v, w, dt)
+    assert became_ready_at is not None
+    assert became_ready_at == pytest.approx(0.55 * nominal, abs=0.1)
 
 
-def test_filter_heading_used_when_usable():
-    """With a usable filter the pivots close on the (true) filter heading, so
-    the U-turn reaches a correct ~180° even when the wheel heading slipped."""
-    odo, turn, filt = run_turn_with_filter(usable=True, wheel_slip=0.7)
-    assert turn.done
-    assert turn.heading_source_name == "filter"
-    assert filt.heading == pytest.approx(-math.pi, abs=0.15)   # true U-turn
-    # The slipping wheel heading is well short — the bug the filter fixes.
-    assert abs(odo.theta) < 0.85 * math.pi
-
-
-def test_filter_falls_back_to_wheel_when_not_converged():
-    """A non-usable filter must not be used; pivots fall back to wheel heading."""
-    odo, turn, _ = run_turn_with_filter(usable=False, wheel_slip=1.0)
-    assert turn.done
-    assert turn.heading_source_name == "wheel"
-    assert odo.theta == pytest.approx(-math.pi, abs=0.15)
-
-
-def test_heading_source_latched_at_begin():
-    """The source is latched at begin(): a filter that becomes usable only
-    after the turn starts is not adopted mid-turn."""
+def test_finish_ends_the_turn_without_cap():
+    """The navigator calls finish() when perception re-locks the next row."""
     odo = FakeOdo()
-    filt = FakeFilter(usable=False)
-    turn = HeadlandTurn(odo, heading_source=filt)
+    turn = _make(odo, exit_dist=0.0, turn_radius=1.0)
     turn.begin(+1.0)
-    assert turn.heading_source_name == "wheel"
-    filt._usable = True                       # changes after begin()
-    assert turn.heading_source_name == "wheel"
+    dt = 0.05
+    for _ in range(200):              # drive part of the arc
+        v, w = turn.step(dt)
+        odo.apply(v, w, dt)
+    assert turn.phase == "ARC" and not turn.done
+    turn.finish()
+    assert turn.done
+    assert turn.capped is False
+
+
+def test_arc_length_cap_stops_the_turn():
+    """With no finish() call the turn gives up after max_turn_frac semicircles
+    (field edge / no next row) and reports capped."""
+    odo = FakeOdo()
+    turn = _make(odo, exit_dist=0.0, turn_radius=1.0, max_turn_frac=2.0)
+    turn.begin(+1.0)
+    dt = 0.05
+    for _ in range(100000):
+        v, w = turn.step(dt)
+        if turn.done:
+            break
+        odo.apply(v, w, dt)
+    assert turn.done
+    assert turn.capped is True
+    # Stopped near the cap distance (2 nominal semicircles).
+    assert turn.arc_len == pytest.approx(2.0 * math.pi * 1.0, abs=0.1)
 
 
 # ---------------------------------------------------------------------------

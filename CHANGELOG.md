@@ -37,7 +37,26 @@ Work toward the row-to-row turn milestone (built on the v0.1.0 baseline).
   `tests/test_slam.py` (correction round-trip, ground-rejection regression, ICP,
   occupancy grid, engine smoke tests).
 
-### Changed — arc U-turn (replaces in-place pivots)
+### Changed — perception-closed U-turn (replaces heading-closed arc)
+- **The U-turn no longer trusts wheel heading to know when it's done.** The
+  previous arc still closed on wheel-odometry heading and still under-rotated in
+  the field (~90° instead of 180°): a 4-wheel skid-steer scrubs enough even on a
+  moderate-radius arc that "180° of wheel heading" ≈ 90° of real rotation, so
+  the robot finished pointing across the rows and drove off the field, then got
+  stuck in APPROACH. `navigation/headland.py` is rewritten to be
+  **perception-closed**: it drives a gentle large-radius arc (auto 1.0 m) and
+  `row_navigator` ends the turn the instant the dual-row detector reports the
+  next row **confidently aligned and roughly centred ahead**
+  (`state_logic.turn_reacquired`, held `reacquire_frames` scans, after a
+  `min_turn_frac` minimum arc), handing straight to FOLLOW. Odometry is used
+  ONLY for arc-LENGTH guards (forward distance is reliable; heading is not), and
+  a `max_turn_frac` cap STOPS the robot if no row ever appears (field edge).
+  Simulated against a 2× wheel-heading over-report, the turn still ends at a true
+  ~175°. New `--reacquire-conf`; `--headland-radius` default → 1.0 m;
+  `--headland-turn-rate` default → 0.30. Unit-tested (`test_state_logic.py`
+  turn_reacquired; `test_headland_odometry.py` arc/ready/finish/cap).
+
+### Changed — arc U-turn (superseded by the perception-closed turn above)
 - **The U-turn now drives a smooth maximum-radius arc instead of two in-place
   pivots.** Field failure: the robot ran all four pivot phases on wheel heading
   yet physically rotated only ~90°, ended up pointing across the rows, and drove

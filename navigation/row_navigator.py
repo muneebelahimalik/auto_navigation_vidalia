@@ -38,7 +38,7 @@ from lidar.obstacle_filter import tilt_correct_pts, yaw_correct_pts
 from navigation.headland import HeadlandTurn
 from navigation.state_logic import (
     follow_loss_is_row_end, follow_loss_action, approach_action,
-    acquire_rowend_escape, post_turn_loss_action)
+    acquire_rowend_escape, post_turn_loss_action, turn_reacquired)
 from navigation.row_controller import PurePursuitController
 from navigation.row_perception import RowDetector, RowEstimate
 from navigation.row_safety import SafetyMonitor
@@ -116,8 +116,12 @@ class RowNavigator:
         headland_exit_dist: float = 1.0,
         first_turn_sign: float = 1.0,
         headland_speed: float = 0.15,
-        headland_turn_rate: float = 0.35,
+        headland_turn_rate: float = 0.30,
         headland_radius: float = 0.0,
+        reacquire_conf: float = 0.55,
+        reacquire_align_deg: float = 11.5,
+        reacquire_offset: float = 0.40,
+        reacquire_frames: int = 4,
         approach_speed: float = 0.12,
         approach_max_dist: float = 3.0,
         approach_acquire_frames: int = 3,
@@ -193,6 +197,13 @@ class RowNavigator:
         self.first_turn_sign = 1.0 if first_turn_sign >= 0 else -1.0
         self.headland_speed = headland_speed
         self.headland_turn_rate = headland_turn_rate
+        # Perception-gated U-turn completion: keep arcing until the next row is
+        # detected confidently aligned ahead for reacquire_frames scans.
+        self.reacquire_conf = reacquire_conf
+        self.reacquire_align = math.radians(reacquire_align_deg)
+        self.reacquire_offset = reacquire_offset
+        self.reacquire_frames = reacquire_frames
+        self._reacq_count = 0
 
         # Closed-loop headland U-turn driver (odometry feedback).  Built only
         # when an odometry source is available; otherwise headland turns are
@@ -719,6 +730,7 @@ class RowNavigator:
                 1.0 if self._rows_done % 2 == 1 else -1.0)
             self._headland_turn.begin(self._turn_sign)
             self._headland_abort_count = 0
+            self._reacq_count = 0
             self._enter(_S.HEADLAND)
         else:
             self._enter(_S.DONE)
@@ -752,18 +764,52 @@ class RowNavigator:
         else:
             self._headland_abort_count = 0
 
+        # Perception-closed turn completion: keep arcing until the LiDAR sees
+        # the NEXT row lined up ahead (confident + aligned + roughly centred for
+        # a few consecutive scans), then hand straight to FOLLOW.  This is robust
+        # to the wheel-odometry heading over-report that made every fixed-angle
+        # turn under-rotate and end pointing across the rows.  Only after a
+        # minimum arc has been driven, so a glimpse of the row just left or of
+        # crop crossing the view mid-rotation cannot end the turn early.
+        if (est is not None and self._headland_turn.ready_to_reacquire
+                and turn_reacquired(
+                    est.valid, est.confidence, est.heading_error,
+                    est.lateral_offset,
+                    reacquire_conf=self.reacquire_conf,
+                    align_thresh=self.reacquire_align,
+                    offset_thresh=self.reacquire_offset)):
+            self._reacq_count += 1
+        else:
+            self._reacq_count = 0
+        if self._reacq_count >= self.reacquire_frames:
+            print(f"\n[navigator] U-turn: next row re-acquired aligned ahead "
+                  f"(arc {self._headland_turn.arc_len:.1f} m) — entering FOLLOW.")
+            self._headland_turn.finish()
+            self._reacq_count = 0
+            self._enter(_S.FOLLOW)
+            self._row_dist = 0.0
+            self._row_end_count = 0
+            self._follow_miss_count = 0
+            # Keep the post-turn settling net active in case the fresh lock is
+            # marginal for the first metre.
+            self._post_turn = True
+            self._post_turn_dist = 0.0
+            return self.controller.compute(est)
+
         linear, angular = self._headland_turn.step(dt)
         if self._headland_turn.done:
-            # The turn ends at the headland margin with no crop immediately
-            # ahead, so a stationary ACQUIRE here would hang forever (field
-            # failure: robot stuck after the U-turn).  Instead drive forward
-            # into the next row (APPROACH) until perception re-acquires it.
+            if self._headland_turn.capped:
+                # Drove the whole turn budget without the next row appearing —
+                # field edge or no next row.  Stop rather than spin/drive on.
+                print(f"\n[navigator] headland: no next row found within the turn "
+                      f"(arc {self._headland_turn.arc_len:.1f} m) — stopping "
+                      f"(field edge?).")
+                self._enter(_S.DONE)
+                return 0.0, 0.0
+            # Defensive fallback (shouldn't normally trigger now): creep forward
+            # to re-acquire instead of stalling.
             self._acq_count = 0
             self._approach_dist = 0.0
-            # Settling window: the next-row lock is marginal (partly in-ROI)
-            # until the robot has driven a solid distance down it.  While this
-            # is set, an early FOLLOW loss keeps creeping forward (back to
-            # APPROACH) instead of stalling in a stationary ACQUIRE.
             self._post_turn = True
             self._post_turn_dist = 0.0
             self._enter(_S.APPROACH)
@@ -977,8 +1023,9 @@ class RowNavigator:
                 acq_str = f" acq={self._acq_count}/{self.acquire_frames}"
         elif self.state == _S.HEADLAND and self._headland_turn is not None:
             turn_dir = "R" if self._headland_turn.turn_sign >= 0 else "L"
-            acq_str = (f" {turn_dir}-UTURN:{self._headland_turn.phase}"
-                       f"[{self._headland_turn.heading_source_name}]")
+            arc = (f" arc={self._headland_turn.arc_len:.1f}m reacq={self._reacq_count}/{self.reacquire_frames}"
+                   if self._headland_turn.phase == "ARC" else "")
+            acq_str = (f" {turn_dir}-UTURN:{self._headland_turn.phase}{arc}")
         elif self.state == _S.APPROACH:
             tag = "SETTLE" if self._post_turn else "ENTER"
             acq_str = (f" {tag} {self._approach_dist:.1f}/{self.approach_max_dist:.1f}m"
