@@ -94,25 +94,71 @@ def test_default_radius_is_one_metre():
     assert turn.turn_radius == pytest.approx(1.0)
 
 
-def test_not_ready_to_reacquire_until_min_arc_driven():
-    """ready_to_reacquire only after min_turn_frac of a nominal semicircle —
-    so the turn cannot end on the row just left or an early cross-row glimpse."""
+class FakeFilter:
+    """IMU/filter heading stand-in: exposes .heading (rad) and .fresh."""
+    def __init__(self, fresh=True):
+        self.heading = 0.0
+        self.fresh = fresh
+
+
+def test_imu_heading_rotation_tracks_real_rotation_through_slip():
+    """The cumulative IMU heading measures REAL rotation even when the wheel
+    arc under-rotates (slip): the field failure where the arc only physically
+    turned ~90°.  Here the body turns at 0.7× the commanded rate; the IMU
+    follows the true body heading, not the command."""
     odo = FakeOdo()
-    turn = _make(odo, exit_dist=0.0, turn_radius=1.0,
-                 min_turn_frac=0.55, max_turn_frac=3.0)
+    filt = FakeFilter(fresh=True)
+    turn = _make(odo, exit_dist=0.0, turn_radius=1.0, heading_source=filt)
     turn.begin(+1.0)
-    nominal = math.pi * 1.0
     dt = 0.05
-    became_ready_at = None
+    SLIP = 0.7
+    true_heading = 0.0
     for _ in range(5000):
         v, w = turn.step(dt)
         if turn.done:
             break
-        if turn.ready_to_reacquire and became_ready_at is None:
-            became_ready_at = turn.arc_len
+        true_heading += w * dt * SLIP        # body rotates slower than commanded
+        filt.heading = true_heading          # IMU = true body heading
         odo.apply(v, w, dt)
-    assert became_ready_at is not None
-    assert became_ready_at == pytest.approx(0.55 * nominal, abs=0.1)
+        if turn.heading_rotation >= math.radians(175):
+            break
+    assert turn.heading_tracking
+    # IMU rotation matches the TRUE body rotation (not the commanded arc).
+    assert turn.heading_rotation == pytest.approx(abs(true_heading), abs=0.05)
+
+
+def test_imu_rotation_unwraps_past_180():
+    """Cumulative |Δheading| keeps growing past π (no wrap collapse)."""
+    odo = FakeOdo()
+    filt = FakeFilter(fresh=True)
+    turn = _make(odo, exit_dist=0.0, turn_radius=1.0, heading_source=filt)
+    turn.begin(+1.0)
+    dt = 0.05
+    th = 0.0
+    for _ in range(5000):
+        v, w = turn.step(dt)
+        if turn.done:
+            break
+        th += w * dt
+        filt.heading = th
+        odo.apply(v, w, dt)
+        if turn.heading_rotation >= math.radians(200):
+            break
+    assert turn.heading_rotation >= math.radians(200)
+
+
+def test_heading_not_tracking_when_filter_stale():
+    odo = FakeOdo()
+    filt = FakeFilter(fresh=False)
+    turn = _make(odo, exit_dist=0.0, turn_radius=1.0, heading_source=filt)
+    turn.begin(+1.0)
+    dt = 0.05
+    for _ in range(50):
+        v, w = turn.step(dt)
+        odo.apply(v, w, dt)
+    assert turn.heading_tracking is False
+    assert turn.heading_rotation == 0.0
+    assert turn.heading_source_name == "arc"
 
 
 def test_finish_ends_the_turn_without_cap():

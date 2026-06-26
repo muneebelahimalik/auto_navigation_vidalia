@@ -472,25 +472,34 @@ ROW_END ─► HEADLAND ──────────────────�
                   STOP after the arc-length cap = no next row / field edge.)
 ```
 
-**Why perception-closed, not heading-closed (field-critical):** three earlier
-designs all trusted wheel-odometry heading to know when 180° was reached and all
-failed.  A 4-wheel skid-steer **scrubs** — both when pivoting in place AND, to a
-lesser but still fatal degree, on a moderate-radius arc — so the wheel-derived
-`measured_angular_rate` (AmigaTpdo1) over-reports body rotation ~2×.  "180° of
-wheel heading" was only ~90° of real rotation, so the robot finished the turn
-pointing *across* the rows and drove off the field.  **The fix: stop trusting
-heading entirely.**  The turn drives a gentle arc and `row_navigator` ends it
-the instant the dual-row detector reports the next row **confidently aligned and
-roughly centred ahead** (`state_logic.turn_reacquired`, held `reacquire_frames`
-scans, after a minimum arc) — then hands straight to FOLLOW.  Odometry is used
-only for arc-LENGTH guards (forward distance is reliable even when the angular
-rate is not): a `min_turn_frac` floor before re-acquire is allowed (so it can't
-latch the row just left), and a `max_turn_frac` cap that STOPS the robot if no
-row appears.  Simulated with a 2× wheel-heading over-report, the turn still ends
-at a true ~175°.  `--headland-radius` (default auto 1.0 m — bigger = less scrub
-and a slower sweep that is easier to lock), `--headland-turn-rate` (arc rate;
-arc speed = radius × rate), `--reacquire-conf` (lock confidence, default 0.55).
-Status: `R-UTURN:ARC arc=2.1m reacq=2/4`.
+**Why IMU-measured, not wheel/arc/perception alone (field-critical):** every
+earlier design lacked a reliable measure of how far the robot had ACTUALLY
+rotated.  Wheel heading over-reports ~2× (skid-steer scrub); the open-loop arc
+*under*-rotates (slip widens the real radius far past the commanded one, so a
+given arc length is much less rotation — a "1.0 m radius" command traced ~1.7 m
+in the field, ~90° at the point the turn thought it was done); and a
+perception-only exit got fooled because the dual-row detector **locks onto grass**
+at the headland (it can't tell grass from soybean rows) and ended the turn at
+~90° on the wrong feature.  The fix uses the one rotation sensor independent of
+wheel contact: the **IMU in the filter service** (`FilterState` heading).  The
+turn only needs the *relative* heading CHANGE over ~10 s, and IMU yaw is locally
+accurate even before the GPS filter globally converges — so `HeadlandTurn`
+accumulates the absolute IMU heading change during the arc **regardless of
+`has_converged`** (the previous code wrongly required convergence and fell back
+to the unreliable wheel heading).  `row_navigator._step_headland` then:
+- keeps arcing until ~180° of REAL rotation;
+- only lets a perception lock end the turn AFTER ≥ `reacquire_min_turn` (150°)
+  of measured rotation AND at high confidence (`--reacquire-conf`, default 0.72)
+  — so a confident *grass* detection at ~90° can no longer end it early;
+- completes on heading alone at `turn_complete_deg` (175°) → then APPROACH creeps
+  in to acquire the actual row if perception hasn't already locked it.
+If the IMU heading is not live it falls back to a long arc-length window
+(`reacquire_min_arc`, 4.0 m) plus the strict perception lock; a `max_turn_frac`
+arc cap STOPS the robot if nothing ever completes.  Simulated with 55 % wheel
+slip and grass present the whole arc, the turn now ends at a true ~170° on the
+real row (not ~90° on grass).  `--headland-radius` (auto 1.0 m),
+`--headland-turn-rate` (arc rate), `--reacquire-conf`.
+Status: `R-UTURN:ARC rot=120°[imu] arc=2.1m reacq=2/4` (`[arc]` = IMU not live).
 
 **No separate APPROACH after the turn (normally):** because the turn only ends
 once the next row is already locked aligned ahead, it hands **straight to
@@ -516,13 +525,14 @@ Turn direction alternates each row for **serpentine coverage** (right, left,
 right, …), starting from `--turn-dir` (default right).  The loop repeats until
 `--rows N` rows are complete, then DONE.
 
-**The turn does NOT use heading feedback anymore.** Earlier versions closed the
-turn on wheel- (or filter-) heading; that is gone because wheel heading is
-unreliable on a scrubbing skid-steer and the filter (GPS/IMU) is rarely
-converged in the test field. Completion is purely perception (next row aligned
-ahead) + an arc-length cap. `--headland-shift` is no longer used to size the
-turn (the perception lock decides where it lands); it remains only as the
-detector's notion of strip-to-strip distance if referenced elsewhere.
+**Heading source = IMU *relative* change, not the converged filter pose.** The
+turn uses `FilterState.heading` only for its CHANGE during the arc, so it works
+even when `has_converged` is False (no RTK lock) — which is the normal case in
+the test field. It never needs the absolute/global heading. If the filter
+service isn't publishing at all, the turn falls back to the arc-length window +
+strict perception (status shows `[arc]` instead of `[imu]`). `--headland-shift`
+no longer sizes the turn (the IMU rotation + perception lock decide where it
+lands); it remains only the detector's notion of strip-to-strip distance.
 
 **Field geometry (Vidalia soybean field):**
 Two soybean rows flank the centre residue/stubble strip inside the wheel tracks
@@ -1106,7 +1116,8 @@ OAK-D defaults: hfov=73°, vfov=54°, 640×400 → scale factor ≈ 0.91.
 | Robot goes FOLLOW→ACQUIRE at the real row end and hangs (never reaches the turn) | The FOLLOW-exit row-end check was fooled: residual sparse clutter (~40 straggler/weed pts) kept `row_end_confidence` below 0.70, and/or a short row left `row_dist` < `row_end_min_dist`, so it fell to the ACQUIRE ("lost lock") branch — and ACQUIRE had no row-end escape, hunting forever for a row that isn't there | **ACQUIRE row-end escape** (`_step_acquire` / `state_logic.acquire_rowend_escape`): when ACQUIRE was entered FROM FOLLOW (we were on a row) and the crop band ahead is empty for `row_end_frames` consecutive scans → ROW_END (→ headland). Tests `test_acquire_escapes_*` |
 | After the U-turn the robot follows the next row briefly (~0.3 m) then drops to ACQUIRE and hangs | The U-turn→APPROACH→FOLLOW handoff lands on the next row with a marginal, partly-in-ROI view (n≈70 vs ≈700 centred, conf flickering around 0.35); FOLLOW dropped to a *stationary* ACQUIRE, and a stationary sensor on a sparse half-visible row can't improve its view | **Post-turn settling window** (`state_logic.post_turn_loss_action`): from the end of the turn until `post_turn_settle_dist` (2.0 m) of continuous FOLLOW down the new row, a non-row-end FOLLOW loss re-enters **APPROACH** (keep creeping forward) instead of stalling in ACQUIRE — the moving sensor fills the ROI and re-locks; still bounded by `--approach-max-dist`. Status shows `SETTLE`. Tests `test_post_turn_*` |
 | U-turn runs all phases on wheel heading but the robot physically rotates only ~90°, ends up pointing across the rows and drives off the field | An in-place pivot on a 4-wheel skid-steer scrubs all wheels, so the wheel-derived `measured_angular_rate` over-reports body rotation — each "90°" pivot finished ~45°, two summed to ~90° not 180° | First tried an **arc U-turn** (less scrub than a pivot) — still closed on wheel heading and still under-rotated (~90°): a moderate-radius arc scrubs enough that "180° of wheel heading" ≈ 90° physical. |
-| Arc U-turn STILL only ~90° then bails to APPROACH and gets stuck/drives off | Closing the turn on wheel heading is unfixable on a scrubbing skid-steer (≈2× over-report); the filter/IMU heading is rarely converged in the test field | **Perception-closed turn** (`headland.py` rewritten, `state_logic.turn_reacquired`): drive a gentle large-radius arc and KEEP arcing until the dual-row detector reports the next row confidently aligned & centred ahead (held `reacquire_frames` scans, after a `min_turn_frac` arc), then hand straight to FOLLOW. Odometry used only for arc-LENGTH guards (reliable), never heading; `max_turn_frac` cap STOPS at a field edge. Simulated at 2× heading over-report it still ends at true ~175°. `--headland-radius` (auto 1.0 m), `--reacquire-conf`. Tests `test_reacquire_*`, `test_arc_length_cap_*`, `test_finish_*` |
+| Arc U-turn STILL only ~90° then bails to APPROACH and gets stuck/drives off | Closing the turn on wheel heading is unfixable on a scrubbing skid-steer (≈2× over-report) | Tried a **perception-closed arc** (keep arcing until the row is seen ahead) — but the open-loop arc under-rotated (slip widens the real radius) AND the detector locked onto **grass** at ~90° (can't tell grass from soybean), ending the turn early on the wrong feature. |
+| Perception-closed arc turns ~90° then "follows" grass (soybean rows not there) | (a) open-loop arc under-rotates — slip makes the real radius ~1.7× the commanded 1.0 m, so the arc length at "done" was only ~90° of rotation; (b) the dual-row detector locks onto grass at the headland (conf ~0.65) and the perception gate accepted it | **IMU-measured turn** (`headland.py` accumulates `FilterState` heading change during the arc, regardless of `has_converged` — IMU yaw is locally accurate without GPS lock). `row_navigator._step_headland`: keep arcing until ~180° of REAL rotation; a perception lock may end the turn ONLY after ≥150° measured rotation AND conf ≥ 0.72 (so grass at ~90° / conf 0.65 can't); complete on heading alone at 175° → APPROACH. Fallback to arc-length window (4 m) + strict perception if the IMU isn't live. Simulated at 55 % slip + grass-the-whole-arc it ends at true ~170° on the real row. Tests `test_imu_heading_*`, `test_finish_*`, `test_arc_length_cap_*` |
 | Robot drives off the end of the field after a turn, "following" spurious crop returns | The post-turn settling guard only bounded the APPROACH creep; a confident-but-wrong long FOLLOW lock (or repeated ping-pong) escaped the bound | **Cumulative post-turn guard** (`post_turn_max_dist`, 5.0 m): bounds total travel after a U-turn (APPROACH + short FOLLOW segments) before a stable down-row FOLLOW is required, else STOP |
 | Row end declared early on the LiDAR near blind spot (< 1.5 m) | The last plants in the near zone leave the ROI sparse, reading as a row end before the row truly ends | **Blind-spot EXIT confirmation** (`_step_headland`): the turn's straight EXIT leg aborts back to FOLLOW if solid crop reappears in the ROI before any rotation (`headland_abort_frames`); a real obstacle still pauses the leg via the safety monitor |
 

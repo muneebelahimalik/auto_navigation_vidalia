@@ -1,46 +1,41 @@
 #!/usr/bin/env python3
 """
-headland.py — Perception-closed headland U-turn onto the next row.
+headland.py — IMU/perception headland U-turn onto the next row.
 
-Three designs preceded this one and each failed in the field:
+Four designs preceded this one and each failed in the field, all for the same
+underlying reason: **nothing reliably measured how far the robot had actually
+rotated.**
 
   1. open-loop timed phases — wheel slip/latency accumulated into big errors;
-  2. two in-place 90° pivots closed on wheel heading — a 4-wheel skid-steer
-     SCRUBS when pivoting in place, so the wheel-derived ``measured_angular_rate``
-     over-reports rotation ~2×; each "90°" finished ~45°, the pair summed to ~90°
-     and the robot drove off across the rows;
-  3. a single 180° arc closed on wheel heading — gentler, but still scrubbed
-     enough that "180° of wheel heading" was only ~90° of real rotation, so it
-     handed off to APPROACH pointing across the field and got stuck.
+  2. two in-place 90° pivots closed on WHEEL heading — a 4-wheel skid-steer
+     scrubs when pivoting, so the wheel-derived ``measured_angular_rate``
+     over-reports rotation ~2×; "180°" was ~90° and the robot drove off;
+  3. a single arc closed on WHEEL heading — same over-report, same ~90°;
+  4. a perception-closed arc (keep arcing until the row is seen ahead) — the
+     open-loop arc under-rotated (skid-steer slip makes the *actual* radius far
+     wider than commanded, so a given arc length is much less rotation), and the
+     dual-row detector locked onto **grass** at ~90° (it cannot tell grass from
+     soybean rows), ending the turn early on the wrong feature.
 
-The lesson: **wheel-odometry heading cannot be trusted to know when the turn is
-done** on this platform.  So the turn no longer closes on heading at all.  It
-drives a smooth, *large-radius* arc and **keeps arcing until the LiDAR actually
-sees the next row lined up ahead** (perception-closed), at which point the
-navigator hands straight to FOLLOW.  Odometry is used only for coarse
-arc-LENGTH guards (forward distance from ``measured_speed`` is reliable even when
-the angular rate is not):
+The fix is to measure rotation with the one sensor that does not depend on wheel
+contact: the **IMU in the filter service** (``FilterState`` heading).  The turn
+only needs the *relative* heading CHANGE over ~10 s, and IMU yaw is locally
+accurate even before the GPS filter globally converges — so we use the filter
+heading's cumulative change regardless of ``has_converged`` (the previous code
+wrongly required convergence and thus fell back to the unreliable wheel heading).
 
-  * don't start looking for the next row until ~``min_turn_frac`` of a nominal
-    semicircle has been driven (so the sweep is past the row just left and near
-    the next strip);
-  * give up and stop after ~``max_turn_frac`` semicircles (field edge / no next
-    row) rather than spinning forever.
+``HeadlandTurn`` drives EXIT → ARC and accumulates the absolute IMU heading
+change since the arc began.  The navigator (``row_navigator._step_headland``)
+uses that rotation to:
+  * keep arcing until ~180° of REAL rotation (robust to slip);
+  * only allow a perception lock to end the turn AFTER ≥ ~150° of rotation, so a
+    grass glimpse at ~90° can no longer end it early;
+  * complete on heading alone at ~175° (then APPROACH creeps in to acquire the
+    actual row) if perception hasn't locked.
+If the IMU heading is unavailable, it falls back to a long arc-length window plus
+a strict perception lock.  Odometry forward distance (reliable) bounds the turn.
 
-A larger radius is deliberately gentle: it scrubs less AND sweeps the next row
-through the field of view more slowly, so the alignment lock is easier to catch.
-
-U-turn geometry (right turn; left mirrors the sign):
-
-        row N (just finished)        row N+1 (next strip)
-              │                              │
-              │  ▲ heading in                ▼ heading out
-              │  │      __ big arc __        │
-        ──────┘  EXIT ─/             \───────┘
-                 (clear   keep arcing until the row
-                  row end) is detected aligned ahead → FOLLOW
-
-The serpentine pattern alternates turn direction each row; the caller passes
+The serpentine pattern alternates direction each row; the caller passes
 ``turn_sign`` to ``begin()`` (+1 = right / clockwise, -1 = left / CCW).
 """
 
@@ -49,22 +44,21 @@ from __future__ import annotations
 import math
 
 
-class HeadlandTurn:
-    """Perception-closed large-radius arc U-turn driver.
+def _ang_norm(a: float) -> float:
+    """Normalise an angle to (-π, π]."""
+    return (a + math.pi) % (2.0 * math.pi) - math.pi
 
-    The driver only generates the arc command and tracks how far it has driven;
-    the decision to *finish* the turn is made by the navigator when perception
-    re-locks the next row (``finish()``), or here when the arc-length safety cap
-    is reached (``capped``).
+
+class HeadlandTurn:
+    """IMU-measured large-radius arc U-turn driver.
 
     Parameters
     ----------
     odometry : object
-        Provides ``.distance`` (cumulative metres).  Only forward distance is
-        used (reliable); the heading is intentionally NOT used to end the turn.
+        Provides ``.distance`` (cumulative metres) — used only for arc-length
+        guards (forward distance is reliable; the heading is not).
     row_spacing : float
-        Centre-to-centre distance (m) to the next strip — sets the auto arc
-        radius when ``turn_radius`` is not given.
+        Centre-to-centre distance (m) to the next strip (status/info only now).
     exit_dist : float
         Straight distance (m) driven before the arc, to clear the row end.
     speed : float
@@ -72,13 +66,13 @@ class HeadlandTurn:
     turn_rate : float
         Arc angular rate (rad/s); arc forward speed = ``turn_radius · turn_rate``.
     turn_radius : float, optional
-        Arc radius (m).  Default 1.0 m — a gentle, low-scrub turn (overridable).
-    min_turn_frac, max_turn_frac : float
-        Arc-length guards as fractions of a nominal semicircle (π·radius):
-        earliest re-acquire and the give-up cap.
+        Arc radius (m).  Default 1.0 m.
+    max_turn_frac : float
+        Hard arc-length cap as a multiple of a nominal semicircle (π·radius);
+        stops the turn if no completion signal ever arrives (field edge).
     heading_source : object, optional
-        Kept only for the status label (filter vs wheel availability); not used
-        to end the turn.
+        Exposes ``.heading`` (rad) and ``.fresh`` (bool).  When fresh, its
+        cumulative change measures the real rotation.
     """
 
     PHASES = ("EXIT", "ARC", "DONE")
@@ -92,8 +86,7 @@ class HeadlandTurn:
         speed: float = 0.15,
         turn_rate: float = 0.30,
         turn_radius: float | None = None,
-        min_turn_frac: float = 0.55,
-        max_turn_frac: float = 2.2,
+        max_turn_frac: float = 3.0,
         heading_source=None,
     ) -> None:
         self.odometry = odometry
@@ -101,11 +94,7 @@ class HeadlandTurn:
         self.exit_dist = exit_dist
         self.speed = speed
         self.turn_rate = turn_rate
-        # Default to a gentle 1.0 m radius (bigger than the shift/2 semicircle):
-        # less scrub, and the next row sweeps through view slowly so the
-        # perception lock is easy to catch.
         self.turn_radius = float(turn_radius) if turn_radius and turn_radius > 0.0 else 1.0
-        self.min_turn_frac = min_turn_frac
         self.max_turn_frac = max_turn_frac
         self.heading_source = heading_source
 
@@ -113,22 +102,20 @@ class HeadlandTurn:
         self._sign = 1.0
         self._d0 = 0.0            # odometry distance at current phase start
         self._capped = False
-        self._use_filter = False
+        # IMU heading accumulation during ARC
+        self._cum_heading = 0.0   # cumulative |Δ heading| since ARC start (rad)
+        self._hprev = None        # previous heading sample (rad) or None
+        self._heading_ok = False  # filter heading was fresh during the arc
 
     # ------------------------------------------------------------------
     def begin(self, turn_sign: float) -> None:
-        """Start a new U-turn.  ``turn_sign``: +1 = right, -1 = left."""
         self._sign = 1.0 if turn_sign >= 0 else -1.0
         self._capped = False
-        self._use_filter = bool(
-            self.heading_source is not None and getattr(self.heading_source, "usable", False)
-        )
+        self._cum_heading = 0.0
+        self._hprev = None
+        self._heading_ok = False
         self._phase = "EXIT"
         self._d0 = float(self.odometry.distance)
-
-    @property
-    def heading_source_name(self) -> str:
-        return "filter" if self._use_filter else "wheel"
 
     @property
     def phase(self) -> str:
@@ -140,7 +127,6 @@ class HeadlandTurn:
 
     @property
     def capped(self) -> bool:
-        """True if the turn ended by hitting the arc-length cap (no row found)."""
         return self._capped
 
     @property
@@ -153,44 +139,66 @@ class HeadlandTurn:
 
     @property
     def arc_len(self) -> float:
-        """Distance driven since the ARC phase began (m)."""
         if self._phase not in ("ARC", "DONE"):
             return 0.0
         return abs(float(self.odometry.distance) - self._d0)
 
     @property
-    def ready_to_reacquire(self) -> bool:
-        """True once enough arc has been driven to start looking for the next row."""
-        return self._phase == "ARC" and self.arc_len >= self.min_turn_frac * self._nominal_arc
+    def heading_rotation(self) -> float:
+        """Cumulative real rotation since the arc began (rad), from the IMU."""
+        return self._cum_heading
+
+    @property
+    def heading_tracking(self) -> bool:
+        """True when the IMU/filter heading is live and measuring the rotation."""
+        return self._heading_ok
+
+    @property
+    def heading_source_name(self) -> str:
+        return "imu" if self._heading_ok else "arc"
 
     # ------------------------------------------------------------------
     def finish(self) -> None:
-        """End the turn because perception re-locked the next row."""
+        """End the turn (navigator: perception locked / heading reached 180°)."""
         self._phase = "DONE"
         self._capped = False
 
     # ------------------------------------------------------------------
-    def step(self, dt: float) -> tuple[float, float]:
-        """Advance the manoeuvre one tick; return (linear, angular).
+    def _accumulate_heading(self) -> None:
+        src = self.heading_source
+        if src is None or not getattr(src, "fresh", False):
+            return
+        cur = float(src.heading)
+        if self._hprev is not None:
+            self._cum_heading += abs(_ang_norm(cur - self._hprev))
+        self._hprev = cur
+        self._heading_ok = True
 
-        Progress is measured from odometry distance, not integrated here.
-        """
+    # ------------------------------------------------------------------
+    def step(self, dt: float) -> tuple[float, float]:
         arc_w = -self._sign * self.turn_rate
         arc_v = self.turn_radius * self.turn_rate
 
-        if self._phase == "EXIT":
-            if abs(float(self.odometry.distance) - self._d0) >= self.exit_dist:
-                self._phase = "ARC"
-                self._d0 = float(self.odometry.distance)
+        # Re-evaluate after a phase change so a completed phase does not waste a
+        # zero/straight-command frame.
+        for _ in range(len(self.PHASES)):
+            if self._phase == "EXIT":
+                if abs(float(self.odometry.distance) - self._d0) >= self.exit_dist:
+                    self._phase = "ARC"
+                    self._d0 = float(self.odometry.distance)
+                    self._hprev = None    # start heading accumulation fresh
+                    continue
+                return self.speed, 0.0
+
+            if self._phase == "ARC":
+                self._accumulate_heading()
+                # Hard arc-length safety cap (reliable): give up if nothing ever
+                # completes the turn (field edge / no next row).
+                if self.arc_len >= self.max_turn_frac * self._nominal_arc:
+                    self._phase = "DONE"
+                    self._capped = True
+                    return 0.0, 0.0
                 return arc_v, arc_w
-            return self.speed, 0.0
 
-        if self._phase == "ARC":
-            # Safety cap on arc LENGTH (reliable) — give up if no row is found.
-            if self.arc_len >= self.max_turn_frac * self._nominal_arc:
-                self._phase = "DONE"
-                self._capped = True
-                return 0.0, 0.0
-            return arc_v, arc_w
-
-        return 0.0, 0.0  # DONE
+            return 0.0, 0.0  # DONE
+        return 0.0, 0.0

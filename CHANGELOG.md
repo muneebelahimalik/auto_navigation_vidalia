@@ -37,7 +37,32 @@ Work toward the row-to-row turn milestone (built on the v0.1.0 baseline).
   `tests/test_slam.py` (correction round-trip, ground-rejection regression, ICP,
   occupancy grid, engine smoke tests).
 
-### Changed — perception-closed U-turn (replaces heading-closed arc)
+### Changed — IMU-measured U-turn (replaces perception-only arc)
+- **The U-turn now measures real rotation with the IMU.** The perception-only
+  arc still failed in the field: the open-loop arc under-rotated (slip makes the
+  real radius ~1.7× the commanded 1.0 m, so "done" was only ~90° of rotation),
+  and the dual-row detector locked onto **grass** at the headland (conf ~0.65),
+  ending the turn at ~90° on the wrong feature — the robot then "followed" grass
+  where the soybean rows weren't. Root cause across every attempt: nothing
+  reliably measured how far the robot had actually rotated (wheel heading
+  over-reports ~2×; the arc under-rotates; perception gets fooled by grass).
+  Fix: `navigation/headland.py` accumulates the **`FilterState` (IMU) heading
+  change** during the arc — using the *relative* change, so it works even when
+  `has_converged` is False (no RTK lock, the normal field case; the old code
+  wrongly required convergence and fell back to wheel heading). 
+  `row_navigator._step_headland` keeps arcing until ~180° of REAL rotation; a
+  perception lock may end the turn ONLY after ≥ `reacquire_min_turn` (150°) of
+  measured rotation AND at conf ≥ `--reacquire-conf` (raised 0.55 → 0.72) — so a
+  confident grass detection at ~90° can no longer end it; it completes on heading
+  alone at 175° → APPROACH. Falls back to a 4 m arc-length window + strict
+  perception if the IMU isn't live; the `max_turn_frac` arc cap still STOPS at a
+  field edge. Simulated at 55 % wheel slip with grass present the whole arc, the
+  turn ends at a true ~170° on the real row. Status:
+  `R-UTURN:ARC rot=120°[imu] arc=2.1m reacq=2/4`. Unit-tested
+  (`test_headland_odometry.py` imu rotation tracking/unwrap/stale; navigator
+  gating via the same thresholds).
+
+### Changed — perception-closed U-turn (superseded by the IMU-measured turn above)
 - **The U-turn no longer trusts wheel heading to know when it's done.** The
   previous arc still closed on wheel-odometry heading and still under-rotated in
   the field (~90° instead of 180°): a 4-wheel skid-steer scrubs enough even on a
