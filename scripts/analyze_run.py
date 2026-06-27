@@ -60,6 +60,16 @@ def analyse_one(path: Path, *, write: bool = True) -> dict | None:
     run_dir = tpath.parent
     metrics = compute_run_metrics(records, coverage=_load_coverage(run_dir))
     metrics["run_id"] = run_dir.name
+    # Label the controller from the manifest (or an existing summary) so the
+    # comparison table identifies each run.
+    man = run_dir / "manifest.json"
+    if man.exists():
+        try:
+            a = json.loads(man.read_text()).get("args", {})
+            metrics["controller"] = a.get("controller", "")
+            metrics["policy"] = a.get("policy", "") or ""
+        except Exception:
+            pass
 
     if write:
         (run_dir / "summary.json").write_text(json.dumps(metrics, indent=2))
@@ -162,11 +172,8 @@ def main() -> None:
             w = csv.writer(f)
             w.writerow(_COMPARE_COLS)
             for m in results:
-                ctrl = (m.get("coverage", {}) or {}).get("controller", "")
-                row = []
-                for c in _COMPARE_COLS:
-                    row.append(m.get("run_id", "") if c == "run_id"
-                               else (ctrl if c == "controller" else _dig(m, c)))
+                row = [m.get(c, "") if c in ("run_id", "controller") else _dig(m, c)
+                       for c in _COMPARE_COLS]
                 w.writerow(row)
         print(f"\ncomparison table → {args.compare}  ({len(results)} runs)")
 

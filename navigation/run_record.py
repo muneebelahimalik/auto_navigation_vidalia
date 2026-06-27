@@ -92,6 +92,11 @@ class RunRecord:
             metrics = compute_run_metrics(records, coverage=coverage)
             metrics["run_id"] = self.dir.name
             metrics["end_time"] = datetime.now().isoformat(timespec="seconds")
+            # Self-describe the controller/config so the comparison table can
+            # label each run without re-reading the manifest.
+            _args = self.manifest.get("args", {})
+            metrics["controller"] = _args.get("controller", "")
+            metrics["policy"] = _args.get("policy", "") or ""
             self._write_json("summary.json", metrics)
             self._write_flat_csv(metrics)
             self._write_table_csv("per_row.csv", metrics.get("per_row", []))

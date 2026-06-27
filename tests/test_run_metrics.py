@@ -114,6 +114,7 @@ def test_run_record_bundle(tmp_path):
     metrics = rec.finalize(coverage={"covered_area_m2": 120.0, "redundancy": 1.1,
                                      "path_length_m": 30.0, "controller": "mpc"})
     assert metrics is not None
+    assert metrics["controller"] == "mpc"      # labelled from the manifest args
     assert (rd / "summary.json").exists()
     assert (rd / "metrics_flat.csv").exists()
     assert (rd / "per_row.csv").exists()
