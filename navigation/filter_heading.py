@@ -76,10 +76,8 @@ class FilterHeading:
 
         for path in _FILTER_PATHS:
             try:
-                await asyncio.wait_for(self._subscribe(path), timeout=_SUBSCRIBE_TIMEOUT)
-                return
-            except asyncio.TimeoutError:
-                continue
+                if await self._subscribe(path):
+                    return
             except asyncio.CancelledError:
                 return
             except Exception as exc:  # noqa: BLE001
@@ -87,24 +85,48 @@ class FilterHeading:
                 continue
         log.debug("[filter_heading] no working filter subscription path")
 
-    async def _subscribe(self, path: str) -> None:
+    async def _subscribe(self, path: str) -> bool:
+        """Subscribe and consume FilterState forever.
+
+        Returns True once at least one usable message has been received (so
+        ``run()`` stops trying other paths), False if this path delivered
+        nothing within the timeout (try the next path).
+
+        Only the wait for the FIRST message is bounded by a timeout; once the
+        stream is flowing it is consumed indefinitely.  The previous version
+        wrapped this entire infinite loop in ``asyncio.wait_for`` — which
+        cancelled the subscription after the timeout even while messages were
+        arriving, so the heading went permanently stale and the U-turn always
+        fell back to wheel odometry (``rot=…[wheel]``).
+        """
         from farm_ng.core.event_client import EventClient
         from farm_ng.core.event_service_pb2 import SubscribeRequest
         from farm_ng.core.uri_pb2 import Uri
 
         req = SubscribeRequest(uri=Uri(path=path), every_n=1)
-        client = EventClient(self._config)
-        first = True
-        async for _event, msg in client.subscribe(req, decode=True):
+        client = EventClient(self._config)            # keep a reference alive
+        stream = client.subscribe(req, decode=True).__aiter__()
+
+        # Bound only the FIRST message; the filter service may be slow to start.
+        try:
+            _event, msg = await asyncio.wait_for(
+                stream.__anext__(), timeout=_SUBSCRIBE_TIMEOUT)
+        except asyncio.TimeoutError:
+            return False
+        if not hasattr(msg, "heading"):
+            raise ValueError(f"path {path}: no heading field on {type(msg)}")
+        print(f"\n[filter_heading] absolute heading available at {path}")
+        self._update(msg)
+
+        async for _event, msg in stream:             # consume forever
             if not self._running:
-                return
-            if first:
-                first = False
-                if not hasattr(msg, "heading"):
-                    raise ValueError(f"path {path}: no heading field on {type(msg)}")
-                print(f"\n[filter_heading] absolute heading available at {path}")
-            self.heading = float(msg.heading)
-            # FilterState.has_converged gates trust; default True if absent.
-            self.converged = bool(getattr(msg, "has_converged", True))
-            self._t = time.monotonic()
-            self.available = True
+                return True
+            self._update(msg)
+        return True
+
+    def _update(self, msg) -> None:
+        self.heading = float(msg.heading)
+        # FilterState.has_converged gates trust; default True if absent.
+        self.converged = bool(getattr(msg, "has_converged", True))
+        self._t = time.monotonic()
+        self.available = True
