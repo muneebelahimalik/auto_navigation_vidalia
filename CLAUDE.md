@@ -229,6 +229,50 @@ the crop for a structure-only map. Regression-locked in `tests/test_slam.py`.
 | `--autosave N` / `--no-autosave` | 60 s | Periodic auto-save interval |
 | `--no-odom` | off | Ignore wheel encoders (constant-velocity ICP warm-start only) |
 
+### Optional: Learned (RL) steering — experimental, opt-in
+
+A reinforcement-learning policy can replace the **FOLLOW steering command only**
+(the angular velocity); everything else — state machine, safety monitor, headland
+turn, forward-speed law — is unchanged. The learned policy is a **bounded
+refinement on a known-good geometric controller**, never a replacement for the
+safety architecture: `RLController` falls back to pure-pursuit below
+`min_confidence` or when no policy is loaded, and the output is hard-clamped to
+`--max-angular`. Default is `--controller pursuit`; nothing changes unless you
+opt in. Numpy-only (no torch/gym), so the policy deploys on the Jetson with zero
+new dependencies.
+
+```bash
+# 1. Train the steering policy in the simulator (Evolution Strategies):
+python3 scripts/train_rl.py --iters 300 --out policies/follow.npz
+
+# 2. Honest comparison vs pure-pursuit on held-out episodes (same disturbances):
+python3 scripts/eval_controller.py --policy policies/follow.npz --episodes 200
+
+# 3. If (and only if) it wins, run it — pure-pursuit stays the fallback:
+python3 scripts/row_follow.py --auto --dual-row --controller rl --policy policies/follow.npz
+```
+
+| File | Role |
+|---|---|
+| `sim/row_follow_env.py` | Gym-style steering simulator: skid-steer slip, cross-slope drift, sensor noise+dropout; forward speed = the real pure-pursuit formula so RL and pursuit face identical dynamics |
+| `sim/evaluate.py` | Shared rollout + metrics (cross-track RMSE, heading RMSE, control jerk, success rate); pure-pursuit-as-env-policy baseline |
+| `navigation/rl_policy.py` | Tiny numpy MLP (`[4→16→16→1]`, tanh); flatten/`.npz` save-load; single-source obs encoding |
+| `navigation/rl_controller.py` | Drop-in for `PurePursuitController`; pursuit fallback + output clamp |
+| `scripts/train_rl.py` | Evolution-Strategies trainer (numpy-only, gradient-free); reports baseline throughout |
+| `scripts/eval_controller.py` | Held-out RL-vs-pursuit table + cross-slope-severity breakdown |
+
+**Authenticity / caveats (read before trusting any result):** (1) The reward is
+a per-step **alive bonus** + forward progress − quadratic costs on
+offset/heading/**control jerk**; the alive bonus dominates so the only way to
+maximise return is to stay on the row the whole episode and be smooth — without
+it the agent reward-hacks by driving off-row early to stop paying per-step costs
+(observed and fixed during development). (2) All results are **in simulation**;
+the sim-to-real gap is the headline risk, so any field trial must keep the
+pure-pursuit fallback armed and start in perception-only mode. (3) RL is not
+expected to beat a well-tuned geometric controller on the nominal task — its
+plausible edge is robustness to cross-slope drift and smoother control; the eval
+harness reports the truth either way. Regression-locked in `tests/test_rl.py`.
+
 ### ROS 2 Visualization Bridge (Docker — on the Amiga Brain)
 
 ```bash

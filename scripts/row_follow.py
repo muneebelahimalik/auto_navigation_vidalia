@@ -420,11 +420,27 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
         forward_half_width=args.forward_half_width,
         tire_track=args.tire_track,
     )
-    controller = PurePursuitController(
-        max_linear=args.speed,
-        lookahead=args.lookahead,
-        max_angular=args.max_angular,
-    )
+    if args.controller == "rl":
+        # Optional learned steering (opt-in). Falls back to pure-pursuit when the
+        # row fix is weak or no policy is loaded — never replaces safety/state.
+        from navigation.rl_controller import RLController
+        from navigation.rl_policy import MLPPolicy
+        pol = None
+        if args.policy and Path(args.policy).exists():
+            pol = MLPPolicy.load(args.policy)
+            print(f" [row_follow] RL steering policy: {args.policy} ({pol.n_params} params)")
+        else:
+            print(f" [row_follow] --controller rl but no policy at '{args.policy}' "
+                  f"— running pure-pursuit fallback.")
+        controller = RLController(
+            policy=pol, max_linear=args.speed,
+            lookahead=args.lookahead, max_angular=args.max_angular)
+    else:
+        controller = PurePursuitController(
+            max_linear=args.speed,
+            lookahead=args.lookahead,
+            max_angular=args.max_angular,
+        )
     telemetry = None
     if args.telemetry is not None:
         from navigation.telemetry import TelemetryLogger
@@ -829,6 +845,15 @@ def main() -> None:
                              "Robot body is ±0.965 m wide but 0.60 m avoids triggering on "
                              "adjacent row canopy (h≈0.80–0.84 m) when slightly off-centre. "
                              "Raise to 0.965 m only in wide open areas with no adjacent crops.")
+    parser.add_argument("--controller", choices=["pursuit", "rl"], default="pursuit",
+                        help="In-row steering controller (default: pursuit). 'rl' uses a "
+                             "learned policy (--policy) for the FOLLOW steering only, with "
+                             "pure-pursuit as the low-confidence/no-policy fallback; the state "
+                             "machine, safety monitor and headland turn are unchanged. Train "
+                             "with scripts/train_rl.py, compare with scripts/eval_controller.py.")
+    parser.add_argument("--policy", default="", metavar="PATH",
+                        help="Trained steering policy .npz for --controller rl "
+                             "(missing/absent → pure-pursuit fallback).")
     parser.add_argument("--lookahead", type=float, default=2.0, metavar="M",
                         help="Pure-pursuit lookahead distance in metres (default: 2.0). "
                              "Smaller = more aggressive lateral correction but risks oscillation. "

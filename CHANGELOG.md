@@ -37,6 +37,34 @@ Work toward the row-to-row turn milestone (built on the v0.1.0 baseline).
   `tests/test_slam.py` (correction round-trip, ground-rejection regression, ICP,
   occupancy grid, engine smoke tests).
 
+### Added — optional learned (RL) steering, as an opt-in feature
+- **Reinforcement-learning steering policy for FOLLOW** — a bounded refinement on
+  top of pure-pursuit, never a replacement for the safety architecture. Scope is
+  deliberately narrow and honest: it learns ONLY the in-row angular command;
+  the state machine, safety monitor and headland turn are untouched, forward
+  speed stays the pure-pursuit formula, and `RLController` falls back to
+  pure-pursuit below `min_confidence` or when no policy is loaded (a missing/bad
+  policy can never disable the robot). Output is hard-clamped to `max_angular`.
+  - `sim/row_follow_env.py`: a numpy Gym-style simulator of the steering task
+    with the realism that makes a learned policy plausibly useful — skid-steer
+    slip, per-episode cross-slope drift, sensor noise + dropout. Forward speed
+    uses the real controller's formula so RL and pure-pursuit are compared on
+    identical dynamics.
+  - `navigation/rl_policy.py`: tiny numpy MLP (no torch/gym) — μs forward pass,
+    deploys on the Jetson with zero new deps; params flatten for gradient-free
+    training; saves to `.npz`.
+  - `navigation/rl_controller.py`: drop-in for `PurePursuitController`.
+  - `scripts/train_rl.py`: Evolution Strategies trainer (Salimans et al. 2017 —
+    a legitimate, numpy-only, gradient-free RL method); reports the pure-pursuit
+    baseline throughout for an honest comparison.
+  - `scripts/eval_controller.py`: held-out comparison (same per-seed
+    disturbances) with a cross-slope-severity breakdown — the "does RL help?" test.
+  - `row_follow.py --controller rl --policy <file>` (default stays `pursuit`).
+  - Unit-tested (env determinism/termination, policy bounds/round-trip,
+    controller fallback/clamp, ES optimiser). Caveat documented: results are
+    in-sim; sim-to-real transfer must be field-validated with the pure-pursuit
+    fallback armed.
+
 ### Added — field telemetry + live mapping
 - **Per-scan telemetry log (`--telemetry`).** `navigation/telemetry.py` writes one
   JSON line per scan — state, confidence, crop-point count, lateral/heading
