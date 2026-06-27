@@ -267,7 +267,43 @@ return) drops straight into a scatter (xtrack vs drift) or box plots.
 | `navigation/rl_policy.py` | Tiny numpy MLP (`[4→16→16→1]`, tanh); flatten/`.npz` save-load; single-source obs encoding |
 | `navigation/rl_controller.py` | Drop-in for `PurePursuitController`; pursuit fallback + output clamp |
 | `scripts/train_rl.py` | Evolution-Strategies trainer (numpy-only, gradient-free); reports baseline throughout |
-| `scripts/eval_controller.py` | Held-out RL-vs-pursuit table + cross-slope-severity breakdown |
+| `scripts/eval_controller.py` | Held-out pursuit-vs-RL-vs-MPC table + cross-slope-severity breakdown (`--mpc` to include MPC) |
+
+### Optional: Model-predictive (MPC/MPPI) steering — experimental, opt-in
+
+A state-of-the-art alternative to pure pursuit for the **FOLLOW steering command
+only**, added on top (default stays `--controller pursuit`; the current
+controller runs unchanged with `--controller mpc` off). `RowMPCController`
+(`navigation/row_mpc_controller.py`) is **MPPI** — Model-Predictive Path Integral
+control (Williams et al. 2017): it samples K steering sequences over an H-step
+horizon, rolls each through a kinematic row-tracking model, and applies the
+cost-weighted soft-argmin action. Gradient-free, numpy-only, no new deps.
+
+The field win is the **online disturbance observer**: a scalar Luenberger
+estimate of the persistent cross-slope drift, updated from the predicted-vs-
+measured lateral residual. MPPI previews *with* it, so it actively cancels the
+slope drift that pure pursuit (a memoryless geometric law with no integral
+action) can only chase — the source of the slope-weaving in the field logs. Same
+safety contract as RL: steering only, pure-pursuit fallback below
+`min_confidence`/invalid fix, hard `--max-angular` clamp.
+
+```bash
+# Compare pursuit vs MPC (and RL) on held-out episodes (same per-seed disturbances):
+python3 scripts/eval_controller.py --mpc --policy policies/follow.npz --episodes 200
+
+# Run it (pure-pursuit stays the low-confidence fallback; no training needed):
+python3 scripts/row_follow.py --auto --dual-row --controller mpc
+```
+
+Held-out sim (200 episodes): cross-track RMSE 22.5 → 15.7 cm, success 87 → 96 %;
+on the steepest cross-slopes pure-pursuit's success collapses to 0 % where MPC
+holds at 100 %. Lower heading RMSE than the RL policy (6.6° vs ~10°) with no
+training. Full pursuit/RL-jerk-sweep/MPC table: `results/controller_pareto.csv`.
+
+| File | Role |
+|---|---|
+| `navigation/row_mpc_controller.py` | MPPI sampling MPC + online drift/slip observers; drop-in for `PurePursuitController`; pursuit fallback + `reset()` |
+| `sim/evaluate.py::mpc_act_fn` | MPC as a resettable env policy (rollout clears its state per episode) |
 
 **Authenticity / caveats (read before trusting any result):** (1) The reward is
 a per-step **alive bonus** + forward progress − quadratic costs on

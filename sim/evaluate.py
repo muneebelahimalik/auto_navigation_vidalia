@@ -37,8 +37,31 @@ def policy_act_fn(policy):
     return lambda raw_obs: policy.act(raw_obs)
 
 
+def mpc_act_fn(max_angular: float = 0.40, **mpc_kwargs):
+    """The MPPI controller as an env policy (stateful: warm-start + observers).
+
+    Returns a callable with a ``.reset()`` method so the rollout can clear the
+    controller's plan/observers between episodes (`rollout` calls it if present).
+    """
+    from navigation.row_mpc_controller import RowMPCController
+
+    ctrl = RowMPCController(max_angular=max_angular, **mpc_kwargs)
+
+    def act(raw_obs) -> float:
+        e, theta, conf, _prev = raw_obs
+        est = RowEstimate(heading_error=float(theta), lateral_offset=float(e),
+                          confidence=float(conf), valid=True)
+        _v, w = ctrl.compute(est)
+        return float(np.clip(w / max_angular, -1.0, 1.0)) if max_angular else 0.0
+
+    act.reset = ctrl.reset
+    return act
+
+
 def rollout(env: RowFollowEnv, act_fn, seed: int) -> dict:
     """One episode; returns per-episode metrics from the TRUE hidden state."""
+    if hasattr(act_fn, "reset"):
+        act_fn.reset()   # stateful controllers (MPC) start each episode clean
     obs = env.reset(seed=seed)
     ret = 0.0
     es, ths, acts = [], [], []

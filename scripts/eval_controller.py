@@ -23,7 +23,8 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from navigation.rl_policy import MLPPolicy
-from sim.evaluate import evaluate, per_episode, policy_act_fn, pursuit_act_fn
+from sim.evaluate import (evaluate, mpc_act_fn, per_episode, policy_act_fn,
+                          pursuit_act_fn)
 from sim.row_follow_env import EnvConfig
 
 
@@ -55,6 +56,7 @@ def _row(name, agg):
 def main() -> None:
     ap = argparse.ArgumentParser(description="Compare RL steering vs pure-pursuit")
     ap.add_argument("--policy", default="", help="trained policy .npz (omit = baseline only)")
+    ap.add_argument("--mpc", action="store_true", help="also evaluate the MPPI/MPC controller")
     ap.add_argument("--episodes", type=int, default=200)
     ap.add_argument("--seed-base", type=int, default=50_000)
     ap.add_argument("--csv", default="", metavar="PATH",
@@ -74,42 +76,48 @@ def main() -> None:
         for r in per_episode(pursuit, seeds):
             csv_rows.append({"controller": "pursuit", **r})
 
+    # Collect the advanced controllers requested (RL policy and/or MPC).
+    contenders = []   # (label, tag, act_fn)
     if args.policy and Path(args.policy).exists():
         pol = MLPPolicy.load(args.policy)
-        rl = evaluate(policy_act_fn(pol), seeds)
-        print(_row("RL policy", rl))
+        contenders.append(("RL policy", "rl", policy_act_fn(pol)))
+    elif args.policy:
+        print(f"\n  (no policy file at {args.policy} — baseline only)")
+    if args.mpc:
+        contenders.append(("MPC (MPPI)", "mpc", mpc_act_fn()))
+
+    for label, tag, act in contenders:
+        agg = evaluate(act, seeds)
+        print(_row(label, agg))
         if args.csv:
-            for r in per_episode(policy_act_fn(pol), seeds):
-                csv_rows.append({"controller": "rl", **r})
-        d = lambda k, sc=1.0: (rl[k][0] - base[k][0]) * sc
-        print("\n  delta (RL - pursuit):  "
+            for r in per_episode(act, seeds):
+                csv_rows.append({"controller": tag, **r})
+        d = lambda k, sc=1.0: (agg[k][0] - base[k][0]) * sc
+        print(f"  delta ({label} - pursuit):  "
               f"xtrack {d('xtrack_rmse_m', 100):+.2f} cm   "
               f"heading {d('heading_rmse_deg'):+.2f}°   "
               f"jerk {d('control_jerk'):+.4f}   "
-              f"success {(rl['success_rate']-base['success_rate'])*100:+.1f}%   "
+              f"success {(agg['success_rate']-base['success_rate'])*100:+.1f}%   "
               f"return {d('return'):+.2f}")
 
-        # Robustness by cross-slope severity (where RL should earn its keep).
-        print("\n  by cross-slope drift magnitude:")
+        # Robustness by cross-slope severity (where the upgrade should earn its keep).
+        print("  by cross-slope drift magnitude:")
+        from sim.row_follow_env import RowFollowEnv
+        probe = RowFollowEnv(EnvConfig())
         for lo, hi in [(0.0, 0.03), (0.03, 0.06), (0.06, 1.0)]:
-            cfg = EnvConfig()
-            # restrict to seeds whose drawn grade falls in [lo,hi) — re-derive via env
             sel = []
-            from sim.row_follow_env import RowFollowEnv
-            probe = RowFollowEnv(cfg)
             for s in seeds:
                 probe.reset(seed=s)
                 if lo <= abs(probe._grade) < hi:
                     sel.append(s)
             if len(sel) < 5:
                 continue
-            b = evaluate(pursuit, sel); r = evaluate(policy_act_fn(pol), sel)
+            b = evaluate(pursuit, sel); r = evaluate(act, sel)
             print(f"    |drift| {lo:.2f}-{hi:.2f} m/s (n={len(sel):3d}): "
                   f"xtrack pursuit {b['xtrack_rmse_m'][0]*100:4.1f} cm  "
-                  f"RL {r['xtrack_rmse_m'][0]*100:4.1f} cm   "
+                  f"{tag} {r['xtrack_rmse_m'][0]*100:4.1f} cm   "
                   f"success {b['success_rate']*100:3.0f}% -> {r['success_rate']*100:3.0f}%")
-    elif args.policy:
-        print(f"\n  (no policy file at {args.policy} — baseline only)")
+        print()
 
     if args.csv and csv_rows:
         _write_csv(args.csv, csv_rows)

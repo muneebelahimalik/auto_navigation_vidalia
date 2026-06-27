@@ -65,6 +65,35 @@ Work toward the row-to-row turn milestone (built on the v0.1.0 baseline).
     in-sim; sim-to-real transfer must be field-validated with the pure-pursuit
     fallback armed.
 
+### Added — optional model-predictive (MPC/MPPI) steering, as an opt-in feature
+- **Sampling-based MPC steering for FOLLOW** (`--controller mpc`) — a
+  state-of-the-art upgrade over the memoryless pure-pursuit law, added on TOP of
+  it (default stays `pursuit`; the current controller runs unchanged).
+  `navigation/row_mpc_controller.py` implements **MPPI** (Model-Predictive Path
+  Integral control; Williams et al. 2017): each step it samples K candidate
+  steering sequences over an H-step horizon, rolls each through a kinematic
+  row-tracking model, and returns the cost-weighted (soft-argmin) first action —
+  gradient-free, numpy-only, deploys on the Jetson with zero new deps.
+  - **Online disturbance observer** — the key field win. A scalar Luenberger
+    estimate of the persistent cross-slope drift (slope/mis-calibration) updates
+    from the predicted-vs-measured lateral residual; MPPI previews WITH it, so it
+    actively *cancels* the slope drift pure-pursuit can only chase (the integral
+    action a geometric law lacks). A gentle slip estimate does the same for
+    skid-steer under-rotation.
+  - Same safety contract as the RL controller: steering only (speed stays the
+    pure-pursuit formula), pure-pursuit fallback below `min_confidence`/invalid
+    fix, hard `max_angular` clamp, `reset()` per row.
+  - Held-out sim (200 episodes): cross-track RMSE 22.5 → 15.7 cm, success 87 →
+    96 %, and on the steepest cross-slopes pure-pursuit's success collapses
+    (0 %) where MPC holds (100 %) — exactly the disturbance-rejection benefit.
+    Better heading behaviour than the RL policy (6.6° vs ~10° RMSE) with no
+    training required. `scripts/eval_controller.py --mpc` reports it with the
+    same cross-slope breakdown; `results/controller_pareto.csv` has the full
+    pursuit/RL-jerk-sweep/MPC comparison. Unit-tested in `tests/test_mpc.py`
+    (fallback, clamp, steering sign, observer learns the drift sign, beats
+    pursuit in closed-loop sim). Caveat: sim results — field-validate with the
+    pure-pursuit fallback armed.
+
 ### Added — field telemetry + live mapping
 - **Per-scan telemetry log (`--telemetry`).** `navigation/telemetry.py` writes one
   JSON line per scan — state, confidence, crop-point count, lateral/heading

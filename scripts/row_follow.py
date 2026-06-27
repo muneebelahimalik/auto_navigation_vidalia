@@ -435,6 +435,15 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
         controller = RLController(
             policy=pol, max_linear=args.speed,
             lookahead=args.lookahead, max_angular=args.max_angular)
+    elif args.controller == "mpc":
+        # Optional sampling-based MPC (MPPI) with an online disturbance observer
+        # for slope-drift rejection (opt-in). Falls back to pure-pursuit when the
+        # row fix is weak — never replaces the safety/state architecture.
+        from navigation.row_mpc_controller import RowMPCController
+        print(" [row_follow] MPC steering: MPPI + online disturbance observer")
+        controller = RowMPCController(
+            max_linear=args.speed,
+            lookahead=args.lookahead, max_angular=args.max_angular)
     else:
         controller = PurePursuitController(
             max_linear=args.speed,
@@ -845,12 +854,13 @@ def main() -> None:
                              "Robot body is ±0.965 m wide but 0.60 m avoids triggering on "
                              "adjacent row canopy (h≈0.80–0.84 m) when slightly off-centre. "
                              "Raise to 0.965 m only in wide open areas with no adjacent crops.")
-    parser.add_argument("--controller", choices=["pursuit", "rl"], default="pursuit",
+    parser.add_argument("--controller", choices=["pursuit", "rl", "mpc"], default="pursuit",
                         help="In-row steering controller (default: pursuit). 'rl' uses a "
-                             "learned policy (--policy) for the FOLLOW steering only, with "
-                             "pure-pursuit as the low-confidence/no-policy fallback; the state "
-                             "machine, safety monitor and headland turn are unchanged. Train "
-                             "with scripts/train_rl.py, compare with scripts/eval_controller.py.")
+                             "learned policy (--policy); 'mpc' uses sampling-based MPC (MPPI) "
+                             "with an online disturbance observer for slope-drift rejection. "
+                             "Both touch the FOLLOW steering ONLY, with pure-pursuit as the "
+                             "low-confidence fallback; the state machine, safety monitor and "
+                             "headland turn are unchanged. Compare with scripts/eval_controller.py.")
     parser.add_argument("--policy", default="", metavar="PATH",
                         help="Trained steering policy .npz for --controller rl "
                              "(missing/absent → pure-pursuit fallback).")
