@@ -595,10 +595,14 @@ accumulates the absolute IMU heading change during the arc **regardless of
 `has_converged`** (the previous code wrongly required convergence and fell back
 to the unreliable wheel heading).  `row_navigator._step_headland` then:
 - keeps arcing until ~180° of REAL rotation;
-- only lets a perception lock end the turn AFTER ≥ `reacquire_min_turn` (150°)
+- only lets a perception lock end the turn AFTER ≥ `reacquire_min_turn` (**170°**)
   of measured rotation AND at high confidence (`--reacquire-conf`, default 0.72)
-  — so a confident *grass* detection at ~90° can no longer end it early;
-- completes on heading alone at `turn_complete_deg` (175°) → then APPROACH creeps
+  — so a confident *grass* detection at ~90°, or a noisy "aligned" reading while
+  still 30° short, can no longer end it early.  **These are TRUE degrees when the
+  IMU is live (`rot=…[imu]`)**, so the floor must be near 180° — the old 150°/175°
+  were tuned for the wheel regime where 150° displayed ≈ 110° physical and ended
+  the turn ~30° short (robot then drove into the rows at an angle);
+- completes on heading alone at `turn_complete_deg` (**178°**) → then APPROACH creeps
   in to acquire the actual row if perception hasn't already locked it.
 **When the filter/IMU is NOT publishing** (common in the test field — the filter
 service needs a GPS fix it doesn't have, so `FilterState` never arrives), the

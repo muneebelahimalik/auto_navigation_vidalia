@@ -122,8 +122,13 @@ class RowNavigator:
         reacquire_align_deg: float = 11.5,
         reacquire_offset: float = 0.40,
         reacquire_frames: int = 4,
-        reacquire_min_turn_deg: float = 150.0,
-        turn_complete_deg: float = 175.0,
+        # With a live IMU (rot=…[imu]) these are TRUE degrees, so a U-turn must
+        # come most of the way around before perception is allowed to end it —
+        # otherwise it locks a row while still ~30° short and the robot drives
+        # into the rows at an angle.  (The old 150/175 were tuned for the wheel
+        # regime, where 150° displayed ≈ 110° physical.)
+        reacquire_min_turn_deg: float = 170.0,
+        turn_complete_deg: float = 178.0,
         reacquire_min_arc: float = 4.0,
         approach_speed: float = 0.12,
         approach_max_dist: float = 3.0,

@@ -21,6 +21,17 @@ Work toward the row-to-row turn milestone (built on the v0.1.0 baseline).
   (0.15 m default). Unit-tested in `tests/test_slam.py` (voxel dedup, pose
   registration, PLY round-trip, engine 3-D build).
 
+### Fixed — U-turn completes near 180° on the live IMU (was ending ~30° short)
+- With the filter-heading subscriber fixed, the U-turn now runs on the real
+  gyro (`rot=…[imu]`).  That exposed that the rotation gates were tuned for the
+  wheel regime: `reacquire_min_turn=150°` and `turn_complete=175°` were chosen
+  when 150° *displayed* ≈ 110° *physical*.  In TRUE IMU degrees those let a
+  perception lock end the turn at ~152° real — 28° short — so the robot entered
+  FOLLOW angled and drove across the rows (heading climbing past +29°).  Raised
+  the gates for the IMU regime: `reacquire_min_turn_deg` 150 → **170**,
+  `turn_complete_deg` 175 → **178**, so the turn comes most of the way around
+  before perception (or heading alone) ends it.  179 tests pass.
+
 ### Changed — U-turn scrub default lowered (field calibration)
 - **`--turn-scrub-comp` default 0.6 → 0.5.** When the IMU/filter heading is not
   publishing (`rot=…[wheel]`), the turn estimates real rotation as wheel-heading ×
