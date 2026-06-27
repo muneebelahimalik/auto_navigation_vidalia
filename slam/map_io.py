@@ -8,6 +8,7 @@ PNG is written with the built-in zlib module — no PIL/Pillow required.
 
 from __future__ import annotations
 
+import csv
 import math
 import struct
 import zlib
@@ -217,6 +218,105 @@ def render_png(
 
 
 # ---------------------------------------------------------------------------
+# Coverage map → RGB image  (serviced swath overlaid on the structure map)
+# ---------------------------------------------------------------------------
+
+def render_coverage_png(
+    grid: OccupancyGrid,
+    covered_mask: np.ndarray,
+    trajectory: List[List[float]],
+    output_path: Path,
+    pad_metres: float = 3.0,
+    upsample: int = 2,
+) -> bool:
+    """
+    Render the field coverage map as a PNG.
+
+    Layout:
+      - White background (un-serviced ground)
+      - Green cells (serviced swath — where the working width passed)
+      - Dark cells (mapped structure: crop rows, posts, edges)
+      - Blue line (robot centre path) with green start / red end markers
+      - 5 m scale bar
+
+    Gaps in the green are rows the robot missed — the headline of the map.
+    Returns True if written, False if there is nothing to render.
+    """
+    log_odds = grid._log_odds
+    occupied_mask = log_odds > 0.5
+    res = grid.res
+    origin = grid.origin
+    pad = int(pad_metres / res)
+
+    traj = np.array(trajectory, dtype=np.float64) if len(trajectory) >= 2 \
+        else np.zeros((0, 2), dtype=np.float64)
+    if traj.shape[1] > 2:
+        traj = traj[:, :2]
+
+    cov_gy, cov_gx = np.where(covered_mask)
+    if len(cov_gx) == 0 and not occupied_mask.any():
+        return False
+
+    all_gx = cov_gx.tolist()
+    all_gy = cov_gy.tolist()
+    occ_gy, occ_gx = np.where(occupied_mask)
+    all_gx += occ_gx.tolist(); all_gy += occ_gy.tolist()
+    if len(traj) > 0:
+        all_gx += ((traj[:, 0] / res).astype(int) + origin).tolist()
+        all_gy += ((traj[:, 1] / res).astype(int) + origin).tolist()
+    if not all_gx:
+        return False
+
+    gx_min = max(0, min(all_gx) - pad); gx_max = min(grid.n - 1, max(all_gx) + pad)
+    gy_min = max(0, min(all_gy) - pad); gy_max = min(grid.n - 1, max(all_gy) + pad)
+
+    crop_cov = covered_mask[gy_min:gy_max + 1, gx_min:gx_max + 1]
+    crop_occ = occupied_mask[gy_min:gy_max + 1, gx_min:gx_max + 1]
+    crop_h, crop_w = crop_cov.shape
+    img_h, img_w = crop_h * upsample, crop_w * upsample
+
+    img = np.full((img_h, img_w, 3), 245, dtype=np.uint8)   # un-serviced = near-white
+
+    cov = np.kron(crop_cov, np.ones((upsample, upsample), dtype=bool))
+    occ = np.kron(crop_occ, np.ones((upsample, upsample), dtype=bool))
+    img[cov] = (90, 200, 110)    # serviced swath = green
+    img[occ] = (40, 40, 40)      # structure on top = dark
+
+    ppm = upsample / res
+    if len(traj) >= 2:
+        tx = ((traj[:, 0] / res).astype(int) + origin - gx_min) * upsample
+        ty = ((traj[:, 1] / res).astype(int) + origin - gy_min) * upsample
+        for i in range(len(tx) - 1):
+            _draw_line(img, int(tx[i]), int(ty[i]), int(tx[i + 1]), int(ty[i + 1]),
+                       (40, 90, 200), thickness=max(1, upsample))
+        r = max(5, int(0.3 * ppm))
+        _draw_circle(img, int(tx[0]), int(ty[0]), r, (30, 200, 60))
+        _draw_circle(img, int(tx[-1]), int(ty[-1]), r, (220, 50, 50))
+
+    _draw_scale_bar(img, ppm)
+    _write_png(output_path, img)
+    return True
+
+
+def save_trajectory_csv(path: Path, full_traj: np.ndarray) -> int:
+    """Write the as-driven pose log (scan, x, y, heading_deg) to CSV.
+
+    ``full_traj`` is the engine's uncapped Nx3 (x, y, heading_rad) array.
+    Returns the number of rows written.
+    """
+    arr = np.asarray(full_traj, dtype=np.float64)
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["scan", "x_m", "y_m", "heading_deg"])
+        for i, row in enumerate(arr):
+            hd = math.degrees(row[2]) if len(row) > 2 else 0.0
+            w.writerow([i, f"{row[0]:.4f}", f"{row[1]:.4f}", f"{hd:.2f}"])
+    return len(arr)
+
+
+# ---------------------------------------------------------------------------
 # 3-D point-cloud export (binary PLY — opens in CloudCompare/MeshLab/Foxglove)
 # ---------------------------------------------------------------------------
 
@@ -280,28 +380,45 @@ def save_map(
     trajectory: List[List[float]],
     save_dir: Path,
     points_3d: Optional[np.ndarray] = None,
+    coverage=None,
+    full_trajectory: Optional[np.ndarray] = None,
 ) -> Path:
     """
     Persist the map to <save_dir>/map.npz and render <save_dir>/map.png.
 
     If ``points_3d`` (Nx3) is given, also write a 3-D point cloud to
     <save_dir>/map3d.ply (height-coloured) and the raw points to map3d.npz.
+
+    If ``coverage`` (a CoverageGrid) is given, also write the field coverage
+    map <save_dir>/coverage.png (serviced swath over the structure) and store
+    the covered mask + stats in map.npz.  If ``full_trajectory`` (Nx3 x,y,θ) is
+    given, write the as-driven path to <save_dir>/trajectory.csv.
+
     Returns save_dir.
     """
     save_dir = Path(save_dir)
     save_dir.mkdir(parents=True, exist_ok=True)
 
-    npz_path = save_dir / "map.npz"
-    np.savez_compressed(
-        npz_path,
+    npz_fields = dict(
         log_odds   = grid._log_odds,
         resolution = np.float32(grid.res),
         origin     = np.int32(grid.origin),
         trajectory = np.array(trajectory, dtype=np.float32),
     )
+    if coverage is not None:
+        npz_fields["covered_mask"] = coverage.covered_mask
+        npz_fields["coverage_swath_m"] = np.float32(coverage.swath_m)
+        npz_fields["covered_area_m2"] = np.float32(coverage.covered_area_m2)
+        npz_fields["path_length_m"] = np.float32(coverage.path_length_m)
+    np.savez_compressed(save_dir / "map.npz", **npz_fields)
 
-    png_path = save_dir / "map.png"
-    rendered = render_png(grid, trajectory, png_path)
+    render_png(grid, trajectory, save_dir / "map.png")
+
+    if coverage is not None:
+        render_coverage_png(grid, coverage.covered_mask, trajectory,
+                            save_dir / "coverage.png")
+    if full_trajectory is not None and len(full_trajectory) > 0:
+        save_trajectory_csv(save_dir / "trajectory.csv", full_trajectory)
 
     if points_3d is not None and len(points_3d) > 0:
         save_ply(save_dir / "map3d.ply", points_3d)

@@ -21,6 +21,26 @@ Work toward the row-to-row turn milestone (built on the v0.1.0 baseline).
   (0.15 m default). Unit-tested in `tests/test_slam.py` (voxel dedup, pose
   registration, PLY round-trip, engine 3-D build).
 
+### Added — field COVERAGE map (the operational use case for SLAM)
+- **Coverage assurance from the drift-corrected SLAM pose** — the answer to "is
+  SLAM even useful when we already have point clouds?". A single scan is local
+  and instantaneous; what SLAM adds is the drift-corrected trajectory (scan-
+  matching + loop closure keep it metric where raw odometry smears after a few
+  rows). `slam/coverage_map.py` (`CoverageGrid`) stamps the robot's working
+  swath (`--swath`, default 1.92 m = wheel track) along that path into a
+  serviced-ground mask. On save (`slam_mapper.py` and `row_follow.py --slam`):
+  `coverage.png` (serviced swath in green over the structure map — **gaps are
+  missed rows**), `trajectory.csv` (as-driven `scan,x,y,heading`), the covered
+  mask + stats in `map.npz`, and a printed report of serviced area, path length
+  and a **redundancy** ratio (swept ÷ unique area; 1.0 = no overlap, >1 =
+  double-driven). On by default whenever SLAM runs; `SlamState` gains
+  `covered_area_m2` / `path_length_m` / `coverage_redundancy` and the status line
+  shows `cov=NNNm²`. This is the precision-ag deliverable (did the robot cover
+  the field, and how well?) and the natural controller A/B (drive the same field
+  with `pursuit` vs `mpc`, overlay trajectories, compare coverage/redundancy).
+  Unit-tested in `tests/test_coverage.py` (swath geometry, gap detection, jump
+  interpolation, redundancy, save-file round-trip, back-compat).
+
 ### Fixed — native LiDAR SLAM mapping (mapping only, not navigation)
 - **SLAM now yaw/tilt-corrects the cloud, like the row-follow stack.** The 2-D
   SLAM mapper (`scripts/slam_mapper.py`, `slam/`) was slicing the **raw**

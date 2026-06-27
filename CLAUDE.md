@@ -173,6 +173,24 @@ canbus is up, constant-velocity otherwise) → periodic scan-to-map ICP loop
 closure → log-odds occupancy grid with ray-cast free-space clearing. Ctrl+C
 saves `maps/<ts>/map.npz` + `map.png` (and `map3d.ply` with `--map-3d`).
 
+**Primary use case — field COVERAGE assurance (`coverage.png`).** A single
+VLP-16 scan is instantaneous and local; it can't tell you whether the robot
+covered the field. The value SLAM adds is the **drift-corrected pose
+trajectory** (scan-matching + loop closure keep it metric where raw wheel
+odometry would smear after a few rows), and the operational payoff is a
+**coverage map**: the robot's working swath (`--swath`, default 1.92 m = wheel
+track) stamped along that path (`slam/coverage_map.py`). On save it writes
+`coverage.png` (serviced swath in green over the structure map — **gaps are
+missed rows**), `trajectory.csv` (as-driven `scan,x,y,heading`), and reports
+serviced area, path length, and a **redundancy** ratio (swept ÷ unique area;
+1.0 = no overlap, >1 = double-driven). This is the figure for "did the robot
+autonomously cover the field, and how well?" — and the natural A/B for the
+controllers (drive the same field with `pursuit` vs `mpc`, overlay trajectories,
+compare coverage + redundancy). Coverage is on by default whenever SLAM runs
+(standalone `slam_mapper.py` or `row_follow.py --slam`); regression-locked in
+`tests/test_coverage.py`. For per-pose tracking error, join `trajectory.csv`
+with the `--telemetry` log by scan order.
+
 ```bash
 source /farm_ng_image/venv/bin/activate
 cd ~/auto_navigation_vidalia
@@ -224,6 +242,7 @@ the crop for a structure-only map. Regression-locked in `tests/test_slam.py`.
 | `--slice-max M` | **1.50** | Slice upper bound, ground-relative m |
 | `--map-3d` | off | Also build a 3-D point-cloud map → `map3d.ply` + `.npz` |
 | `--voxel-3d M` | **0.15** | 3-D voxel size (m); smaller = denser, more memory |
+| `--swath M` | **1.92** | Working width serviced per pass for `coverage.png` (= wheel track); gaps = missed rows |
 | `--icp-points N` | 400 | ICP subsample count |
 | `--map-every N` | 1 | Update the grid every N scans |
 | `--autosave N` / `--no-autosave` | 60 s | Periodic auto-save interval |

@@ -294,11 +294,12 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
         slam_engine = SlamEngine(
             yaw_deg=args.lidar_yaw, tilt_deg=args.lidar_tilt,
             build_3d=args.map_3d, voxel_3d=args.voxel_3d,
+            swath_m=args.swath,
         )
         slam = SlamRunner(slam_engine)
         slam.start()
         print(f" [row_follow] SLAM mapping ON (thread){'  +3D point cloud' if args.map_3d else ''}"
-              f" — saved on exit to {args.save_dir or 'maps/<ts>'}")
+              f" — coverage + map saved on exit to {args.save_dir or 'maps/<ts>'}")
 
     left_cam = None
     right_cam = None
@@ -690,6 +691,10 @@ def main() -> None:
                              "(map3d.ply + map3d.npz) registered with the SLAM pose.")
     parser.add_argument("--voxel-3d", type=float, default=0.15, metavar="M",
                         help="3-D map voxel size (m) for --map-3d (default: 0.15).")
+    parser.add_argument("--swath", type=float, default=1.92, metavar="M",
+                        help="With --slam, working width serviced per pass for the "
+                             "coverage map (default: 1.92 = Amiga wheel track). Gaps "
+                             "in coverage.png are missed rows.")
     parser.add_argument("--speed", type=float, default=0.30, metavar="M",
                         help="Max forward speed in m/s (default: 0.30)")
     parser.add_argument("--roi-x", type=float, default=0.80, metavar="M",
@@ -945,10 +950,17 @@ def main() -> None:
                 ts = datetime.now().strftime("%Y%m%d_%H%M%S")
                 save_dir = Path(args.save_dir) if args.save_dir else Path("maps") / ts
                 pts_3d = engine.get_3d_points() if engine.map3d_count > 0 else None
-                out = save_map(engine._grid, state.trajectory, save_dir, points_3d=pts_3d)
+                out = save_map(engine._grid, state.trajectory, save_dir, points_3d=pts_3d,
+                               coverage=engine.get_coverage(),
+                               full_trajectory=engine.get_full_trajectory())
                 extra = f" (+{engine.map3d_count:,}-pt 3D cloud)" if engine.map3d_count > 0 else ""
                 print(f"[row_follow] map saved: {out / 'map.png'}  "
                       f"[{state.scan_count} scans, {engine.cell_count:,} cells{extra}]")
+                print(f"[row_follow] coverage: {out / 'coverage.png'}  "
+                      f"[serviced {state.covered_area_m2:.0f} m² over "
+                      f"{state.path_length_m:.0f} m, redundancy "
+                      f"{state.coverage_redundancy:.2f}× — gaps = missed rows]  "
+                      f"+ trajectory.csv")
             else:
                 print("[row_follow] SLAM: no scans mapped — nothing to save.")
     print("[row_follow] done.")

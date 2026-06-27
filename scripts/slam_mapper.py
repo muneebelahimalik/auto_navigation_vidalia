@@ -221,10 +221,13 @@ def _status_line(state, cell_count: int, hz: float) -> str:
     deg = (math.degrees(p.theta) + 180.0) % 360.0 - 180.0  # wrap to [-180, +180]
     odom_str = f"odom={state.odom_scans}" if state.odom_scans > 0 else "odom=off"
     map3d_str = f"3d={state.map3d_voxels:,} | " if state.map3d_voxels > 0 else ""
+    cov_str = (f"cov={state.covered_area_m2:.0f}m² | "
+               if state.covered_area_m2 > 0 else "")
     return (
         f"\rscan={state.scan_count:5d} | "
         f"x={p.x:+6.2f} y={p.y:+6.2f} θ={deg:+6.1f}° | "
         f"map={cell_count:,} cells | "
+        f"{cov_str}"
         f"{map3d_str}"
         f"icp={state.last_icp_error:.3f} m | "
         f"lc={state.loop_closures} | "
@@ -236,13 +239,22 @@ def _status_line(state, cell_count: int, hz: float) -> str:
 def _do_save(engine: SlamEngine, save_dir: Path) -> Path:
     state = engine.get_state()
     pts_3d = engine.get_3d_points() if engine.map3d_count > 0 else None
-    return save_map(engine._grid, state.trajectory, save_dir, points_3d=pts_3d)
+    return save_map(engine._grid, state.trajectory, save_dir, points_3d=pts_3d,
+                    coverage=engine.get_coverage(),
+                    full_trajectory=engine.get_full_trajectory())
 
 
 def _print_save_result(engine: SlamEngine, out: Path) -> None:
     print(f"\n[slam_mapper] Saved:")
     print(f"  {out / 'map.npz'}")
     print(f"  {out / 'map.png'}")
+    cov = engine.get_coverage()
+    if cov is not None:
+        s = engine.get_state()
+        print(f"  {out / 'coverage.png'}  (serviced {s.covered_area_m2:.0f} m² "
+              f"over {s.path_length_m:.0f} m path; redundancy "
+              f"{cov.redundancy:.2f}× — gaps = missed rows)")
+        print(f"  {out / 'trajectory.csv'}")
     if engine.map3d_count > 0:
         print(f"  {out / 'map3d.ply'}   ({engine.map3d_count:,} pts — "
               f"open in CloudCompare / MeshLab / Foxglove)")
@@ -268,6 +280,7 @@ async def _run(args: argparse.Namespace, engine_ref: list) -> None:
         slice_max=args.slice_max,
         build_3d=args.map_3d,
         voxel_3d=args.voxel_3d,
+        swath_m=args.swath,
     )
     engine_ref.append(engine)
 
@@ -384,6 +397,11 @@ def main() -> None:
     parser.add_argument("--voxel-3d",    type=float, default=0.15, metavar="M",
                         help="Voxel size (m) of the 3-D map — one point per cell "
                              "(default: 0.15; smaller = denser map, more memory).")
+    parser.add_argument("--swath",       type=float, default=1.92, metavar="M",
+                        help="Working width serviced per pass, for the coverage map "
+                             "(default: 1.92 = the Amiga wheel track). The covered "
+                             "swath is stamped this wide along the SLAM path; gaps in "
+                             "coverage.png are missed rows.")
     args = parser.parse_args()
 
     engine_ref: list = []

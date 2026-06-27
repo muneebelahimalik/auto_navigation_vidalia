@@ -46,6 +46,7 @@ from slam.scan_matcher import (
     voxel_downsample,
     voxel_downsample_3d,
 )
+from slam.coverage_map import CoverageGrid
 from slam.occupancy_grid import OccupancyGrid
 from slam.voxel_map import VoxelMap
 
@@ -92,6 +93,9 @@ class SlamState:
     loop_closures: int = 0
     odom_scans: int = 0   # scans where wheel odometry was used as warm start
     map3d_voxels: int = 0  # occupied voxels in the 3-D map (0 if disabled)
+    covered_area_m2: float = 0.0   # serviced ground area (0 if coverage off)
+    path_length_m: float = 0.0     # total driven path length
+    coverage_redundancy: float = 0.0  # swept ÷ unique covered area (1 = no overlap)
 
 
 class SlamEngine:
@@ -120,6 +124,8 @@ class SlamEngine:
         voxel_3d: float = 0.15,
         map3d_z_min: float = -1.0,
         map3d_z_max: float = 5.0,
+        track_coverage: bool = True,
+        swath_m: float = 1.92,
     ) -> None:
         self._grid = OccupancyGrid(grid_size_m, grid_resolution)
         self._icp_points = icp_points
@@ -137,9 +143,18 @@ class SlamEngine:
             if build_3d else None
         )
 
+        # Field coverage accounting (the serviced-swath map) — mapping only.
+        self._coverage: Optional[CoverageGrid] = (
+            CoverageGrid(grid_size_m, grid_resolution, swath_m)
+            if track_coverage else None
+        )
+
         self._pose = Pose2D()
         self._prev_pose: Optional[Pose2D] = None
         self._trajectory: List[List[float]] = [[0.0, 0.0]]
+        # Full (uncapped) pose log for the coverage PNG + trajectory CSV;
+        # the rendered self._trajectory is capped, this is not (≈0.9 MB/hour).
+        self._full_traj: List[List[float]] = [[0.0, 0.0, 0.0]]
         self._scan_count = 0
         self._last_icp_err = 0.0
         self._loop_closures = 0
@@ -327,6 +342,9 @@ class SlamEngine:
             self._trajectory.append([pose_est.x, pose_est.y])
             if len(self._trajectory) > 2000:
                 self._trajectory = self._trajectory[-2000:]
+            self._full_traj.append([pose_est.x, pose_est.y, pose_est.theta])
+            if self._coverage is not None:
+                self._coverage.add_pose(pose_est.x, pose_est.y)
             self._scan_count += 1
             self._last_icp_err = icp_err
             if lc_accepted:
@@ -358,11 +376,26 @@ class SlamEngine:
                 loop_closures=self._loop_closures,
                 odom_scans=self._odom_scans,
                 map3d_voxels=self._map3d.count if self._map3d is not None else 0,
+                covered_area_m2=(self._coverage.covered_area_m2
+                                 if self._coverage is not None else 0.0),
+                path_length_m=(self._coverage.path_length_m
+                               if self._coverage is not None else 0.0),
+                coverage_redundancy=(self._coverage.redundancy
+                                     if self._coverage is not None else 0.0),
             )
 
     def get_map(self) -> np.ndarray:
         """Return Nx2 world-frame coordinates of all occupied map cells."""
         return self._grid.get_occupied_world()
+
+    def get_coverage(self) -> Optional[CoverageGrid]:
+        """Return the coverage grid (None if coverage tracking is disabled)."""
+        return self._coverage
+
+    def get_full_trajectory(self) -> np.ndarray:
+        """Return the uncapped Nx3 (x, y, heading) pose log for CSV / coverage."""
+        with self._lock:
+            return np.asarray(self._full_traj, dtype=np.float64)
 
     def get_3d_points(self) -> np.ndarray:
         """Return the Nx3 world-frame 3-D map points (empty if 3-D is off)."""
