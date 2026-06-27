@@ -57,10 +57,16 @@ def main() -> None:
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--out", default="policies/follow.npz")
     ap.add_argument("--eval-seeds", type=int, default=64, help="held-out seeds for the report")
+    # Reward-shaping knobs (sweep these to trade accuracy vs smoothness).
+    ap.add_argument("--c-du", type=float, default=0.30, help="control-JERK penalty (smoothness)")
+    ap.add_argument("--c-e", type=float, default=2.0, help="lateral-error penalty")
+    ap.add_argument("--c-theta", type=float, default=0.5, help="heading-error penalty")
+    ap.add_argument("--c-u", type=float, default=0.05, help="control-effort penalty")
     args = ap.parse_args()
 
     rng = np.random.default_rng(args.seed)
-    env = RowFollowEnv(EnvConfig())
+    cfg = EnvConfig(c_du=args.c_du, c_e=args.c_e, c_theta=args.c_theta, c_u=args.c_u)
+    env = RowFollowEnv(cfg)
     policy = MLPPolicy(obs_dim=RowFollowEnv.OBS_DIM, hidden=tuple(args.hidden), seed=args.seed)
     theta = policy.get_params()
     n = theta.size
@@ -69,7 +75,8 @@ def main() -> None:
     # Held-out seeds (never used to compute the ES gradient) for honest reporting.
     held = list(range(10_000, 10_000 + args.eval_seeds))
     base = evaluate(pursuit_act_fn(), held)
-    print(f"params={n}  pop={2*half}  sigma={args.sigma}  lr={args.lr}")
+    print(f"params={n}  pop={2*half}  sigma={args.sigma}  lr={args.lr}  "
+          f"reward[c_e={args.c_e} c_theta={args.c_theta} c_u={args.c_u} c_du(jerk)={args.c_du}]")
     print(f"[baseline pure-pursuit] return={base['return'][0]:+.2f}  "
           f"xtrack_rmse={base['xtrack_rmse_m'][0]*100:.1f}cm  "
           f"heading_rmse={base['heading_rmse_deg'][0]:.1f}deg  "

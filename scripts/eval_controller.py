@@ -14,6 +14,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import csv
 import sys
 from pathlib import Path
 
@@ -22,8 +23,19 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from navigation.rl_policy import MLPPolicy
-from sim.evaluate import evaluate, policy_act_fn, pursuit_act_fn
+from sim.evaluate import evaluate, per_episode, policy_act_fn, pursuit_act_fn
 from sim.row_follow_env import EnvConfig
+
+
+def _write_csv(path: str, rows: list) -> None:
+    cols = ["controller", "seed", "grade_drift", "slip", "xtrack_rmse_m",
+            "heading_rmse_deg", "control_jerk", "success", "return", "steps"]
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=cols)
+        w.writeheader()
+        for r in rows:
+            w.writerow({k: r.get(k) for k in cols})
 
 
 def _fmt(agg, key, scale=1.0, unit=""):
@@ -45,6 +57,9 @@ def main() -> None:
     ap.add_argument("--policy", default="", help="trained policy .npz (omit = baseline only)")
     ap.add_argument("--episodes", type=int, default=200)
     ap.add_argument("--seed-base", type=int, default=50_000)
+    ap.add_argument("--csv", default="", metavar="PATH",
+                    help="Write per-episode rows (controller, seed, grade_drift, slip, "
+                         "xtrack, heading, jerk, success, return) for figures.")
     args = ap.parse_args()
 
     seeds = list(range(args.seed_base, args.seed_base + args.episodes))
@@ -54,10 +69,18 @@ def main() -> None:
     base = evaluate(pursuit, seeds)
     print(_row("pure-pursuit", base))
 
+    csv_rows = []
+    if args.csv:
+        for r in per_episode(pursuit, seeds):
+            csv_rows.append({"controller": "pursuit", **r})
+
     if args.policy and Path(args.policy).exists():
         pol = MLPPolicy.load(args.policy)
         rl = evaluate(policy_act_fn(pol), seeds)
         print(_row("RL policy", rl))
+        if args.csv:
+            for r in per_episode(policy_act_fn(pol), seeds):
+                csv_rows.append({"controller": "rl", **r})
         d = lambda k, sc=1.0: (rl[k][0] - base[k][0]) * sc
         print("\n  delta (RL - pursuit):  "
               f"xtrack {d('xtrack_rmse_m', 100):+.2f} cm   "
@@ -87,6 +110,12 @@ def main() -> None:
                   f"success {b['success_rate']*100:3.0f}% -> {r['success_rate']*100:3.0f}%")
     elif args.policy:
         print(f"\n  (no policy file at {args.policy} — baseline only)")
+
+    if args.csv and csv_rows:
+        _write_csv(args.csv, csv_rows)
+        print(f"\n  per-episode CSV → {args.csv}  ({len(csv_rows)} rows)")
+        print("  figure-ready: e.g. scatter xtrack_rmse_m vs grade_drift, "
+              "or box plots grouped by controller.")
 
 
 if __name__ == "__main__":

@@ -59,7 +59,15 @@ def rollout(env: RowFollowEnv, act_fn, seed: int) -> dict:
         "control_jerk": jerk,
         "success": not bool(info["off_road"]),
         "steps": len(es),
+        "grade_drift": float(abs(info["grade"])),   # per-episode cross-slope (m/s)
+        "slip": float(info["slip"]),                # per-episode achieved-rate fraction
     }
+
+
+def per_episode(act_fn, seeds, config: EnvConfig | None = None) -> list:
+    """Per-episode metric rows (one dict per seed) for CSV export / figures."""
+    env = RowFollowEnv(config)
+    return [dict(seed=int(s), **rollout(env, act_fn, int(s))) for s in seeds]
 
 
 def evaluate(act_fn, seeds, config: EnvConfig | None = None) -> dict:

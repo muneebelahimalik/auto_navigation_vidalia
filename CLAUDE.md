@@ -246,11 +246,19 @@ new dependencies.
 python3 scripts/train_rl.py --iters 300 --out policies/follow.npz
 
 # 2. Honest comparison vs pure-pursuit on held-out episodes (same disturbances):
-python3 scripts/eval_controller.py --policy policies/follow.npz --episodes 200
+python3 scripts/eval_controller.py --policy policies/follow.npz --episodes 200 \
+    --csv results/eval.csv          # per-episode rows (incl. each episode's drift) for figures
 
 # 3. If (and only if) it wins, run it — pure-pursuit stays the fallback:
 python3 scripts/row_follow.py --auto --dual-row --controller rl --policy policies/follow.npz
 ```
+
+**Accuracy vs smoothness trade-off (sweepable).** The reward's control-jerk
+penalty `--c-du` (with `--c-e` / `--c-theta` / `--c-u`) trades tracking accuracy
+against control smoothness; train at a few values and pick the knee of the
+Pareto front. The `--csv` export from `eval_controller.py` (columns: controller,
+seed, grade_drift, slip, xtrack_rmse_m, heading_rmse_deg, control_jerk, success,
+return) drops straight into a scatter (xtrack vs drift) or box plots.
 
 | File | Role |
 |---|---|
