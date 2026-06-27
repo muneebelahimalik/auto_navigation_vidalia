@@ -580,11 +580,17 @@ class RowDetector:
         pl, pr = min(((l, r) for l in left for r in right),
                      key=lambda lr: abs((lr[1] - lr[0]) - self._spacing_est))
         sep = pr - pl
-        # Gate: plausible crop spacing, and within 60% of the current estimate
-        # so clutter can't yank it (60% still lets a moderately-off SEED
-        # converge to the true spacing — e.g. 0.60 m seed → 0.90 m field).
-        if 0.30 <= sep <= 1.50 and abs(sep - self._spacing_est) <= 0.60 * self._spacing_est:
-            self._spacing_est = 0.10 * sep + 0.90 * self._spacing_est
+        # Anchor the self-cal to the seed.  A field's crop spacing is FIXED and
+        # roughly known (standard row widths), so the estimate should only
+        # REFINE within a band around the seed (±25%), never run away: field
+        # logs showed an un-anchored estimate wandering 0.52–1.02 m around a
+        # true ~0.76 m, dragging the row-centre target and adding weave.  Also
+        # reject per-scan outliers (clutter) more tightly (40% of the estimate),
+        # with a slow EMA.
+        lo, hi = 0.75 * self.row_spacing, 1.25 * self.row_spacing
+        if lo <= sep <= hi and abs(sep - self._spacing_est) <= 0.40 * self._spacing_est:
+            self._spacing_est = float(np.clip(
+                0.08 * sep + 0.92 * self._spacing_est, lo, hi))
 
     @property
     def spacing_estimate(self) -> float:

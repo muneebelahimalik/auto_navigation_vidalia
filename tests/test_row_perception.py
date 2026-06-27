@@ -83,37 +83,39 @@ def test_dual_row_single_side_fallback_right_row():
     assert est.lateral_offset < 0.0
 
 
-def test_row_spacing_self_calibrates_from_wrong_seed():
-    """The detector should learn the TRUE row spacing from the data even when
-    seeded with the wrong value — so the operator need not measure it."""
-    true_spacing = 0.90                     # actual field spacing
+def test_row_spacing_refines_toward_field_spacing():
+    """The detector should REFINE the seed toward the field's actual spacing
+    (within the anchored ±25% band) so the operator need not measure it exactly."""
+    true_spacing = 0.88                     # actual field spacing (within +25% of seed)
     h = true_spacing / 2.0
-    det = RowDetector(dual_row=True, row_spacing=0.60)   # deliberately wrong seed
-    assert det.spacing_estimate == 0.60
+    det = RowDetector(dual_row=True, row_spacing=0.76)   # standard-soybean seed
+    assert det.spacing_estimate == 0.76
     pts = np.vstack([make_row(-h), make_row(+h)])
+    converge(det, pts, iters=80)
+    # The live estimate has moved off the seed toward the measured separation.
+    assert det.spacing_estimate > 0.82
+    assert det.spacing_estimate == pytest.approx(true_spacing, abs=0.06)
+
+
+def test_spacing_estimate_stays_anchored_to_seed():
+    """The estimate must NOT run away to an implausible value — a clutter pair
+    far from the seed is rejected, keeping sp inside the ±25% band."""
+    det = RowDetector(dual_row=True, row_spacing=0.76)   # band [0.57, 0.95]
+    # Real rows at ±0.38 (sep 0.76) plus a clutter stripe far out that would form
+    # a 1.10 m pair if it were ever accepted.
+    pts = np.vstack([make_row(-0.38), make_row(+0.38), make_row(+0.72, n=40)])
     converge(det, pts, iters=60)
-    # The live estimate should have moved from the seed toward the truth.
-    assert det.spacing_estimate == pytest.approx(true_spacing, abs=0.08)
-
-
-def test_self_calibrated_spacing_centres_with_wrong_seed():
-    """With a wrong seed but self-calibration, the centred robot still reads
-    lateral ~ 0 once the spacing estimate has converged."""
-    h = 0.90 / 2.0
-    det = RowDetector(dual_row=True, row_spacing=0.60)
-    pts = np.vstack([make_row(-h), make_row(+h)])
-    est = converge(det, pts, iters=60)
-    assert abs(est.lateral_offset) < 0.06
+    assert 0.57 <= det.spacing_estimate <= 0.95
 
 
 def test_spacing_estimate_survives_reset():
     """Calibration must persist across reset() (U-turn) — the field spacing
     does not change between rows."""
-    det = RowDetector(dual_row=True, row_spacing=0.60)
-    pts = np.vstack([make_row(-0.45), make_row(+0.45)])
-    converge(det, pts, iters=60)
+    det = RowDetector(dual_row=True, row_spacing=0.76)
+    pts = np.vstack([make_row(-0.44), make_row(+0.44)])   # sep 0.88
+    converge(det, pts, iters=80)
     learned = det.spacing_estimate
-    assert learned > 0.70                  # has moved toward 0.90
+    assert learned > 0.82                  # has moved toward 0.88
     det.reset()
     assert det.spacing_estimate == learned  # unchanged by reset
 
