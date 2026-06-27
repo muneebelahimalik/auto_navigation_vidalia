@@ -112,7 +112,6 @@ class RowNavigator:
         obstacle_clear_secs: float = 1.5,
         row_end_green: float = 0.04,
         row_spacing: float = 0.76,
-        headland_shift: float = 1.52,
         headland_exit_dist: float = 1.0,
         first_turn_sign: float = 1.0,
         headland_speed: float = 0.15,
@@ -218,15 +217,14 @@ class RowNavigator:
 
         # Closed-loop headland U-turn driver (odometry feedback).  Built only
         # when an odometry source is available; otherwise headland turns are
-        # disabled and ROW_END goes straight to DONE.
-        # SHIFT distance is the centre-to-centre distance to the NEXT strip the
-        # robot straddles (headland_shift, ~1.52 m) — distinct from the
-        # detector's row_spacing (0.76 m, the in-strip soybean-row separation).
+        # disabled and ROW_END goes straight to DONE.  The turn is fully
+        # perception-closed: it arcs until the LiDAR re-acquires the next row
+        # aligned ahead (gated by measured rotation), so no strip-spacing
+        # parameter sizes it — the sensors decide where the next row is.
         self._headland_turn = None
         if self.odometry is not None:
             self._headland_turn = HeadlandTurn(
                 self.odometry,
-                row_spacing=headland_shift,
                 exit_dist=headland_exit_dist,
                 speed=headland_speed,
                 turn_rate=headland_turn_rate,
@@ -1095,6 +1093,10 @@ class RowNavigator:
         _sh = getattr(self.detector, "last_ground_shift", 0.0)
         if _sh:
             grade_str += f" drop={_sh:+.2f}m"
+        # Live self-calibrated row spacing (dual-row) so the operator can see it
+        # converge to the field's actual spacing — no need to measure/pass it.
+        if getattr(self.detector, "dual_row", False):
+            grade_str += f" sp={getattr(self.detector, 'spacing_estimate', 0.0):.2f}m"
         if self.state == _S.ACQUIRE:
             align_frames = self._acq_count - self.acquire_frames
             if align_frames > 0:

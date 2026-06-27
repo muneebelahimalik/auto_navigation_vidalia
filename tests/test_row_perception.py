@@ -83,6 +83,41 @@ def test_dual_row_single_side_fallback_right_row():
     assert est.lateral_offset < 0.0
 
 
+def test_row_spacing_self_calibrates_from_wrong_seed():
+    """The detector should learn the TRUE row spacing from the data even when
+    seeded with the wrong value — so the operator need not measure it."""
+    true_spacing = 0.90                     # actual field spacing
+    h = true_spacing / 2.0
+    det = RowDetector(dual_row=True, row_spacing=0.60)   # deliberately wrong seed
+    assert det.spacing_estimate == 0.60
+    pts = np.vstack([make_row(-h), make_row(+h)])
+    converge(det, pts, iters=60)
+    # The live estimate should have moved from the seed toward the truth.
+    assert det.spacing_estimate == pytest.approx(true_spacing, abs=0.08)
+
+
+def test_self_calibrated_spacing_centres_with_wrong_seed():
+    """With a wrong seed but self-calibration, the centred robot still reads
+    lateral ~ 0 once the spacing estimate has converged."""
+    h = 0.90 / 2.0
+    det = RowDetector(dual_row=True, row_spacing=0.60)
+    pts = np.vstack([make_row(-h), make_row(+h)])
+    est = converge(det, pts, iters=60)
+    assert abs(est.lateral_offset) < 0.06
+
+
+def test_spacing_estimate_survives_reset():
+    """Calibration must persist across reset() (U-turn) — the field spacing
+    does not change between rows."""
+    det = RowDetector(dual_row=True, row_spacing=0.60)
+    pts = np.vstack([make_row(-0.45), make_row(+0.45)])
+    converge(det, pts, iters=60)
+    learned = det.spacing_estimate
+    assert learned > 0.70                  # has moved toward 0.90
+    det.reset()
+    assert det.spacing_estimate == learned  # unchanged by reset
+
+
 def test_dual_row_spacing_prior_rejects_centre_clutter():
     """A weed clump near the centreline must not hijack the peak pairing.
 

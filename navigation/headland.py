@@ -57,8 +57,6 @@ class HeadlandTurn:
     odometry : object
         Provides ``.distance`` (cumulative metres) — used only for arc-length
         guards (forward distance is reliable; the heading is not).
-    row_spacing : float
-        Centre-to-centre distance (m) to the next strip (status/info only now).
     exit_dist : float
         Straight distance (m) driven before the arc, to clear the row end.
     speed : float
@@ -81,7 +79,6 @@ class HeadlandTurn:
         self,
         odometry,
         *,
-        row_spacing: float = 1.52,
         exit_dist: float = 1.0,
         speed: float = 0.15,
         turn_rate: float = 0.30,
@@ -92,7 +89,6 @@ class HeadlandTurn:
         ramp_dist: float = 0.6,
     ) -> None:
         self.odometry = odometry
-        self.row_spacing = row_spacing
         self.exit_dist = exit_dist
         self.speed = speed
         self.turn_rate = turn_rate

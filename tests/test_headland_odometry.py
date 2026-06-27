@@ -32,7 +32,6 @@ class FakeOdo:
 
 
 def _make(odo, **kw):
-    kw.setdefault("row_spacing", 1.52)
     kw.setdefault("exit_dist", 1.0)
     kw.setdefault("speed", 0.15)
     kw.setdefault("turn_rate", 0.30)

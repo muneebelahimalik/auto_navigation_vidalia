@@ -469,7 +469,6 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
         acquire_conf=args.acquire_conf,
         row_end_min_dist=args.row_end_min_dist,
         row_spacing=args.row_spacing,
-        headland_shift=args.headland_shift,
         headland_exit_dist=args.headland_exit,
         first_turn_sign=(1.0 if args.turn_dir == "right" else -1.0),
         headland_speed=args.headland_speed,
@@ -618,18 +617,16 @@ def main() -> None:
                              "(odometry feedback). Combine with --rows N to cover "
                              "multiple rows in a serpentine pattern.")
     parser.add_argument("--row-spacing", type=float, default=0.76, metavar="M",
-                        help="Lateral distance (m) to the adjacent strip the robot "
-                             "straddles after a headland turn (default: 0.76). Also "
-                             "used by the dual-camera tracker as the soybean row "
-                             "spacing for single-row fallback.")
+                        help="SEED for the in-strip soybean-row separation (default: "
+                             "0.76 = 30in standard). This is a detector PRIOR, not a "
+                             "movement parameter: it helps pair the two flanking rows "
+                             "apart from weed clutter and sets the single-side fallback "
+                             "offset. The detector self-calibrates it from the data "
+                             "(watch sp= in the status line), so the default is fine for "
+                             "most fields — you normally only set --rows.")
     parser.add_argument("--turn-dir", choices=["right", "left"], default="right",
                         help="Direction of the FIRST headland U-turn (default: right). "
                              "Subsequent turns alternate for serpentine coverage.")
-    parser.add_argument("--headland-shift", type=float, default=1.52, metavar="M",
-                        help="Centre-to-centre distance (m) the U-turn SHIFTs sideways to "
-                             "the next strip the robot straddles (default: 1.52). This is "
-                             "the strip-to-strip distance and is DISTINCT from --row-spacing "
-                             "(the in-strip soybean-row separation used by the detector).")
     parser.add_argument("--approach-speed", type=float, default=0.12, metavar="M",
                         help="Forward speed (m/s) of the post-turn APPROACH leg that drives "
                              "the robot into the next row until perception re-acquires it "

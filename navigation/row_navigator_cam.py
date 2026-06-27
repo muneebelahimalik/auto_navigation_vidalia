@@ -138,7 +138,6 @@ class CamRowNavigator:
         if self.odometry is not None:
             self._headland_turn = HeadlandTurn(
                 self.odometry,
-                row_spacing=row_spacing,
                 exit_dist=headland_exit_dist,
                 speed=headland_speed,
                 turn_rate=headland_turn_rate,

@@ -278,7 +278,17 @@ class RowDetector:
         self.row_end_density = row_end_density
         self.ema_alpha = ema_alpha
         self.dual_row = dual_row
+        # ``row_spacing`` is only a SEED for the self-calibrating estimate below
+        # — not a fixed geometry the operator must measure.  It is the prior the
+        # peak-pairing uses to tell the two flanking crop rows apart from weed
+        # clutter, and the inward offset for the single-side fallback.
         self.row_spacing = row_spacing
+        # Self-calibrating spacing: whenever both rows are clearly seen, the
+        # measured peak separation refines this estimate (slow EMA, outlier-
+        # gated), so the detector converges to the field's ACTUAL row spacing
+        # from the seed.  The operator can leave --row-spacing at the default.
+        self._spacing_est = row_spacing
+        self.auto_spacing = True
         self.max_lateral_jump = max_lateral_jump
         # Point-level fusion of camera ground points (aux_xy in update()):
         # aux_y_min lets near-field camera points (LiDAR self-filter blind
@@ -455,8 +465,11 @@ class RowDetector:
             # Soybean / centre-residue mode: find the midpoint between the
             # nearest left and right crop-row peaks.  The midpoint is the
             # centre of the residue strip, which is the tracking target.
+            # Refine the spacing estimate from this scan's geometry first, then
+            # pair peaks with the live (self-calibrated) spacing.
+            self._refine_spacing(cross, weights=w)
             lateral, self._spacing_factor = find_row_midpoint(
-                cross, self.roi_x_half, self.bin_width, self.row_spacing,
+                cross, self.roi_x_half, self.bin_width, self._spacing_est,
                 weights=w)
         else:
             # Single-row mode: histogram peak nearest the robot centreline,
@@ -540,9 +553,43 @@ class RowDetector:
         """Dual-row / soybean centre-residue mode: locate the residue-strip
         centre via the shared ``find_row_midpoint`` (row-spacing prior +
         single-side half-spacing fallback)."""
+        self._refine_spacing(cross)
         lateral, self._spacing_factor = find_row_midpoint(
-            cross, self.roi_x_half, self.bin_width, self.row_spacing)
+            cross, self.roi_x_half, self.bin_width, self._spacing_est)
         return lateral
+
+    # ------------------------------------------------------------------
+    def _refine_spacing(self, cross: np.ndarray,
+                        weights: "Optional[np.ndarray]" = None) -> None:
+        """Self-calibrate the row-spacing estimate from the observed peaks.
+
+        When a clear left AND right peak are present, their separation is a
+        direct measurement of the field's row spacing.  A slow EMA folds it in,
+        gated to reject implausible separations (clutter) and large jumps, so
+        the estimate tracks the true spacing without chasing noise.  The seed
+        (``--row-spacing``) only matters until the first good two-row view.
+        """
+        if not self.auto_spacing:
+            return
+        peaks = histogram_peaks(cross, self.roi_x_half, self.bin_width, weights)
+        left = [p for p in peaks if p < -0.05]
+        right = [p for p in peaks if p > 0.05]
+        if not (left and right):
+            return
+        # Pick the pair whose separation is closest to the current estimate.
+        pl, pr = min(((l, r) for l in left for r in right),
+                     key=lambda lr: abs((lr[1] - lr[0]) - self._spacing_est))
+        sep = pr - pl
+        # Gate: plausible crop spacing, and within 60% of the current estimate
+        # so clutter can't yank it (60% still lets a moderately-off SEED
+        # converge to the true spacing — e.g. 0.60 m seed → 0.90 m field).
+        if 0.30 <= sep <= 1.50 and abs(sep - self._spacing_est) <= 0.60 * self._spacing_est:
+            self._spacing_est = 0.10 * sep + 0.90 * self._spacing_est
+
+    @property
+    def spacing_estimate(self) -> float:
+        """The live, self-calibrated row-spacing estimate (metres)."""
+        return self._spacing_est
 
     # ------------------------------------------------------------------
     def _smooth(self, fresh: RowEstimate) -> RowEstimate:

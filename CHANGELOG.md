@@ -21,6 +21,24 @@ Work toward the row-to-row turn milestone (built on the v0.1.0 baseline).
   (0.15 m default). Unit-tested in `tests/test_slam.py` (voxel dedup, pose
   registration, PLY round-trip, engine 3-D build).
 
+### Changed — fewer geometry parameters (sensor/perception-driven)
+- **Removed `--headland-shift` (dead parameter).** The U-turn has been fully
+  perception-closed for a while — it arcs until the LiDAR re-acquires the next
+  row aligned ahead (gated by measured rotation), so no strip-spacing value
+  sizes it.  `--headland-shift` was stored on `HeadlandTurn` but never read by
+  any turn logic; it is gone from the CLI, `RowNavigator`, the camera navigator
+  and `HeadlandTurn`.  Set rows with `--rows N --headland`; the sensors decide
+  where the next row is.
+- **`--row-spacing` is now a self-calibrating SEED, not a fixed geometry.**
+  Clarified that it is a detector PRIOR (it pairs the two flanking crop rows
+  apart from weed clutter and sets the single-side fallback offset), never a
+  movement/turn parameter.  `RowDetector` now refines it online from the
+  observed left/right peak separation (slow EMA, outlier-gated to plausible crop
+  spacing), so it converges to the field's ACTUAL spacing from the default seed
+  — the operator normally only sets `--rows`.  The live estimate shows as
+  `sp=N.NNm` in the status line and survives U-turn `reset()`s.  Regression
+  tests: converges from a wrong seed, still centres, persists across reset.
+
 ### Added — field COVERAGE map (the operational use case for SLAM)
 - **Coverage assurance from the drift-corrected SLAM pose** — the answer to "is
   SLAM even useful when we already have point clouds?". A single scan is local

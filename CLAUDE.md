@@ -646,9 +646,10 @@ turn uses `FilterState.heading` only for its CHANGE during the arc, so it works
 even when `has_converged` is False (no RTK lock) — which is the normal case in
 the test field. It never needs the absolute/global heading. If the filter
 service isn't publishing at all, the turn falls back to the arc-length window +
-strict perception (status shows `[arc]` instead of `[imu]`). `--headland-shift`
-no longer sizes the turn (the IMU rotation + perception lock decide where it
-lands); it remains only the detector's notion of strip-to-strip distance.
+strict perception (status shows `[arc]` instead of `[imu]`). The turn is fully
+perception-closed — the IMU rotation + the next-row lock decide where it lands —
+so there is no strip-spacing parameter sizing it (the old `--headland-shift`,
+which only stored a value the turn never read, has been removed).
 
 **Field geometry (Vidalia soybean field):**
 Two soybean rows flank the centre residue/stubble strip inside the wheel tracks
@@ -806,8 +807,7 @@ Re-run the sweep if the mount is disturbed.
 | `--auto` | off | Enable canbus and send velocity commands to wheels |
 | `--rows N` | 1 | Stop after N rows completed (serpentine when combined with `--headland`) |
 | `--headland` | off | **Closed-loop** headland U-turns between rows (odometry feedback) |
-| `--row-spacing M` | **0.76** | In-strip soybean-row separation: LiDAR dual-row peak-pairing prior + single-side fallback spacing, and the dual-camera single-row fallback spacing. NOT the headland shift distance |
-| `--headland-shift M` | **1.52** | Centre-to-centre distance the U-turn SHIFTs to the next strip the robot straddles (distinct from `--row-spacing`) |
+| `--row-spacing M` | **0.76** | SEED for the in-strip soybean-row separation (detector PRIOR, not a movement param): peak-pairing prior + single-side fallback offset. **Self-calibrating** — the detector refines it from the observed peak separation each scan (live value shown as `sp=N.NNm`), so the default suffices for most fields. The U-turn does NOT use it (perception-closed) |
 | `--turn-dir D` | **right** | Direction of the first U-turn (`right`/`left`); subsequent turns alternate |
 | `--headland-exit M` | **1.0** | Straight distance driven past the row end before the arc; doubles as the blind-spot row-end confirmation (turn aborts back to FOLLOW if crop reappears during it) |
 | `--headland-speed M` | **0.15** | Forward speed during the straight headland EXIT phase (m/s) |
