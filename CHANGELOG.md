@@ -37,6 +37,19 @@ Work toward the row-to-row turn milestone (built on the v0.1.0 baseline).
   `tests/test_slam.py` (correction round-trip, ground-rejection regression, ICP,
   occupancy grid, engine smoke tests).
 
+### Added — field telemetry + live mapping
+- **Per-scan telemetry log (`--telemetry`).** `navigation/telemetry.py` writes one
+  JSON line per scan — state, confidence, crop-point count, lateral/heading
+  error, row-end confidence, terrain grade/drop, command output, the three
+  safety zones, and the headland-turn state (phase, real rotation, arc length,
+  source) — to `logs/run_<ts>.jsonl`. Load with `pandas.read_json(path,
+  lines=True)`; this is the data behind the "unified dashboard". Logging swallows
+  all errors and never affects control. Unit-tested.
+- **SLAM mapping alongside row-follow (`--slam`, `--map-3d`).** Optional field
+  mapping while driving, run in a separate thread fed by the navigator (one
+  shared LiDAR reader; O(1) non-blocking handoff; pipeline errors swallowed) so
+  it cannot affect control. Saves `map.png/npz` (+`map3d.ply`). `slam/slam_runner.py`.
+
 ### Changed — U-turn rotation from wheel heading when the IMU is offline
 - **The filter/IMU heading isn't published in the test field** (the filter
   service needs a GPS fix it doesn't have), so the IMU-gated turn ran on its

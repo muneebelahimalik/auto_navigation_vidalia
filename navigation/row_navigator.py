@@ -154,6 +154,7 @@ class RowNavigator:
         scan_timeout: float = 0.5,
         cam_stale_secs: float = 1.5,
         cam_fusion: str = "estimate",
+        telemetry=None,
     ) -> None:
         self.canbus = canbus
         self.detector = detector
@@ -183,6 +184,7 @@ class RowNavigator:
         self.scan_timeout = scan_timeout
         self.cam_stale_secs = cam_stale_secs
         self.cam_fusion = cam_fusion if cam_fusion in ("estimate", "point") else "estimate"
+        self.telemetry = telemetry
 
         self.acquire_conf = acquire_conf
         self.acquire_frames = acquire_frames
@@ -517,6 +519,8 @@ class RowNavigator:
 
             await self._drive(linear, angular)
             self._print_status(est, safety, linear, angular)
+            if self.telemetry is not None:
+                self.telemetry.log(self._telemetry_record(est, safety, linear, angular))
             if self.ros2_bridge:
                 img_l = getattr(frame_l, "rgb", None) if frame_l is not None else None
                 img_r = getattr(frame_r, "rgb", None) if frame_r is not None else None
@@ -1024,6 +1028,47 @@ class RowNavigator:
             os.rename(tmp2, "/dev/shm/vidalia_status.json")
         except OSError:
             pass  # /dev/shm not available or full — bridge is optional
+
+    def _telemetry_record(self, est, safety, linear: float, angular: float) -> dict:
+        """Flat per-scan record for the JSONL run logger (one dict per scan)."""
+        gs = getattr(self.detector, "last_ground_slope", 0.0) or 0.0
+        rec = {
+            "state":          self.state,
+            "conf":           round(float(est.confidence), 4),
+            "n":              int(est.n_points),
+            "lateral":        round(float(est.lateral_offset), 4),
+            "heading_deg":    round(math.degrees(est.heading_error), 3),
+            "row_end_conf":   round(float(est.row_end_confidence), 4),
+            "grade_deg":      round(math.degrees(math.atan(gs)), 3),
+            "drop_m":         round(float(getattr(self.detector, "last_ground_shift", 0.0) or 0.0), 3),
+            "lin_cmd":        round(float(linear), 4),
+            "ang_cmd":        round(float(angular), 4),
+            "fwd_blocked":    bool(safety.forward_blocked),
+            "ltire_blocked":  bool(safety.left_tire_blocked),
+            "rtire_blocked":  bool(safety.right_tire_blocked),
+            "cam_blocked":    bool(safety.cam_blocked),
+            "nearest_fwd":    round(float(safety.nearest_forward), 3) if safety.nearest_forward < 99.0 else 99.0,
+            "rows_done":      int(self._rows_done),
+            "rows_total":     int(self.rows),
+            "row_dist":       round(float(self._row_dist), 3),
+            "acq":            int(self._acq_count),
+        }
+        if self.state in _HEADLAND_STATES:
+            rec["approach_dist"] = round(float(self._approach_dist), 3)
+            rec["post_turn"] = bool(self._post_turn)
+        if self.state == _S.HEADLAND and self._headland_turn is not None:
+            t = self._headland_turn
+            rec["turn_phase"] = t.phase
+            rec["turn_dir"] = "R" if t.turn_sign >= 0 else "L"
+            if t.phase == "ARC":
+                rec["turn_rot_deg"] = round(math.degrees(t.heading_rotation), 1)
+                rec["turn_arc_m"] = round(t.arc_len, 3)
+                rec["turn_src"] = t.heading_source_name
+                rec["reacq"] = int(self._reacq_count)
+        if self.ekf is not None:
+            rec["ekf_std_lat"] = round(float(self.ekf.std_lateral), 4)
+            rec["ekf_conv"] = bool(self.ekf.converged)
+        return rec
 
     def _print_status(self, est, safety, linear: float, angular: float) -> None:
         cam_active = self.vis_detector is not None

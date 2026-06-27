@@ -425,10 +425,20 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
         lookahead=args.lookahead,
         max_angular=args.max_angular,
     )
+    telemetry = None
+    if args.telemetry is not None:
+        from navigation.telemetry import TelemetryLogger
+        tpath = (str(Path("logs") / f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jsonl")
+                 if args.telemetry == "auto" else args.telemetry)
+        telemetry = TelemetryLogger(tpath)
+        print(f" [row_follow] telemetry log: {tpath}" if telemetry.enabled
+              else f" [row_follow] telemetry log could not be opened ({tpath}) — continuing")
+
     import math as _math
     navigator = RowNavigator(
         canbus, detector, safety, controller,
         auto=args.auto, rows=args.rows, headland=args.headland, slam=slam,
+        telemetry=telemetry,
         self_radius=args.self_radius,
         acquire_conf=args.acquire_conf,
         row_end_min_dist=args.row_end_min_dist,
@@ -644,6 +654,12 @@ def main() -> None:
                         help="Build a field map in a background thread while driving "
                              "(mapping only — never commands the wheels; no effect on "
                              "control). Saved on exit (see --save-dir).")
+    parser.add_argument("--telemetry", nargs="?", const="auto", default=None, metavar="PATH",
+                        help="Log one JSON line per scan (state, conf, crop points, lateral/"
+                             "heading error, row-end conf, grade/drop, command, safety zones, "
+                             "headland turn) for offline analysis. Bare --telemetry auto-names "
+                             "logs/run_<ts>.jsonl; or give a PATH. Load with "
+                             "pandas.read_json(path, lines=True). No effect on control.")
     parser.add_argument("--map-3d", action="store_true",
                         help="With --slam, also accumulate a 3-D point-cloud map "
                              "(map3d.ply + map3d.npz) registered with the SLAM pose.")
@@ -877,6 +893,12 @@ def main() -> None:
             asyncio.run(navigator.stop())
         except BaseException:
             pass
+
+        if navigator.telemetry is not None:
+            navigator.telemetry.close()
+            if navigator.telemetry.enabled or navigator.telemetry.count:
+                print(f"[row_follow] telemetry: {navigator.telemetry.count} scans logged "
+                      f"-> {navigator.telemetry.path}")
 
         if args.slam and navigator.slam is not None:
             from slam.map_io import save_map
