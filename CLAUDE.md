@@ -191,6 +191,44 @@ compare coverage + redundancy). Coverage is on by default whenever SLAM runs
 `tests/test_coverage.py`. For per-pose tracking error, join `trajectory.csv`
 with the `--telemetry` log by scan order.
 
+### Experiment records for publishing — `--record`
+
+For any run you want to **analyse / publish from**, add `--record`.  It bundles
+a single self-contained, reproducible folder `runs/run_<ts>/`:
+
+| File | Contents |
+|---|---|
+| `manifest.json` | git commit + dirty flag + branch, full CLI args, calibration (yaw/tilt/mount/ROI/controller), host, start time — **reproducibility anchor** |
+| `telemetry.jsonl` | one row per scan: state, conf, n, lateral/heading error, row-end conf, grade/drop, `sp`, command, safety zones, headland-turn fields |
+| `summary.json` | computed metrics (see below) |
+| `metrics_flat.csv` | `metric,value` scalars — drops into a spreadsheet / LaTeX table |
+| `per_row.csv` | tracking accuracy per row (xtrack RMSE/max, heading RMSE, distance) |
+| `turns.csv` | one row per headland U-turn (dir, source `imu`/`wheel`, max/final rotation °, arc m, completed) |
+| `coverage.png`, `trajectory.csv`, `map.png/.npz` | SLAM coverage + drift-corrected path |
+
+`--record` turns on `--telemetry` + `--slam` automatically and writes the
+manifest at start (so a crashed run is still identified) and the summary at
+exit.  Metrics are computed by `navigation/run_metrics.py` (numpy-only, runs on
+the brain): FOLLOW cross-track RMSE/MAE/p95/max (cm), heading RMSE/MAE/max (°),
+control effort + jerk, forward-speed mean/std, state-time budget, event counts
+(obstacle stops, FOLLOW losses, dropout scans), terrain grade/drop, per-row
+breakdown, and per-turn outcomes.  Regression-locked in `tests/test_run_metrics.py`.
+
+```bash
+# Record everything for a run:
+python3 scripts/row_follow.py --auto --dual-row --rows 6 --headland --controller mpc --record
+
+# (Re)compute tables from a recorded run, or compare controllers A/B:
+python3 scripts/analyze_run.py runs/run_<ts>
+python3 scripts/analyze_run.py runs/run_pursuit runs/run_mpc --compare results/field_compare.csv
+```
+
+The headline field A/B for the paper: run the same field once with
+`--controller pursuit --record` and once with `--controller mpc --record`, then
+`analyze_run.py … --compare` emits one CSV row per run (xtrack RMSE/p95/max,
+heading RMSE, jerk, coverage, redundancy) — the field counterpart to the sim
+`results/controller_pareto.csv`.
+
 ```bash
 source /farm_ng_image/venv/bin/activate
 cd ~/auto_navigation_vidalia
@@ -854,7 +892,8 @@ Re-run the sweep if the mount is disturbed.
 | `--ros2-bridge` | off | Write scan + nav status to `/dev/shm/` at each scan for the Docker ROS 2 bridge |
 | `--slam` | off | Build a field map in a background thread while driving (mapping only; no effect on control). Saved on exit |
 | `--map-3d` / `--voxel-3d M` | off / 0.15 | With `--slam`, also build the 3-D point cloud (`map3d.ply`) |
-| `--telemetry [PATH]` | off | Log one JSON line per scan (state, conf, crop points, lateral/heading error, row-end conf, grade/drop, command, safety zones, headland turn) → `logs/run_<ts>.jsonl`. Load with `pandas.read_json(path, lines=True)`. No effect on control |
+| `--telemetry [PATH]` | off | Log one JSON line per scan (state, conf, crop points, lateral/heading error, row-end conf, grade/drop, command, safety zones, headland turn, `sp`) → `logs/run_<ts>.jsonl`. Load with `pandas.read_json(path, lines=True)`. No effect on control |
+| `--record [DIR]` | off | **Record a COMPLETE reproducible experiment folder** (`runs/run_<ts>/`): bundles `--telemetry` + `--slam` and writes `manifest.json` (git commit + args + calibration), computes `summary.json` + `metrics_flat.csv` + `per_row.csv` + `turns.csv` on exit, plus `coverage.png`/`trajectory.csv`/`map.png`. **Use on every run you want to publish from.** Analyse with `scripts/analyze_run.py` |
 | `--debug` | off | Stream LiDAR height histogram + save bird's-eye PNG |
 | `--save-dir DIR` | — | Save raw point-cloud numpy arrays to DIR |
 | `--no-validate` | off | Skip LiDAR startup health check |

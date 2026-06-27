@@ -21,6 +21,27 @@ Work toward the row-to-row turn milestone (built on the v0.1.0 baseline).
   (0.15 m default). Unit-tested in `tests/test_slam.py` (voxel dedup, pose
   registration, PLY round-trip, engine 3-D build).
 
+### Added — `--record`: complete reproducible experiment folder per run
+- One flag captures everything needed to analyse and publish from a field run
+  into `runs/run_<ts>/`: `manifest.json` (git commit + dirty flag + full CLI
+  args + calibration — the reproducibility anchor), `telemetry.jsonl` (per-scan,
+  now incl. the live row-spacing `sp`), and on exit a computed `summary.json` +
+  `metrics_flat.csv` + `per_row.csv` + `turns.csv`, plus the SLAM
+  `coverage.png`/`trajectory.csv`/`map.png`.  `--record` turns on `--telemetry`
+  + `--slam` and writes the manifest at start (a crashed run is still
+  identifiable).
+- `navigation/run_metrics.py` (numpy-only, runs on the brain) computes the
+  publication metrics from the telemetry: FOLLOW cross-track RMSE/MAE/p95/max,
+  heading RMSE/MAE/max, control effort + jerk, speed, state-time budget, event
+  counts (obstacle stops, FOLLOW losses, dropout scans), terrain grade/drop,
+  per-row breakdown, and per-turn outcomes (rotation °, arc, `imu`/`wheel`
+  source, completed).  `navigation/run_record.py` writes the folder.
+- `scripts/analyze_run.py` (re)computes the tables offline and aggregates
+  several runs into one comparison CSV — e.g. the field `pursuit` vs `mpc` A/B,
+  the counterpart to the sim `results/controller_pareto.csv`.  Unit-tested in
+  `tests/test_run_metrics.py` (tracking metrics, per-row, turn extraction, state
+  budget/events, torn-line robustness, on-disk bundle).
+
 ### Fixed — U-turn completes near 180° on the live IMU (was ending ~30° short)
 - With the filter-heading subscriber fixed, the U-turn now runs on the real
   gyro (`rot=…[imu]`).  That exposed that the rotation gates were tuned for the

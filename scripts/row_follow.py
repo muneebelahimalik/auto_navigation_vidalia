@@ -684,6 +684,14 @@ def main() -> None:
                              "headland turn) for offline analysis. Bare --telemetry auto-names "
                              "logs/run_<ts>.jsonl; or give a PATH. Load with "
                              "pandas.read_json(path, lines=True). No effect on control.")
+    parser.add_argument("--record", nargs="?", const="auto", default=None, metavar="DIR",
+                        help="Record a COMPLETE, reproducible experiment folder for "
+                             "publishing: manifest.json (git commit + args + calibration), "
+                             "telemetry.jsonl (per-scan), summary.json + metrics_flat.csv + "
+                             "per_row.csv + turns.csv (computed performance metrics), and the "
+                             "SLAM coverage.png/trajectory.csv/map.png. Bundles --telemetry + "
+                             "--slam into runs/run_<ts>/ (or DIR). Analyse with "
+                             "scripts/analyze_run.py. Use this on EVERY run you want to analyse.")
     parser.add_argument("--map-3d", action="store_true",
                         help="With --slam, also accumulate a 3-D point-cloud map "
                              "(map3d.ply + map3d.npz) registered with the SLAM pose.")
@@ -914,6 +922,28 @@ def main() -> None:
         print(" [preset] onion — single-row, crop_h=[0.05,0.60]m, "
               "obstacle=0.75m, tire=0.85m")
 
+    # --record: bundle a complete reproducible experiment folder.  Turns on
+    # telemetry + SLAM into one runs/<ts>/ dir and writes a manifest now (so a
+    # crashed run is still identifiable) + a computed summary on exit.
+    run_record = None
+    if args.record is not None:
+        from navigation.run_record import RunRecord
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        run_dir = Path(args.record) if args.record != "auto" else Path("runs") / f"run_{ts}"
+        calibration = {
+            "lidar_yaw_deg": args.lidar_yaw, "lidar_tilt_deg": args.lidar_tilt,
+            "self_radius_m": args.self_radius, "roi_x_m": args.roi_x,
+            "crop_band_m": [args.crop_min, args.crop_max],
+            "row_spacing_seed_m": args.row_spacing, "swath_m": args.swath,
+            "controller": args.controller, "max_speed_ms": args.speed,
+        }
+        run_record = RunRecord(run_dir, args=vars(args), calibration=calibration)
+        args.telemetry = run_record.telemetry_path       # telemetry → run dir
+        args.slam = True                                 # coverage + trajectory
+        args.save_dir = str(run_dir)                     # map → run dir
+        print(f" [row_follow] RECORDING experiment → {run_dir}/  "
+              f"(manifest written; summary on exit)")
+
     # Suppress gRPC PollerCompletionQueue noise after event-loop close (Python 3.8 + grpcio).
     import logging
     logging.getLogger("asyncio").setLevel(logging.CRITICAL)
@@ -938,12 +968,15 @@ def main() -> None:
                 print(f"[row_follow] telemetry: {navigator.telemetry.count} scans logged "
                       f"-> {navigator.telemetry.path}")
 
+        cov_stats = None
         if args.slam and navigator.slam is not None:
             from slam.map_io import save_map
             runner = navigator.slam
             runner.stop()
             engine = runner.engine
             state = engine.get_state()
+            _cov = engine.get_coverage()
+            cov_stats = _cov.stats() if _cov is not None else None
             if state.scan_count > 0:
                 ts = datetime.now().strftime("%Y%m%d_%H%M%S")
                 save_dir = Path(args.save_dir) if args.save_dir else Path("maps") / ts
@@ -961,6 +994,10 @@ def main() -> None:
                       f"+ trajectory.csv")
             else:
                 print("[row_follow] SLAM: no scans mapped — nothing to save.")
+
+        # --record: compute and write the run summary + CSV metric tables.
+        if run_record is not None:
+            run_record.finalize(coverage=cov_stats)
     print("[row_follow] done.")
 
 

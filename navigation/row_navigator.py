@@ -1055,6 +1055,8 @@ class RowNavigator:
             "rows_total":     int(self.rows),
             "row_dist":       round(float(self._row_dist), 3),
             "acq":            int(self._acq_count),
+            "sp":             round(float(getattr(self.detector, "spacing_estimate",
+                                                  getattr(self.detector, "row_spacing", 0.0))), 3),
         }
         if self.state in _HEADLAND_STATES:
             rec["approach_dist"] = round(float(self._approach_dist), 3)
