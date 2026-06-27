@@ -285,9 +285,20 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
 
     slam = None
     if args.slam:
-        print(" [row_follow] --slam is unavailable with the fast perception "
-              "path;\n              build a map separately with "
-              "scripts/slam_mapper.py.")
+        # Optional field mapping alongside driving (added functionality, never
+        # commands the wheels).  Runs in a separate thread fed by the navigator
+        # so it cannot affect control timing; uses the SAME mount calibration as
+        # the perception stack.
+        from slam.slam_engine import SlamEngine
+        from slam.slam_runner import SlamRunner
+        slam_engine = SlamEngine(
+            yaw_deg=args.lidar_yaw, tilt_deg=args.lidar_tilt,
+            build_3d=args.map_3d, voxel_3d=args.voxel_3d,
+        )
+        slam = SlamRunner(slam_engine)
+        slam.start()
+        print(f" [row_follow] SLAM mapping ON (thread){'  +3D point cloud' if args.map_3d else ''}"
+              f" — saved on exit to {args.save_dir or 'maps/<ts>'}")
 
     left_cam = None
     right_cam = None
@@ -630,7 +641,14 @@ def main() -> None:
                              "Raise if the turn ends early on a mis-aligned glimpse; lower if "
                              "it keeps arcing past a good lock.")
     parser.add_argument("--slam", action="store_true",
-                        help="Build an occupancy-grid map in the background")
+                        help="Build a field map in a background thread while driving "
+                             "(mapping only — never commands the wheels; no effect on "
+                             "control). Saved on exit (see --save-dir).")
+    parser.add_argument("--map-3d", action="store_true",
+                        help="With --slam, also accumulate a 3-D point-cloud map "
+                             "(map3d.ply + map3d.npz) registered with the SLAM pose.")
+    parser.add_argument("--voxel-3d", type=float, default=0.15, metavar="M",
+                        help="3-D map voxel size (m) for --map-3d (default: 0.15).")
     parser.add_argument("--speed", type=float, default=0.30, metavar="M",
                         help="Max forward speed in m/s (default: 0.30)")
     parser.add_argument("--roi-x", type=float, default=0.80, metavar="M",
@@ -862,12 +880,20 @@ def main() -> None:
 
         if args.slam and navigator.slam is not None:
             from slam.map_io import save_map
-            state = navigator.slam.get_state()
+            runner = navigator.slam
+            runner.stop()
+            engine = runner.engine
+            state = engine.get_state()
             if state.scan_count > 0:
                 ts = datetime.now().strftime("%Y%m%d_%H%M%S")
                 save_dir = Path(args.save_dir) if args.save_dir else Path("maps") / ts
-                out = save_map(navigator.slam._grid, state.trajectory, save_dir)
-                print(f"[row_follow] map saved: {out / 'map.png'}")
+                pts_3d = engine.get_3d_points() if engine.map3d_count > 0 else None
+                out = save_map(engine._grid, state.trajectory, save_dir, points_3d=pts_3d)
+                extra = f" (+{engine.map3d_count:,}-pt 3D cloud)" if engine.map3d_count > 0 else ""
+                print(f"[row_follow] map saved: {out / 'map.png'}  "
+                      f"[{state.scan_count} scans, {engine.cell_count:,} cells{extra}]")
+            else:
+                print("[row_follow] SLAM: no scans mapped — nothing to save.")
     print("[row_follow] done.")
 
 

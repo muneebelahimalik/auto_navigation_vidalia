@@ -339,6 +339,12 @@ class RowNavigator:
             if len(pts):
                 rng = np.hypot(pts[:, 0], pts[:, 1])
                 pts = pts[rng >= self.self_radius]
+                # Optional SLAM mapping (added functionality, mapping-only):
+                # hand the self-filtered, still-UNCORRECTED cloud to the SLAM
+                # runner, which applies its own yaw/tilt and maps in a separate
+                # thread.  O(1) here (stores latest); never blocks control.
+                if self.slam is not None:
+                    self.slam.submit(pts.copy())
                 # Order matters: yaw FIRST, then tilt.  The yaw aligns the cloud
                 # to the robot frame so the subsequent tilt rotates about the
                 # robot's left-right (X) axis — i.e. corrects a true nose-down

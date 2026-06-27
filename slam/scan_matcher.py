@@ -77,8 +77,16 @@ def robot_xyz_to_world(pts_robot: np.ndarray, pose: Pose2D) -> np.ndarray:
     return np.hstack([xy, z])
 
 
-def scan_to_xyz(scan: List[VelodynePoint]) -> np.ndarray:
-    """Stack a VLP-16 scan into an Nx3 float64 array of (x, y, z) sensor coords."""
+def scan_to_xyz(scan) -> np.ndarray:
+    """Stack a VLP-16 scan into an Nx3 float64 array of (x, y, z) sensor coords.
+
+    Accepts either a list of ``VelodynePoint`` (from the SLAM mapper) or an
+    Nx3+ numpy array (the row-follow navigator already has the scan as numpy).
+    """
+    if isinstance(scan, np.ndarray):
+        if scan.size == 0:
+            return np.zeros((0, 3), dtype=np.float64)
+        return scan[:, :3].astype(np.float64, copy=False)
     if not scan:
         return np.zeros((0, 3), dtype=np.float64)
     return np.array([(p.x, p.y, p.z) for p in scan], dtype=np.float64)

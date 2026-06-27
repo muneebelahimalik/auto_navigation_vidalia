@@ -7,6 +7,7 @@ and floods the map with moving ground.  Also covers the ICP scan matcher and
 the occupancy grid.
 """
 import math
+import time
 
 import numpy as np
 import pytest
@@ -28,6 +29,8 @@ from slam.scan_matcher import (
 )
 from slam.occupancy_grid import OccupancyGrid
 from slam.slam_engine import SlamEngine
+from slam.slam_runner import SlamRunner
+from slam.scan_matcher import scan_to_xyz
 from slam.voxel_map import VoxelMap
 from slam.map_io import save_ply
 
@@ -260,3 +263,84 @@ def test_save_ply_round_trips(tmp_path):
     # header + 50 records × (3×float32 + 3×uint8) = 15 bytes each
     header_end = raw.index(b"end_header\n") + len(b"end_header\n")
     assert len(raw) - header_end == 50 * 15
+
+
+# ---------------------------------------------------------------------------
+# Running SLAM alongside row-follow (numpy scans + decoupled runner)
+# ---------------------------------------------------------------------------
+
+def _pole_ring_raw():
+    """Nx3 RAW (sensor-frame) cloud of a ring of poles — what the navigator
+    hands the runner (self-filtered, uncorrected)."""
+    poles = []
+    for ang in np.linspace(0, 2 * math.pi, 24, endpoint=False):
+        px, py = 5.0 * math.cos(ang), 5.0 * math.sin(ang)
+        for z in np.linspace(-LIDAR_MOUNT_HEIGHT + 0.30, -LIDAR_MOUNT_HEIGHT + 1.2, 8):
+            poles.append((px, py, z))
+    return _robot_to_raw(np.array(poles))
+
+
+def test_scan_to_xyz_accepts_ndarray():
+    """The navigator already has the scan as numpy — scan_to_xyz must pass it
+    through (not just handle VelodynePoint lists)."""
+    arr = np.arange(12, dtype=np.float64).reshape(4, 3)
+    out = scan_to_xyz(arr)
+    assert out.shape == (4, 3)
+    assert np.allclose(out, arr)
+    assert scan_to_xyz(np.zeros((0, 3))).shape == (0, 3)
+
+
+def test_engine_maps_from_numpy_scan():
+    """The engine builds a map from a numpy scan (the row-follow path)."""
+    engine = SlamEngine(grid_size_m=40.0, slice_min=0.20, slice_max=1.50)
+    scan = _pole_ring_raw()
+    for _ in range(5):
+        engine.process_scan(scan)
+    assert engine.cell_count > 0
+
+
+def test_slam_runner_processes_submitted_scans():
+    """The background runner consumes submitted scans and builds the map; the
+    submit call is decoupled from processing."""
+    engine = SlamEngine(grid_size_m=40.0, slice_min=0.20, slice_max=1.50)
+    runner = SlamRunner(engine, idle_sleep=0.002)
+    runner.start()
+    scan = _pole_ring_raw()
+    for _ in range(10):
+        runner.submit(scan)
+        time.sleep(0.01)
+    deadline = time.monotonic() + 2.0
+    while runner.scans_processed == 0 and time.monotonic() < deadline:
+        runner.submit(scan)
+        time.sleep(0.02)
+    runner.stop()
+    assert runner.scans_submitted > 0
+    assert runner.scans_processed > 0
+    assert runner.errors == 0
+    assert engine.cell_count > 0
+
+
+def test_slam_runner_swallows_errors_and_keeps_running():
+    """A failure inside the SLAM pipeline must never crash the (driving) caller."""
+    class BoomEngine:
+        def process_scan(self, pts):
+            raise RuntimeError("boom")
+    runner = SlamRunner(BoomEngine(), idle_sleep=0.002)  # type: ignore[arg-type]
+    runner.start()
+    for _ in range(5):
+        runner.submit(np.ones((50, 3)))
+        time.sleep(0.01)
+    deadline = time.monotonic() + 2.0
+    while runner.errors == 0 and time.monotonic() < deadline:
+        runner.submit(np.ones((50, 3)))
+        time.sleep(0.02)
+    runner.stop()
+    assert runner.errors > 0          # error counted, not raised
+
+
+def test_slam_runner_ignores_empty_submissions():
+    engine = SlamEngine(grid_size_m=20.0)
+    runner = SlamRunner(engine)
+    runner.submit(None)
+    runner.submit(np.zeros((0, 3)))
+    assert runner.scans_submitted == 0
