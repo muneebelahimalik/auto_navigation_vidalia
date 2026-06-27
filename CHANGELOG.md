@@ -21,6 +21,18 @@ Work toward the row-to-row turn milestone (built on the v0.1.0 baseline).
   (0.15 m default). Unit-tested in `tests/test_slam.py` (voxel dedup, pose
   registration, PLY round-trip, engine 3-D build).
 
+### Changed — U-turn scrub default lowered (field calibration)
+- **`--turn-scrub-comp` default 0.6 → 0.5.** When the IMU/filter heading is not
+  publishing (`rot=…[wheel]`), the turn estimates real rotation as wheel-heading ×
+  scrub_comp; too high a value over-reports rotation, so the "turned-enough" gate
+  opens early and a perception lock ends the turn under-rotated (robot then drives
+  diagonally across the rows).  A field run ended at a real ~120° while `rot`
+  displayed 159° (wheels reported 265°), i.e. true scrub ≈ 0.45 — 0.6 was too
+  high.  Lowered the default and clarified the calibration (when the robot truly
+  completes 180°, `rot` should read ~180; heavy-slip fields ~0.45).  This is a
+  per-surface calibration; the real fix is a live gyro (filter `FilterState` or an
+  IMU source) so the turn doesn't depend on the scrub guess at all.
+
 ### Changed — fewer geometry parameters (sensor/perception-driven)
 - **Removed `--headland-shift` (dead parameter).** The U-turn has been fully
   perception-closed for a while — it arcs until the LiDAR re-acquires the next

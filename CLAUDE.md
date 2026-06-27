@@ -603,18 +603,21 @@ to the unreliable wheel heading).  `row_navigator._step_headland` then:
 **When the filter/IMU is NOT publishing** (common in the test field — the filter
 service needs a GPS fix it doesn't have, so `FilterState` never arrives), the
 turn falls back to the **wheel-odometry heading** (`measured_angular_rate`,
-always live) scaled by `--turn-scrub-comp` (default 0.6): the skid-steer arc
-over-reports body rotation, so real rotation ≈ wheel × scrub_comp.  This still
-*responds to how much the robot is actually turning* (unlike a fixed arc length),
-and the status `rot=NNN[wheel]` lets you calibrate `scrub_comp` in one run — if
-the robot physically completes 180° when `rot` reads ~120°, raise it
-(0.6·180/120 ≈ 0.9); if `rot` reads ~240° at a real 180°, lower it (~0.45).  The
+always live) scaled by `--turn-scrub-comp` (default **0.5**; heavy-slip fields
+~0.45): the skid-steer arc over-reports body rotation, so real rotation ≈ wheel ×
+scrub_comp.  This still *responds to how much the robot is actually turning*
+(unlike a fixed arc length), and the status `rot=NNN[wheel]` lets you calibrate
+`scrub_comp` in one run — watch `rot=` and when the robot physically completes
+180°, `rot` should read ~180.  **Too HIGH a scrub_comp ends the turn EARLY**: a
+field run that ended at a real ~120° while `rot` displayed 159° (so the wheels
+reported 265°) needs scrub_comp ≈ 120/265 ≈ 0.45.  If `rot` reads LOW when the
+robot has truly turned, raise it.  The
 arc angular rate also **eases in** (smoothstep over the first `ramp_dist`) so the
 skid-steer doesn't lurch — smoother and less initial scrub.  A `max_turn_frac`
 arc cap STOPS the robot if nothing ever completes.  Simulated with the IMU off,
 body turning 55 % of commanded and grass the whole arc, the turn ends at a true
 ~170° on the real row.  `--headland-radius` (auto 1.0 m), `--headland-turn-rate`
-(arc rate), `--reacquire-conf` (0.72), `--turn-scrub-comp` (0.6).
+(arc rate), `--reacquire-conf` (0.72), `--turn-scrub-comp` (0.5).
 Status: `R-UTURN:ARC rot=120°[imu|wheel] arc=2.1m reacq=2/4`.
 
 **No separate APPROACH after the turn (normally):** because the turn only ends
@@ -814,7 +817,7 @@ Re-run the sweep if the mount is disturbed.
 | `--headland-turn-rate R` | **0.30** | Angular rate (rad/s) of the U-turn arc; arc forward speed = radius × this rate |
 | `--headland-radius M` | **0** (auto 1.0) | U-turn arc radius (m); 0 = auto = 1.0 m. The turn arcs gently and keeps arcing until the LiDAR sees the next row aligned ahead (it does NOT count heading, which a skid-steer over-reports). Bigger = less scrub + slower sweep = easier re-lock |
 | `--reacquire-conf C` | **0.72** | Detection confidence (with small heading error + offset, held a few scans) required to end the U-turn and FOLLOW the next row. Raise if it ends early on a misaligned glimpse; lower if it arcs past a good lock |
-| `--turn-scrub-comp K` | **0.6** | Skid-steer scrub compensation for the U-turn rotation estimate when the IMU/filter heading is NOT live (`rot=…[wheel]`). Real rotation ≈ wheel heading × K. Calibrate from the on-screen `rot=` readout vs the robot's actual rotation. Ignored when `[imu]` |
+| `--turn-scrub-comp K` | **0.5** | Skid-steer scrub compensation for the U-turn rotation estimate when the IMU/filter heading is NOT live (`rot=…[wheel]`). Real rotation ≈ wheel heading × K. Too HIGH → turn ends early (under-rotated). Calibrate from the on-screen `rot=` readout: when the robot truly completes 180°, `rot` should read ~180 (heavy-slip fields ~0.45). Ignored when `[imu]` |
 | `--approach-speed M` | **0.12** | Forward speed of the post-turn APPROACH leg that drives into the next row until perception re-locks (m/s) |
 | `--approach-max-dist M` | **3.0** | Max distance the APPROACH leg searches for the next row before stopping (field-edge / overshoot guard, m) |
 | `--post-turn-max-dist M` | **5.0** | Cumulative distance after a U-turn (APPROACH creep + short un-settled FOLLOW segments) before a stable down-row FOLLOW is required; hard guard against driving off the field |

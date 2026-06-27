@@ -658,15 +658,16 @@ def main() -> None:
                              "trust wheel heading to count 180°, which a skid-steer "
                              "over-reports). A bigger radius scrubs less and sweeps the next "
                              "row through view more slowly, making the re-lock easier.")
-    parser.add_argument("--turn-scrub-comp", type=float, default=0.6, metavar="K",
+    parser.add_argument("--turn-scrub-comp", type=float, default=0.5, metavar="K",
                         help="Skid-steer scrub compensation for the U-turn rotation "
                              "estimate when the IMU/filter heading is NOT live (status "
                              "shows rot=…[wheel]). Wheel heading over-reports body "
                              "rotation on an arc; the real rotation ≈ wheel × this factor "
-                             "(default: 0.6). Calibrate: watch the rot= readout during a "
-                             "turn — if the robot physically completes 180° when rot reads "
-                             "~120°, set this to 0.6×180/120≈0.9; if rot reads ~240° at a "
-                             "real 180°, set ~0.45. Ignored when rot=…[imu].")
+                             "(default: 0.5; heavy-slip fields ~0.45). Calibrate: watch the "
+                             "rot= readout during a turn — when the robot physically "
+                             "completes 180°, rot should read ~180. If it ENDED at real "
+                             "~120° when rot read ~159° (wheel 265°), set ~0.45; if rot "
+                             "reads LOW when truly turned, raise it. Ignored when rot=…[imu].")
     parser.add_argument("--reacquire-conf", type=float, default=0.72, metavar="C",
                         help="Row-detection confidence (0–1) required — together with small "
                              "heading error and offset, for a few consecutive scans — to end "

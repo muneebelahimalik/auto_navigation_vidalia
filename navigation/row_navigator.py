@@ -117,7 +117,7 @@ class RowNavigator:
         headland_speed: float = 0.15,
         headland_turn_rate: float = 0.30,
         headland_radius: float = 0.0,
-        turn_scrub_comp: float = 0.6,
+        turn_scrub_comp: float = 0.5,
         reacquire_conf: float = 0.72,
         reacquire_align_deg: float = 11.5,
         reacquire_offset: float = 0.40,

@@ -85,7 +85,7 @@ class HeadlandTurn:
         turn_radius: float | None = None,
         max_turn_frac: float = 3.0,
         heading_source=None,
-        scrub_comp: float = 0.6,
+        scrub_comp: float = 0.5,
         ramp_dist: float = 0.6,
     ) -> None:
         self.odometry = odometry
