@@ -189,6 +189,11 @@ class RowNavigator:
         self.cam_stale_secs = cam_stale_secs
         self.cam_fusion = cam_fusion if cam_fusion in ("estimate", "point") else "estimate"
         self.telemetry = telemetry
+        # Optional perception-scan capture (for --record figures): snapshot the
+        # densest high-confidence FOLLOW scan (corrected robot-frame cloud + the
+        # detected geometry) so the run can render real-data perception figures.
+        self.capture_perception = False
+        self._cap_best = None
 
         self.acquire_conf = acquire_conf
         self.acquire_frames = acquire_frames
@@ -401,6 +406,8 @@ class RowNavigator:
             if self.cam_fusion == "point" and self.vis_detector is not None:
                 aux_xy = getattr(self.vis_detector, "last_ground_points", None)
             est = self.detector.update(pts, aux_xy=aux_xy)
+            if self.capture_perception:
+                self._capture_perception(pts, est)
 
             # --- 3-D camera depth cloud: fill LiDAR blind zone ---
             # Projects depth images to 3D, merges with LiDAR cloud so that
@@ -1031,6 +1038,36 @@ class RowNavigator:
             os.rename(tmp2, "/dev/shm/vidalia_status.json")
         except OSError:
             pass  # /dev/shm not available or full — bridge is optional
+
+    def _capture_perception(self, pts, est) -> None:
+        """Keep the densest high-confidence scan for the --record figures.
+
+        Stores the corrected robot-frame cloud + the detected strip-centre
+        geometry; never raises into the control loop."""
+        try:
+            if pts is None or not getattr(est, "valid", False):
+                return
+            conf = float(est.confidence)
+            n = int(getattr(est, "n_points", len(pts)))
+            if conf < 0.70:
+                return
+            if self._cap_best is not None and n <= self._cap_best["n"]:
+                return
+            self._cap_best = {
+                "pts": np.asarray(pts, dtype=np.float32).copy(),
+                "lateral": float(est.lateral_offset),
+                "heading_deg": float(math.degrees(est.heading_error)),
+                "spacing": float(getattr(self.detector, "spacing_estimate",
+                                         getattr(self.detector, "row_spacing", 0.76))),
+                "confidence": conf, "n": n,
+            }
+        except Exception:
+            pass
+
+    @property
+    def perception_capture(self):
+        """The captured representative scan dict (or None)."""
+        return self._cap_best
 
     def _telemetry_record(self, est, safety, linear: float, angular: float) -> dict:
         """Flat per-scan record for the JSONL run logger (one dict per scan)."""

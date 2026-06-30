@@ -515,6 +515,28 @@ def _box(ax, x0, x1, y0, y1, z0, z1, color, alpha, edge=None, elw=1.0):
     ax.add_collection3d(pc)
 
 
+def render_all(P, lateral, heading_deg, spacing, out_dir, *, title=None):
+    """Render all three perception figures into out_dir with standard names:
+      figure_perception_3d.png         — self-driving-style dense 3-D cloud
+      figure_perception_bev.png        — top-down AV sensor scope
+      figure_perception_annotated.png  — labelled bird's-eye + 3-D (+ .svg)
+    Returns the list of written file paths.  Requires matplotlib (raises
+    ImportError if unavailable — the caller saves the raw scan and reports how
+    to render offline)."""
+    import matplotlib  # noqa: F401  (fail fast here if not installed)
+    out = Path(out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    files = []
+    files.append(render_av3d(P, lateral, heading_deg, spacing,
+                             str(out / "figure_perception_3d"), title=title))
+    files.append(render_av_bev(P, lateral, heading_deg, spacing,
+                               str(out / "figure_perception_bev"), title=title))
+    png, svg = render(P, lateral, heading_deg, spacing,
+                      str(out / "figure_perception_annotated"), title=title)
+    files += [png, svg]
+    return files
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="LiDAR perception figure for poster/paper")
     ap.add_argument("--scan", help="real scan file (.npy Nx3 or .ply, robot frame)")

@@ -205,10 +205,16 @@ a single self-contained, reproducible folder `runs/run_<ts>/`:
 | `per_row.csv` | tracking accuracy per row (xtrack RMSE/max, heading RMSE, distance) |
 | `turns.csv` | one row per headland U-turn (dir, source `imu`/`wheel`, max/final rotation °, arc m, completed) |
 | `coverage.png`, `trajectory.csv`, `map.png/.npz` | SLAM coverage + drift-corrected path |
+| `perception_scan.npy` + `perception_state.json` | a REAL captured corrected scan (densest high-confidence FOLLOW frame) + its detected geometry |
+| `figure_perception_3d.png`, `_bev.png`, `_annotated.png/.svg` | the three perception figures rendered from that real scan (self-driving-style 3-D, top-down sensor scope, annotated) |
 
 `--record` turns on `--telemetry` + `--slam` automatically and writes the
 manifest at start (so a crashed run is still identified) and the summary at
-exit.  Metrics are computed by `navigation/run_metrics.py` (numpy-only, runs on
+exit.  It also snapshots a **real corrected LiDAR scan** (the densest
+high-confidence FOLLOW frame) and renders the **three perception figures** from
+it on exit (`scripts/viz_perception.py`); the raw `perception_scan.npy` is
+always saved, and if matplotlib is not installed on the brain the figures are
+skipped with a one-line command to render them offline.  Metrics are computed by `navigation/run_metrics.py` (numpy-only, runs on
 the brain): FOLLOW cross-track RMSE/MAE/p95/max (cm), heading RMSE/MAE/max (°),
 control effort + jerk, forward-speed mean/std, state-time budget, event counts
 (obstacle stops, FOLLOW losses, dropout scans), terrain grade/drop, per-row

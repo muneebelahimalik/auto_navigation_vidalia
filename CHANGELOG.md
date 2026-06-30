@@ -43,6 +43,16 @@ Work toward the row-to-row turn milestone (built on the v0.1.0 baseline).
   above with range rings (2/4/6/8 m) and the decision overlays (planned path,
   look-ahead, ROI, safety zones, ego robot) on the same dark scene — the classic
   AV-dashboard inset to pair with the 3-D hero shot.
+- **`--record` now auto-generates the perception figures from real field data.**
+  During a recorded run the navigator snapshots the densest high-confidence
+  FOLLOW scan (the corrected robot-frame cloud + detected strip-centre geometry);
+  on exit `row_follow.py` saves `perception_scan.npy` + `perception_state.json`
+  and renders `figure_perception_3d.png`, `figure_perception_bev.png`, and
+  `figure_perception_annotated.png/.svg` into the run folder via
+  `scripts/viz_perception.render_all`.  The raw scan is always saved; if
+  matplotlib is not installed on the brain the figures are skipped with a
+  one-line offline-render command (control path stays matplotlib-free).
+  `tests/test_viz_perception.py` covers the ray-cast scene + render bundle.
 
 ### Added — `--record`: complete reproducible experiment folder per run
 - One flag captures everything needed to analyse and publish from a field run
