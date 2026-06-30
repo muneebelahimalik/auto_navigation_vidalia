@@ -33,6 +33,12 @@ Work toward the row-to-row turn milestone (built on the v0.1.0 baseline).
   scene seeded from a run's telemetry (`--telemetry … --index N`) / the field
   calibration.  Outputs 300-dpi PNG + vector SVG.  Desktop/figure tool
   (matplotlib); not on the brain's control path, never imported by the nav stack.
+- `--mode av3d` adds a self-driving-car-style dense 3-D point-cloud render: a
+  ray-cast VLP-16 scan (16 channels × azimuth, 21.5° nose-down, ground + crop
+  ridges) producing the characteristic Velodyne ground rings bending up over the
+  crop rows, on a dark scene with the ego robot and the decision overlays
+  (planned strip-centre path, look-ahead target, ROI corridor, forward safety
+  zone), height-coloured (turbo).
 
 ### Added — `--record`: complete reproducible experiment folder per run
 - One flag captures everything needed to analyse and publish from a field run

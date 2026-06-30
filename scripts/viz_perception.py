@@ -91,6 +91,67 @@ def generate_scene(lateral=-0.05, heading_deg=3.5, spacing=0.62, grade_deg=1.0,
     return P
 
 
+def _crop_height(x, y, lateral, theta, spacing):
+    """Canopy height field (m): two flanking rows (+ outer rows) as ridges."""
+    h = np.zeros_like(x)
+    for c0, peak in ((-spacing / 2, 0.22), (spacing / 2, 0.22),
+                     (-1.14, 0.24), (1.14, 0.24)):
+        xr = lateral + c0 + y * np.tan(theta)
+        hc = peak * np.exp(-((x - xr) ** 2) / (2 * 0.075 ** 2))
+        hc = np.where((y >= 0.6) & (y <= 9.2), hc, 0.0)
+        h = np.maximum(h, hc)
+    return h
+
+
+def generate_lidar_raycast(lateral=-0.06, heading_deg=4.0, spacing=0.62,
+                           grade_deg=1.0, az_res_deg=0.35, seed=0):
+    """Ray-cast a physically-faithful VLP-16 scan: 16 channels (−15°..+15°)
+    spun over azimuth, the unit pitched 21.5° nose-down at MOUNT_H, intersecting
+    a ground plane + crop-row ridges.  Produces the characteristic Velodyne
+    ground rings that bend up over the crop rows.  Returns Nx3 robot-frame xyz
+    (z = height above ground)."""
+    rng = np.random.default_rng(seed)
+    T = np.radians(21.5)                      # nose-down pitch
+    th = np.radians(heading_deg)
+    gslope = np.tan(np.radians(grade_deg))
+    eps = np.radians(np.linspace(-15, 15, 16))             # 16 channels
+    az = np.radians(np.arange(0, 360, az_res_deg))         # azimuth sweep
+    E, A = np.meshgrid(eps, az)
+    E = E.ravel(); A = A.ravel()
+    # beam direction in sensor frame (x=right, y=forward, z=up), az from forward
+    dx = np.cos(E) * np.sin(A)
+    dy = np.cos(E) * np.cos(A)
+    dz = np.sin(E)
+    # apply nose-down pitch about x-axis (forward tilts toward ground)
+    dy2 = dy * np.cos(T) + dz * np.sin(T)
+    dz2 = -dy * np.sin(T) + dz * np.cos(T)
+    down = dz2 < -1e-3                          # only beams heading groundward
+    dx, dy2, dz2 = dx[down], dy2[down], dz2[down]
+    # ground-plane intersection (ground z=0, sensor at height MOUNT_H)
+    tg = -MOUNT_H / dz2
+    xg, yg = tg * dx, tg * dy2
+    # keep a sensible scene window
+    keep = (tg > 0) & (yg > -2.5) & (yg < 11) & (np.abs(xg) < 6)
+    dx, dy2, dz2, xg, yg = dx[keep], dy2[keep], dz2[keep], xg[keep], yg[keep]
+    # lift points that actually hit a crop ridge before the ground
+    hc = _crop_height(xg, yg, lateral, th, spacing)
+    hit_crop = hc > 0.03
+    th_t = np.where(hit_crop, (hc - MOUNT_H) / dz2, tg[keep] if False else -MOUNT_H / dz2)
+    # recompute crop hits at the canopy plane (small inward shift)
+    x = xg.copy(); y = yg.copy(); z = np.zeros_like(xg)
+    if hit_crop.any():
+        tc = (hc[hit_crop] - MOUNT_H) / dz2[hit_crop]
+        x[hit_crop] = tc * dx[hit_crop]
+        y[hit_crop] = tc * dy2[hit_crop]
+        z[hit_crop] = hc[hit_crop] + rng.normal(0, 0.015, hit_crop.sum())  # canopy texture
+    z = z + gslope * y                                       # terrain grade
+    z = z + rng.normal(0, 0.008, len(z))                     # range noise
+    # store in the stack's convention: P[:,2] = height_above_ground − MOUNT_H
+    P = np.column_stack([x, y, z - MOUNT_H])
+    P = P[np.hypot(P[:, 0], P[:, 1]) >= SELF_R]              # self-filter blind zone
+    return P
+
+
 def load_scan(path: str) -> np.ndarray:
     p = Path(path)
     if p.suffix == ".npy":
@@ -255,6 +316,115 @@ def render(P, lateral, heading_deg, spacing, out_base, *, title=None):
     return png, svg
 
 
+def render_av3d(P, lateral, heading_deg, spacing, out_base, *, title=None):
+    """Self-driving-car-style 3-D point-cloud render on a dark scene, with the
+    ego robot and the perception/decision overlays (detected strip-centre path,
+    look-ahead, ROI corridor, forward safety zone)."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from mpl_toolkits.mplot3d.art3d import Poly3DCollection, Line3DCollection
+
+    h = P[:, 2] + MOUNT_H
+    th = np.radians(heading_deg)
+    BG = "#0a0d14"
+    plt.rcParams.update({"font.size": 11, "font.family": "DejaVu Sans",
+                         "text.color": "#e8e8e8", "axes.labelcolor": "#cfd3da",
+                         "xtick.color": "#9aa0aa", "ytick.color": "#9aa0aa"})
+    fig = plt.figure(figsize=(16, 10), dpi=300, facecolor=BG)
+    ax = fig.add_subplot(111, projection="3d", facecolor=BG)
+
+    # point cloud — height-coloured on dark (classic Velodyne look)
+    order = np.argsort(h)                      # draw low→high so rows pop
+    sc = ax.scatter(P[order, 0], P[order, 1], h[order], c=h[order], cmap="turbo",
+                    vmin=-0.05, vmax=0.45,
+                    s=4.0, alpha=0.95, edgecolors="none", depthshade=False)
+
+    yy = np.array([ROI_Y[0], ROI_Y[1]])
+    cx = lateral + yy * np.tan(th)
+
+    # --- decision overlays ---
+    # detected strip-centre = planned path (glowing line just above ground)
+    yp = np.linspace(SELF_R, ROI_Y[1], 40)
+    xp = lateral + yp * np.tan(th)
+    ax.plot(xp, yp, np.full_like(yp, 0.02), color="#00e5ff", lw=3.5, zorder=10)
+    ax.plot(xp, yp, np.full_like(yp, 0.02), color="white", lw=1.0, alpha=0.7, zorder=11)
+    # look-ahead target
+    lx = lateral + LOOKAHEAD * np.tan(th)
+    ax.scatter([lx], [LOOKAHEAD], [0.05], s=160, marker="*", color="#ffd000",
+               edgecolors="k", lw=0.5, zorder=12)
+    # ROI corridor floor (translucent)
+    roi = [[(-ROI_X, ROI_Y[0], 0.0), (ROI_X, ROI_Y[0], 0.0),
+            (ROI_X, ROI_Y[1], 0.0), (-ROI_X, ROI_Y[1], 0.0)]]
+    pc = Poly3DCollection(roi, facecolor="#00e5ff", alpha=0.07, edgecolor="#00e5ff", lw=1.2)
+    pc.set_zsort("min"); ax.add_collection3d(pc)
+    # forward safety zone as a translucent 3-D volume
+    _box(ax, -FWD_HW, FWD_HW, 0.2, SAFE_DIST, 0.0, 0.55, "#2ecc71", 0.06)
+
+    # ego robot (Amiga) — wireframe box + forward arrow
+    _box(ax, -BODY_HW, BODY_HW, BODY_BACK, BODY_FWD, 0.0, 0.45, "#ffffff", 0.10,
+         edge="#ffffff", elw=1.8)
+    ax.quiver(0, BODY_FWD, 0.22, 0, 1.6, 0, color="#00e5ff", lw=3, arrow_length_ratio=0.22)
+
+    # scene styling — minimal, dark, AV-dashboard feel
+    ax.set_xlim(-3.2, 3.2); ax.set_ylim(-1.5, 9.5); ax.set_zlim(0, 0.55)
+    try:
+        ax.set_box_aspect((6.4, 11, 1.1))
+    except Exception:
+        pass
+    ax.view_init(elev=20, azim=-60)
+    for pane in (ax.xaxis, ax.yaxis, ax.zaxis):
+        pane.pane.set_facecolor(BG); pane.pane.set_edgecolor("#10161e")
+        pane.pane.set_alpha(1.0)
+        pane.line.set_color("#10161e")               # dim the axis spines
+    ax.grid(True, color="#101822", linewidth=0.4)
+    ax.set_xlabel("lateral  x (m)"); ax.set_ylabel("forward  y (m)")
+    ax.set_zlabel("height (m)")
+    ax.tick_params(labelsize=8)
+
+    cb = fig.colorbar(sc, ax=ax, fraction=0.022, pad=0.02)
+    cb.set_label("height above ground (m)", color="#cfd3da")
+    cb.ax.yaxis.set_tick_params(color="#9aa0aa")
+    cb.outline.set_edgecolor("#1c2430")
+
+    # legend (proxy handles)
+    from matplotlib.lines import Line2D
+    from matplotlib.patches import Patch
+    handles = [
+        Line2D([0], [0], color="#00e5ff", lw=3, label="planned path (strip-centre)"),
+        Line2D([0], [0], marker="*", color="#ffd000", lw=0, markersize=12,
+               markeredgecolor="k", label="look-ahead target"),
+        Patch(facecolor="#2ecc71", alpha=0.5, label="forward safety zone"),
+        Patch(facecolor="#00e5ff", alpha=0.35, label="detection ROI"),
+        Patch(facecolor="#ffffff", alpha=0.6, label="ego robot (Amiga)"),
+    ]
+    leg = ax.legend(handles=handles, loc="upper left", fontsize=9,
+                    facecolor="#10151d", edgecolor="#2a3340", labelcolor="#e8e8e8")
+
+    sup = title or ("VLP-16 LiDAR perception — 3-D point cloud + autonomy decisions "
+                    "(soybean row-following)")
+    fig.suptitle(sup, fontsize=15, fontweight="bold", color="#ffffff", y=0.93)
+
+    png = out_base + ".png"
+    fig.savefig(png, dpi=300, facecolor=BG, bbox_inches="tight")
+    print(f"wrote {png}  ({len(P)} points)")
+    return png
+
+
+def _box(ax, x0, x1, y0, y1, z0, z1, color, alpha, edge=None, elw=1.0):
+    """Draw a translucent 3-D box (axis-aligned) on a 3-D axis."""
+    from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+    v = [(x0, y0, z0), (x1, y0, z0), (x1, y1, z0), (x0, y1, z0),
+         (x0, y0, z1), (x1, y0, z1), (x1, y1, z1), (x0, y1, z1)]
+    faces = [[v[0], v[1], v[2], v[3]], [v[4], v[5], v[6], v[7]],
+             [v[0], v[1], v[5], v[4]], [v[2], v[3], v[7], v[6]],
+             [v[1], v[2], v[6], v[5]], [v[0], v[3], v[7], v[4]]]
+    pc = Poly3DCollection(faces, facecolor=color, alpha=alpha,
+                          edgecolor=edge or color, linewidths=elw)
+    pc.set_zsort("average")
+    ax.add_collection3d(pc)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="LiDAR perception figure for poster/paper")
     ap.add_argument("--scan", help="real scan file (.npy Nx3 or .ply, robot frame)")
@@ -266,6 +436,10 @@ def main() -> None:
     ap.add_argument("--grade", type=float, default=1.0)
     ap.add_argument("--out", default="results/lidar_perception", help="output base path")
     ap.add_argument("--title", default=None)
+    ap.add_argument("--mode", choices=["annotated", "av3d"], default="annotated",
+                    help="'annotated' = 2-panel schematic bird's-eye+3D; "
+                         "'av3d' = dense self-driving-style 3-D point cloud (ray-cast "
+                         "VLP-16 rings) with decision overlays on a dark scene.")
     args = ap.parse_args()
 
     lateral, heading, spacing = args.lateral, args.heading, args.spacing
@@ -282,12 +456,18 @@ def main() -> None:
     if args.scan:
         P = load_scan(args.scan)
         print(f"loaded real scan: {len(P)} points from {args.scan}")
+    elif args.mode == "av3d":
+        P = generate_lidar_raycast(lateral=lateral, heading_deg=heading,
+                                   spacing=spacing, grade_deg=args.grade)
     else:
         P = generate_scene(lateral=lateral, heading_deg=heading, spacing=spacing,
                            grade_deg=args.grade)
 
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
-    render(P, lateral, heading, spacing, args.out, title=args.title)
+    if args.mode == "av3d":
+        render_av3d(P, lateral, heading, spacing, args.out, title=args.title)
+    else:
+        render(P, lateral, heading, spacing, args.out, title=args.title)
 
 
 if __name__ == "__main__":
