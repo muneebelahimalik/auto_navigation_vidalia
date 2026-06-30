@@ -39,6 +39,10 @@ Work toward the row-to-row turn milestone (built on the v0.1.0 baseline).
   crop rows, on a dark scene with the ego robot and the decision overlays
   (planned strip-centre path, look-ahead target, ROI corridor, forward safety
   zone), height-coloured (turbo).
+- `--mode av_bev` adds the matching top-down "sensor scope": the LiDAR rings from
+  above with range rings (2/4/6/8 m) and the decision overlays (planned path,
+  look-ahead, ROI, safety zones, ego robot) on the same dark scene — the classic
+  AV-dashboard inset to pair with the 3-D hero shot.
 
 ### Added — `--record`: complete reproducible experiment folder per run
 - One flag captures everything needed to analyse and publish from a field run

@@ -411,6 +411,96 @@ def render_av3d(P, lateral, heading_deg, spacing, out_base, *, title=None):
     return png
 
 
+def render_av_bev(P, lateral, heading_deg, spacing, out_base, *, title=None):
+    """Top-down self-driving-style "sensor scope": the LiDAR rings from above on
+    a dark scene, with range rings and the autonomy decision overlays."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from matplotlib.patches import Circle, Rectangle
+
+    h = P[:, 2] + MOUNT_H
+    th = np.radians(heading_deg)
+    BG = "#0a0d14"
+    plt.rcParams.update({"font.size": 11, "font.family": "DejaVu Sans",
+                         "text.color": "#e8e8e8", "axes.labelcolor": "#cfd3da",
+                         "xtick.color": "#9aa0aa", "ytick.color": "#9aa0aa"})
+    fig = plt.figure(figsize=(9.5, 11), dpi=300, facecolor=BG)
+    ax = fig.add_subplot(111, facecolor=BG)
+
+    # faint range rings (classic sensor-scope look)
+    for r in (2, 4, 6, 8):
+        ax.add_patch(Circle((0, 0), r, fill=False, ec="#1b2531", lw=1.0, ls="-", zorder=1))
+        ax.text(0.0, r, f"{r} m", color="#3a4658", fontsize=8, ha="center", va="bottom", zorder=1)
+
+    order = np.argsort(h)
+    sc = ax.scatter(P[order, 0], P[order, 1], c=h[order], cmap="turbo",
+                    vmin=-0.05, vmax=0.45, s=4.0, alpha=0.95, edgecolors="none", zorder=3)
+
+    # detection ROI + safety zones
+    ax.add_patch(Rectangle((-ROI_X, ROI_Y[0]), 2 * ROI_X, ROI_Y[1] - ROI_Y[0],
+                           fill=False, ec="#00e5ff", ls="--", lw=1.4, alpha=0.8, zorder=5))
+    ax.add_patch(Rectangle((-FWD_HW, 0.2), 2 * FWD_HW, SAFE_DIST - 0.2,
+                           fc="#2ecc71", ec="#2ecc71", alpha=0.10, lw=1, zorder=4))
+    for sgn in (-1, 1):
+        ax.add_patch(Rectangle((sgn * TIRE_TRACK - TIRE_HW, 0.2), 2 * TIRE_HW,
+                               SAFE_DIST - 0.2, fc="#2ecc71", ec="#2ecc71",
+                               alpha=0.07, lw=1, zorder=4))
+
+    # planned path (strip-centre) + look-ahead
+    yp = np.linspace(SELF_R, ROI_Y[1], 40)
+    ax.plot(lateral + yp * np.tan(th), yp, color="#00e5ff", lw=3, zorder=8)
+    ax.plot(lateral + yp * np.tan(th), yp, color="white", lw=1, alpha=0.6, zorder=9)
+    lx = lateral + LOOKAHEAD * np.tan(th)
+    ax.scatter([lx], [LOOKAHEAD], s=180, marker="*", color="#ffd000",
+               edgecolors="k", lw=0.6, zorder=10)
+
+    # self-filter blind zone + ego robot + forward arrow
+    ax.add_patch(Circle((0, 0), SELF_R, fc="#11161f", ec="#222b38", ls=":", lw=1.2,
+                        alpha=0.6, zorder=2))
+    ax.add_patch(Rectangle((-BODY_HW, BODY_BACK), 2 * BODY_HW, BODY_FWD - BODY_BACK,
+                           fc="#e8e8e8", ec="white", alpha=0.9, zorder=11))
+    ax.annotate("", xy=(0, 1.7), xytext=(0, BODY_FWD),
+                arrowprops=dict(arrowstyle="-|>", color="#00e5ff", lw=2.4), zorder=11)
+
+    ax.set_xlim(-5, 5)
+    ax.set_ylim(-2.5, 9.2)
+    ax.set_aspect("equal")
+    ax.set_xlabel("lateral  x (m)   →  right")
+    ax.set_ylabel("forward  y (m)   →  travel")
+    ax.tick_params(labelsize=8)
+    for s in ax.spines.values():
+        s.set_color("#1c2430")
+    ax.grid(False)
+
+    cb = fig.colorbar(sc, ax=ax, fraction=0.04, pad=0.02)
+    cb.set_label("height above ground (m)", color="#cfd3da")
+    cb.ax.yaxis.set_tick_params(color="#9aa0aa")
+    cb.outline.set_edgecolor("#1c2430")
+
+    from matplotlib.lines import Line2D
+    from matplotlib.patches import Patch
+    handles = [
+        Line2D([0], [0], color="#00e5ff", lw=3, label="planned path"),
+        Line2D([0], [0], marker="*", color="#ffd000", lw=0, markersize=12,
+               markeredgecolor="k", label="look-ahead"),
+        Patch(facecolor="#2ecc71", alpha=0.4, label="safety zones"),
+        Line2D([0], [0], color="#00e5ff", lw=1.4, ls="--", label="detection ROI"),
+        Patch(facecolor="#e8e8e8", label="ego robot"),
+    ]
+    ax.legend(handles=handles, loc="upper right", fontsize=8.5, facecolor="#10151d",
+              edgecolor="#2a3340", labelcolor="#e8e8e8")
+    sup = title or ("LiDAR top-down sensor view — rings + detected path "
+                    "(soybean row-following)")
+    fig.suptitle(sup, fontsize=13, fontweight="bold", color="#ffffff", y=0.95)
+    fig.tight_layout(rect=(0, 0, 1, 0.95))
+
+    png = out_base + ".png"
+    fig.savefig(png, dpi=300, facecolor=BG, bbox_inches="tight")
+    print(f"wrote {png}  ({len(P)} points)")
+    return png
+
+
 def _box(ax, x0, x1, y0, y1, z0, z1, color, alpha, edge=None, elw=1.0):
     """Draw a translucent 3-D box (axis-aligned) on a 3-D axis."""
     from mpl_toolkits.mplot3d.art3d import Poly3DCollection
@@ -436,10 +526,12 @@ def main() -> None:
     ap.add_argument("--grade", type=float, default=1.0)
     ap.add_argument("--out", default="results/lidar_perception", help="output base path")
     ap.add_argument("--title", default=None)
-    ap.add_argument("--mode", choices=["annotated", "av3d"], default="annotated",
+    ap.add_argument("--mode", choices=["annotated", "av3d", "av_bev"], default="annotated",
                     help="'annotated' = 2-panel schematic bird's-eye+3D; "
                          "'av3d' = dense self-driving-style 3-D point cloud (ray-cast "
-                         "VLP-16 rings) with decision overlays on a dark scene.")
+                         "VLP-16 rings) with decision overlays on a dark scene; "
+                         "'av_bev' = top-down sensor scope (rings from above + range "
+                         "rings + detected path) on a dark scene.")
     args = ap.parse_args()
 
     lateral, heading, spacing = args.lateral, args.heading, args.spacing
@@ -456,7 +548,7 @@ def main() -> None:
     if args.scan:
         P = load_scan(args.scan)
         print(f"loaded real scan: {len(P)} points from {args.scan}")
-    elif args.mode == "av3d":
+    elif args.mode in ("av3d", "av_bev"):
         P = generate_lidar_raycast(lateral=lateral, heading_deg=heading,
                                    spacing=spacing, grade_deg=args.grade)
     else:
@@ -466,6 +558,8 @@ def main() -> None:
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     if args.mode == "av3d":
         render_av3d(P, lateral, heading, spacing, args.out, title=args.title)
+    elif args.mode == "av_bev":
+        render_av_bev(P, lateral, heading, spacing, args.out, title=args.title)
     else:
         render(P, lateral, heading, spacing, args.out, title=args.title)
 
