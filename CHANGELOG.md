@@ -21,6 +21,19 @@ Work toward the row-to-row turn milestone (built on the v0.1.0 baseline).
   (0.15 m default). Unit-tested in `tests/test_slam.py` (voxel dedup, pose
   registration, PLY round-trip, engine 3-D build).
 
+### Added — perception figure for poster/paper (`scripts/viz_perception.py`)
+- Renders a professional two-panel figure of what the LiDAR perception sees in
+  the robot frame (yaw+tilt corrected): (a) an annotated bird's-eye view —
+  height-coloured points with the forward-travel direction, the two soybean rows
+  flanking the residue strip, the detected strip-centre (tracking target) +
+  heading, the pure-pursuit look-ahead, the cross-track offset, the detection
+  ROI, the self-filter blind zone, the robot footprint, and the three safety
+  zones; and (b) a 3-D view with the crop rows standing above the ground plane.
+  Renders a REAL captured scan (`--scan file.npy/.ply`), or a geometry-faithful
+  scene seeded from a run's telemetry (`--telemetry … --index N`) / the field
+  calibration.  Outputs 300-dpi PNG + vector SVG.  Desktop/figure tool
+  (matplotlib); not on the brain's control path, never imported by the nav stack.
+
 ### Added — `--record`: complete reproducible experiment folder per run
 - One flag captures everything needed to analyse and publish from a field run
   into `runs/run_<ts>/`: `manifest.json` (git commit + dirty flag + full CLI
