@@ -207,6 +207,7 @@ a single self-contained, reproducible folder `runs/run_<ts>/`:
 | `coverage.png`, `trajectory.csv`, `map.png/.npz` | SLAM coverage + drift-corrected path |
 | `perception_scan.npy` + `perception_state.json` | a REAL captured corrected scan (densest high-confidence FOLLOW frame) + its detected geometry |
 | `figure_perception_3d.png`, `_bev.png`, `_annotated.png/.svg` | the three perception figures rendered from that real scan (self-driving-style 3-D, top-down sensor scope, annotated) |
+| `scans/scan_NNNNN.npy` + `scans/index.csv` | the **raw corrected point-cloud time series** (default every 10th scan ≈ 1 Hz) so ANY moment can be re-rendered into figures/animations offline; index row = file, t, state, lateral, heading_deg, conf, n. Tune with `--save-scans` (bare = every scan, `N` = every Nth, `0` = off) |
 
 `--record` turns on `--telemetry` + `--slam` automatically and writes the
 manifest at start (so a crashed run is still identified) and the summary at
@@ -214,7 +215,12 @@ exit.  It also snapshots a **real corrected LiDAR scan** (the densest
 high-confidence FOLLOW frame) and renders the **three perception figures** from
 it on exit (`scripts/viz_perception.py`); the raw `perception_scan.npy` is
 always saved, and if matplotlib is not installed on the brain the figures are
-skipped with a one-line command to render them offline.  Metrics are computed by `navigation/run_metrics.py` (numpy-only, runs on
+skipped with a one-line command to render them offline.  **All raw data is
+kept regardless of matplotlib**: `telemetry.jsonl` is written continuously
+(one line per scan, survives a crash), and the `scans/` time series
+(`navigation/scan_recorder.py`, a background daemon thread so it never slows
+driving) lets you render every figure later, offline, from any moment of the
+run.  Metrics are computed by `navigation/run_metrics.py` (numpy-only, runs on
 the brain): FOLLOW cross-track RMSE/MAE/p95/max (cm), heading RMSE/MAE/max (°),
 control effort + jerk, forward-speed mean/std, state-time budget, event counts
 (obstacle stops, FOLLOW losses, dropout scans), terrain grade/drop, per-row

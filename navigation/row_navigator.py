@@ -194,6 +194,10 @@ class RowNavigator:
         # detected geometry) so the run can render real-data perception figures.
         self.capture_perception = False
         self._cap_best = None
+        # Optional raw-scan streamer (for --record): saves the corrected
+        # point-cloud time series to disk in a background thread so any moment
+        # can be re-rendered offline.  None = disabled (zero overhead).
+        self.scan_recorder = None
 
         self.acquire_conf = acquire_conf
         self.acquire_frames = acquire_frames
@@ -408,6 +412,14 @@ class RowNavigator:
             est = self.detector.update(pts, aux_xy=aux_xy)
             if self.capture_perception:
                 self._capture_perception(pts, est)
+            if self.scan_recorder is not None:
+                self.scan_recorder.submit(pts, {
+                    "state": self.state,
+                    "lateral": float(est.lateral_offset),
+                    "heading_deg": math.degrees(est.heading_error),
+                    "conf": float(est.confidence),
+                    "n": int(est.n_points),
+                })
 
             # --- 3-D camera depth cloud: fill LiDAR blind zone ---
             # Projects depth images to 3D, merges with LiDAR cloud so that

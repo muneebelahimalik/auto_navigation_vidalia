@@ -501,6 +501,9 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
     nav_ref.append(navigator)
     if args.record is not None:
         navigator.capture_perception = True   # snapshot a real scan for figures
+        if getattr(args, "_scan_every", 0):
+            from navigation.scan_recorder import ScanRecorder
+            navigator.scan_recorder = ScanRecorder(args._scan_dir, every=args._scan_every)
 
     print()
     print("=" * 68)
@@ -731,6 +734,13 @@ def main() -> None:
                              "SLAM coverage.png/trajectory.csv/map.png. Bundles --telemetry + "
                              "--slam into runs/run_<ts>/ (or DIR). Analyse with "
                              "scripts/analyze_run.py. Use this on EVERY run you want to analyse.")
+    parser.add_argument("--save-scans", nargs="?", type=int, const=1, default=None,
+                        metavar="EVERY",
+                        help="With --record: also stream the raw corrected LiDAR scans to "
+                             "runs/<ts>/scans/ (scan_NNNNN.npy + index.csv) so ANY moment can "
+                             "be re-rendered offline into figures/animations later. Bare = every "
+                             "scan (full fidelity); N = every Nth scan; 0 = off. "
+                             "Default with --record: every 10th (~1 Hz).")
     parser.add_argument("--map-3d", action="store_true",
                         help="With --slam, also accumulate a 3-D point-cloud map "
                              "(map3d.ply + map3d.npz) registered with the SLAM pose.")
@@ -980,8 +990,15 @@ def main() -> None:
         args.telemetry = run_record.telemetry_path       # telemetry → run dir
         args.slam = True                                 # coverage + trajectory
         args.save_dir = str(run_dir)                     # map → run dir
+        # Raw-scan streaming: default every 10th (~1 Hz); --save-scans overrides.
+        scan_every = 10 if args.save_scans is None else int(args.save_scans)
+        args._scan_dir = str(run_dir / "scans") if scan_every > 0 else ""
+        args._scan_every = scan_every
         print(f" [row_follow] RECORDING experiment → {run_dir}/  "
               f"(manifest written; summary on exit)")
+        if scan_every > 0:
+            rate = "every scan" if scan_every == 1 else f"every {scan_every}th scan"
+            print(f" [row_follow] raw scans → {run_dir}/scans/  ({rate})")
 
     # Suppress gRPC PollerCompletionQueue noise after event-loop close (Python 3.8 + grpcio).
     import logging
@@ -1006,6 +1023,12 @@ def main() -> None:
             if navigator.telemetry.enabled or navigator.telemetry.count:
                 print(f"[row_follow] telemetry: {navigator.telemetry.count} scans logged "
                       f"-> {navigator.telemetry.path}")
+
+        if navigator.scan_recorder is not None:
+            rec = navigator.scan_recorder
+            rec.stop()
+            extra = f" ({rec.dropped} dropped)" if rec.dropped else ""
+            print(f"[row_follow] raw scans: {rec.saved} saved -> {rec.dir}/{extra}")
 
         cov_stats = None
         if args.slam and navigator.slam is not None:

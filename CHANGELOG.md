@@ -8,6 +8,22 @@ versions are git tags on `main`.
 
 Work toward the row-to-row turn milestone (built on the v0.1.0 baseline).
 
+### Added — raw-scan streaming for `--record` (`--save-scans`)
+- A `--record` run now keeps the **raw corrected point-cloud time series**, not
+  just one representative scan.  `navigation/scan_recorder.py` (`ScanRecorder`)
+  streams each corrected robot-frame scan to `runs/<ts>/scans/scan_NNNNN.npy`
+  plus an `index.csv` (file, t, state, lateral, heading_deg, conf, n), so ANY
+  moment of the run can be re-rendered offline into perception figures or
+  animations later — including on a machine that has matplotlib when the brain
+  does not.  The save runs in a **background daemon thread** fed by an O(1),
+  non-blocking `submit()` from the control loop (bounded queue, drops rather
+  than blocks if the disk can't keep up), so recording can never slow or
+  destabilise driving.  On by default with `--record` at every 10th scan
+  (≈ 1 Hz); `--save-scans` tunes it (bare = every scan / full fidelity, `N` =
+  every Nth, `0` = off).  Regression-locked in `tests/test_scan_recorder.py`.
+  Combined with the continuously-written `telemetry.jsonl`, all raw data is now
+  preserved regardless of whether the figures render at exit.
+
 ### Fixed — row-hopping during corrections (all controllers; worst under RL)
 - In a periodic soybean field the dual-row midpoint is ambiguous: "on my strip,
   offset +half" and "on the next strip, offset −half" produce two peak pairs that
