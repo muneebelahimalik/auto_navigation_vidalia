@@ -316,15 +316,23 @@ class RowDetector:
         # impossible: if the robot were really angled that far it would pile up
         # lateral offset within a scan or two.  So that signature is a PCA
         # artifact — terrain grade tilting the fit, or a sparse VLP-16 scan that
-        # dropped azimuth sectors.  A heading-dominant pursuit that chases it
-        # runs away across the rows (field log: heading ramped 0 → −57° on a +8°
-        # grade while lateral stayed ±0.05 m, the robot turned ~45° and got stuck
-        # following a diagonal).  When the robot is demonstrably still centred
-        # (|lateral| < heading_consistency_lat) the reported heading magnitude is
-        # capped at heading_consistency_cap — plenty for real straight-row
-        # corrections, but it removes the artifact the controller was amplifying.
-        self.heading_consistency_lat = 0.22      # m; "still centred" gate
-        self.heading_consistency_cap = math.radians(22.0)  # rad; max heading when centred
+        # dropped azimuth sectors.  A heading-dominant controller that chases it
+        # weaves or runs away across the rows (field logs: heading ramped 0 → −57°
+        # on a +8° grade with lateral ±0.05 m; and a capped-but-still-large 20°
+        # heading drove a sustained left turn on a centred straight row).
+        #
+        # The cap is PROPORTIONAL to how far off-strip the robot is: a centred
+        # robot (lateral ≈ 0) on a straight row has ~0 real heading error, so the
+        # cap is small there and only opens up as the lateral offset grows (where
+        # a real heading IS needed to steer back).  This also damps overshoot:
+        # as a correction brings the robot back to centre the heading is pulled
+        # to ~0, instead of a residual heading carrying it past.
+        #   cap = cap_centred + (cap_gate − cap_centred)·min(1, |lat|/lat_gate)
+        # Beyond lat_gate the heading is left UNCLAMPED so a genuine angled
+        # approach / post-turn re-acquire keeps full steering authority.
+        self.heading_consistency_lat = 0.22          # m; lateral at which full heading is allowed
+        self.heading_cap_centred = math.radians(7.0)   # rad; cap when perfectly centred
+        self.heading_cap_gate = math.radians(22.0)     # rad; cap at the lateral gate
         # Continuity ("strip-lock") prior for dual-row pairing: bias the midpoint
         # toward the strip currently tracked so a correction that overshoots does
         # not alias onto the adjacent strip and hop rows.  0 disables it.
@@ -685,12 +693,16 @@ class RowDetector:
 
         sm_hdg = a * hdg_fresh + (1 - a) * prev.heading_error
         sm_lat = a * lat_fresh + (1 - a) * prev.lateral_offset
-        # Heading–lateral consistency clamp (see __init__): when the robot is
-        # still centred on the strip, a large heading is a terrain/PCA artifact,
-        # not a real orientation — cap it so a heading-dominant controller cannot
-        # be driven into a cross-row runaway.
-        if abs(sm_lat) < self.heading_consistency_lat and abs(sm_hdg) > self.heading_consistency_cap:
-            sm_hdg = math.copysign(self.heading_consistency_cap, sm_hdg)
+        # Heading–lateral consistency clamp (see __init__): the reported heading
+        # magnitude is capped by a bound that scales with the lateral offset, so
+        # a centred robot on a straight row cannot report (and the controller
+        # cannot chase) a large heading that is really a terrain/PCA artifact.
+        if abs(sm_lat) < self.heading_consistency_lat:
+            frac = abs(sm_lat) / self.heading_consistency_lat
+            cap = self.heading_cap_centred + (
+                self.heading_cap_gate - self.heading_cap_centred) * frac
+            if abs(sm_hdg) > cap:
+                sm_hdg = math.copysign(cap, sm_hdg)
         self._est = RowEstimate(
             heading_error=sm_hdg,
             lateral_offset=sm_lat,

@@ -20,8 +20,18 @@ Work toward the row-to-row turn milestone (built on the v0.1.0 baseline).
   (`|lateral| < heading_consistency_lat`, 0.22 m) the reported heading magnitude
   is capped (`heading_consistency_cap`, 22°) — ample for real straight-row
   corrections, but it removes the artifact the controller was amplifying, so the
-  runaway can't start.  Regression-locked in `test_large_heading_small_lateral_is_clamped`
-  / `_large_lateral_is_not_clamped` / `_normal_small_heading_unchanged`.
+  runaway can't start.  **The cap is proportional to the lateral offset**
+  (`heading_cap_centred` 7° at lateral 0 → `heading_cap_gate` 22° at
+  `heading_consistency_lat` 0.22 m, unclamped beyond): a centred robot on a
+  straight row has ~0 real heading error, so a big reading there is noise and is
+  pulled hard toward 0; a genuinely off-strip robot keeps the authority it needs
+  to steer back.  A second field run (RL) showed the earlier FLAT 22° cap still
+  left a capped-but-large ~20° heading driving a sustained left turn on a centred
+  straight row — the proportional cap halves the heading exactly in that weave
+  region (24 of 497 scans, artifact-only) while leaving normal following
+  untouched.  Regression-locked in `test_large_heading_when_centred_is_clamped_hard`
+  / `_cap_scales_with_lateral_offset` / `_large_lateral_is_not_clamped` /
+  `_normal_small_heading_unchanged`.
 - The **early** perception render now decimates the cloud used for the figures
   (the full cloud is still saved to `perception_scan.npy`), so the background
   render can't hog Jetson CPU and stutter the control loop; the exit-time render

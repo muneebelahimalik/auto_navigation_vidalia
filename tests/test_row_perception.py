@@ -560,22 +560,31 @@ def _smoothed(prev_hdg, prev_lat, fresh_hdg, fresh_lat, *, n=400, conf=0.8):
     return det._smooth(fresh), det
 
 
-def test_large_heading_small_lateral_is_clamped():
+def test_large_heading_when_centred_is_clamped_hard():
+    # perfectly centred (lateral ~0) but heading huge -> clamped near the
+    # centred cap (~7 deg), NOT left at 40+ deg to drive a turn on a straight row
     est, det = _smoothed(math.radians(-40), 0.0, math.radians(-51), 0.0)
-    # centred (lateral ~0) but heading huge -> clamped to the cap magnitude
-    assert abs(est.lateral_offset) < det.heading_consistency_lat
-    assert abs(est.heading_error) <= det.heading_consistency_cap + 1e-9
+    assert abs(est.lateral_offset) < 0.02
+    assert abs(est.heading_error) <= det.heading_cap_centred + 1e-9
     assert est.heading_error < 0                      # sign preserved
+
+
+def test_cap_scales_with_lateral_offset():
+    # more off-strip -> a larger heading is allowed (needed to steer back)
+    centred, det = _smoothed(math.radians(-40), 0.0, math.radians(-40), 0.0)
+    partway, _ = _smoothed(math.radians(-40), 0.15, math.radians(-40), 0.15)
+    assert abs(centred.heading_error) < abs(partway.heading_error)
+    assert abs(centred.heading_error) <= det.heading_cap_centred + 1e-9
+    assert abs(partway.heading_error) <= det.heading_cap_gate + 1e-9
 
 
 def test_large_heading_large_lateral_is_not_clamped():
     # genuinely off the strip AND angled -> real, must NOT be clamped
     est, det = _smoothed(math.radians(-40), -0.5, math.radians(-45), -0.5)
-    assert abs(est.heading_error) > det.heading_consistency_cap
+    assert abs(est.heading_error) > det.heading_cap_gate
 
 
 def test_normal_small_heading_unchanged_by_clamp():
     est, det = _smoothed(math.radians(3), 0.02, math.radians(4), 0.03)
-    # well inside the cap -> passes through as the plain EMA blend
-    assert abs(est.heading_error) < det.heading_consistency_cap
+    # a few degrees is below even the centred cap -> plain EMA blend, untouched
     assert math.radians(2) < abs(est.heading_error) < math.radians(5)
