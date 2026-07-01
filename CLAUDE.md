@@ -904,6 +904,8 @@ Re-run the sweep if the mount is disturbed.
 | `--cam-pitch-deg DEG` | **15.0** | Downward pitch of camera mount (degrees). Matches VLP-16 nose-down tilt. |
 | `--ros2-bridge` | off | Write scan + nav status to `/dev/shm/` at each scan for the Docker ROS 2 bridge |
 | `--slam` | off | Build a field map in a background thread while driving (mapping only; no effect on control). Saved on exit |
+| `--no-slam` | off | Disable SLAM even under `--record` (skips map / coverage / trajectory). The rest of the record bundle — telemetry, metrics, perception figures, raw scans — is unaffected |
+| `--save-scans [EVERY]` | on w/ `--record` (10) | With `--record`, stream the raw corrected LiDAR scans to `runs/<ts>/scans/` (bare = every scan, `N` = every Nth, `0` = off) for offline figure/animation rendering |
 | `--map-3d` / `--voxel-3d M` | off / 0.15 | With `--slam`, also build the 3-D point cloud (`map3d.ply`) |
 | `--telemetry [PATH]` | off | Log one JSON line per scan (state, conf, crop points, lateral/heading error, row-end conf, grade/drop, command, safety zones, headland turn, `sp`) → `logs/run_<ts>.jsonl`. Load with `pandas.read_json(path, lines=True)`. No effect on control |
 | `--record [DIR]` | off | **Record a COMPLETE reproducible experiment folder** (auto-named `runs/run_<controller>_<ts>/` — e.g. `run_rl_...`, `run_mpc_...`, `run_pursuit_...`): bundles `--telemetry` + `--slam` and writes `manifest.json` (git commit + args + calibration), computes `summary.json` + `metrics_flat.csv` + `per_row.csv` + `turns.csv` on exit, plus `coverage.png`/`trajectory.csv`/`map.png`. **Use on every run you want to publish from.** Analyse with `scripts/analyze_run.py` |

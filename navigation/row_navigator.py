@@ -663,7 +663,15 @@ class RowNavigator:
                 print(f"\n[navigator] heading pre-align timeout "
                       f"(hdg={math.degrees(est.heading_error):+.1f}°) — entering FOLLOW")
             self._enter(_S.FOLLOW)
-            self._row_dist = 0.0
+            # Do NOT reset _row_dist here: the only paths into ACQUIRE are
+            # mid-row recoveries (FOLLOW lost lock, or an obstacle cleared) on
+            # the SAME row — the robot has not moved back to the row start, so
+            # wiping the accumulated down-row distance would corrupt row-end and
+            # headland timing.  (A genuinely NEW row after a U-turn is reached
+            # via HEADLAND/APPROACH -> FOLLOW, which reset _row_dist explicitly;
+            # at boot _row_dist is already 0.)  This previously reset on every
+            # transient obstacle pause, so a field with grown crop tripping the
+            # forward zone never accumulated row distance.
             self._row_end_count = 0
         return 0.0, 0.0
 

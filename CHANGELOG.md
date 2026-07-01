@@ -8,6 +8,34 @@ versions are git tags on `main`.
 
 Work toward the row-to-row turn milestone (built on the v0.1.0 baseline).
 
+### Fixed — row distance wiped on every obstacle pause (grown-crop field)
+- Field telemetry (grown soybean) showed the forward safety zone tripping on
+  the now-taller crop ~1.7 m ahead ~20 times in one row, each time cycling
+  FOLLOW → OBSTACLE_WAIT → ACQUIRE → FOLLOW — and the ACQUIRE → FOLLOW
+  transition reset `_row_dist` to 0 every time, so the robot never accumulated
+  down-row distance (`rows_done` stuck at 0 for 10 min) and row-end / headland
+  timing became unreliable.  The reset was wrong: the ONLY paths into ACQUIRE
+  are mid-row recoveries (a lost lock, or an obstacle clearing) on the *same*
+  row — the robot has not returned to the row start.  A genuinely new row after
+  a U-turn is reached via HEADLAND/APPROACH → FOLLOW, which reset `_row_dist`
+  explicitly; at boot it is already 0.  Removed the erroneous reset so row
+  progress survives transient obstacle pauses (including the operator taking
+  manual control to drive past an obstacle and handing back).
+
+### Fixed — headland turn could hang on grown crop ahead
+- Same root cause: during the U-turn arc the robot sweeps to face the next row
+  block, and grown crop directly ahead tripped the forward obstacle zone, which
+  pauses the turn in place — in the field log this wedged the turn for 24 s
+  until the crop happened to fall out of the zone.  The fix is operational
+  (raise `--obstacle-height` above the grown crop, e.g. 0.70 m, so crop is never
+  read as an obstacle in any state) plus the row-distance fix above; documented
+  in the grown-crop guidance.
+
+### Added — `--no-slam` to skip SLAM under `--record`
+- `--record` still bundles telemetry + metrics + perception figures + raw
+  scans, but `--no-slam` now suppresses the SLAM map / coverage / trajectory
+  outputs for runs where field coverage assurance isn't wanted.
+
 ### Added — raw-scan streaming for `--record` (`--save-scans`)
 - A `--record` run now keeps the **raw corrected point-cloud time series**, not
   just one representative scan.  `navigation/scan_recorder.py` (`ScanRecorder`)

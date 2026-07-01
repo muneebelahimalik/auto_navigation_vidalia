@@ -720,6 +720,10 @@ def main() -> None:
                         help="Build a field map in a background thread while driving "
                              "(mapping only — never commands the wheels; no effect on "
                              "control). Saved on exit (see --save-dir).")
+    parser.add_argument("--no-slam", action="store_true",
+                        help="Disable SLAM even under --record (skip the map / coverage / "
+                             "trajectory outputs). Everything else in the record bundle "
+                             "(telemetry, metrics, perception figures, raw scans) is unaffected.")
     parser.add_argument("--telemetry", nargs="?", const="auto", default=None, metavar="PATH",
                         help="Log one JSON line per scan (state, conf, crop points, lateral/"
                              "heading error, row-end conf, grade/drop, command, safety zones, "
@@ -991,14 +995,14 @@ def main() -> None:
         }
         run_record = RunRecord(run_dir, args=vars(args), calibration=calibration)
         args.telemetry = run_record.telemetry_path       # telemetry → run dir
-        args.slam = True                                 # coverage + trajectory
+        args.slam = not args.no_slam                     # coverage + trajectory (unless --no-slam)
         args.save_dir = str(run_dir)                     # map → run dir
         # Raw-scan streaming: default every 10th (~1 Hz); --save-scans overrides.
         scan_every = 10 if args.save_scans is None else int(args.save_scans)
         args._scan_dir = str(run_dir / "scans") if scan_every > 0 else ""
         args._scan_every = scan_every
         print(f" [row_follow] RECORDING experiment → {run_dir}/  "
-              f"(manifest written; summary on exit)")
+              f"(manifest written; summary on exit){'  [SLAM off]' if args.no_slam else ''}")
         if scan_every > 0:
             rate = "every scan" if scan_every == 1 else f"every {scan_every}th scan"
             print(f" [row_follow] raw scans → {run_dir}/scans/  ({rate})")
