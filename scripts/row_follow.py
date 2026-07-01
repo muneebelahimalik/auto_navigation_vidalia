@@ -978,7 +978,10 @@ def main() -> None:
     if args.record is not None:
         from navigation.run_record import RunRecord
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        run_dir = Path(args.record) if args.record != "auto" else Path("runs") / f"run_{ts}"
+        # Auto-named run dir includes the controller so the folder is
+        # self-labelling (runs/run_rl_<ts>/, run_mpc_<ts>/, run_pursuit_<ts>/).
+        run_dir = (Path(args.record) if args.record != "auto"
+                   else Path("runs") / f"run_{args.controller}_{ts}")
         calibration = {
             "lidar_yaw_deg": args.lidar_yaw, "lidar_tilt_deg": args.lidar_tilt,
             "self_radius_m": args.self_radius, "roi_x_m": args.roi_x,

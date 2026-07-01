@@ -194,7 +194,8 @@ with the `--telemetry` log by scan order.
 ### Experiment records for publishing — `--record`
 
 For any run you want to **analyse / publish from**, add `--record`.  It bundles
-a single self-contained, reproducible folder `runs/run_<ts>/`:
+a single self-contained, reproducible folder `runs/run_<controller>_<ts>/`
+(self-labelling — e.g. `run_rl_...`, `run_mpc_...`, `run_pursuit_...`):
 
 | File | Contents |
 |---|---|
@@ -905,7 +906,7 @@ Re-run the sweep if the mount is disturbed.
 | `--slam` | off | Build a field map in a background thread while driving (mapping only; no effect on control). Saved on exit |
 | `--map-3d` / `--voxel-3d M` | off / 0.15 | With `--slam`, also build the 3-D point cloud (`map3d.ply`) |
 | `--telemetry [PATH]` | off | Log one JSON line per scan (state, conf, crop points, lateral/heading error, row-end conf, grade/drop, command, safety zones, headland turn, `sp`) → `logs/run_<ts>.jsonl`. Load with `pandas.read_json(path, lines=True)`. No effect on control |
-| `--record [DIR]` | off | **Record a COMPLETE reproducible experiment folder** (`runs/run_<ts>/`): bundles `--telemetry` + `--slam` and writes `manifest.json` (git commit + args + calibration), computes `summary.json` + `metrics_flat.csv` + `per_row.csv` + `turns.csv` on exit, plus `coverage.png`/`trajectory.csv`/`map.png`. **Use on every run you want to publish from.** Analyse with `scripts/analyze_run.py` |
+| `--record [DIR]` | off | **Record a COMPLETE reproducible experiment folder** (auto-named `runs/run_<controller>_<ts>/` — e.g. `run_rl_...`, `run_mpc_...`, `run_pursuit_...`): bundles `--telemetry` + `--slam` and writes `manifest.json` (git commit + args + calibration), computes `summary.json` + `metrics_flat.csv` + `per_row.csv` + `turns.csv` on exit, plus `coverage.png`/`trajectory.csv`/`map.png`. **Use on every run you want to publish from.** Analyse with `scripts/analyze_run.py` |
 | `--debug` | off | Stream LiDAR height histogram + save bird's-eye PNG |
 | `--save-dir DIR` | — | Save raw point-cloud numpy arrays to DIR |
 | `--no-validate` | off | Skip LiDAR startup health check |
