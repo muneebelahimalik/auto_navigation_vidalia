@@ -47,3 +47,28 @@ def test_render_all_writes_three_figures(tmp_path):
     assert "figure_perception_annotated.png" in names
     for f in files:
         assert Path(f).exists() and Path(f).stat().st_size > 0
+
+
+def test_render_all_from_background_thread(tmp_path):
+    """The early one-shot perception render fires from a daemon thread while the
+    control loop runs; the Agg renderers must be safe to call off the main
+    thread (no GUI backend, own figures)."""
+    pytest.importorskip("matplotlib")
+    import threading
+    from scripts.viz_perception import render_all
+    P = generate_lidar_raycast(lateral=-0.05, heading_deg=2.0, spacing=0.76, seed=3)
+    result = {}
+
+    def _work():
+        try:
+            result["files"] = render_all(P, -0.05, 2.0, 0.76, tmp_path)
+        except Exception as exc:                      # pragma: no cover
+            result["error"] = repr(exc)
+
+    t = threading.Thread(target=_work, daemon=True)
+    t.start()
+    t.join(timeout=60)
+    assert not t.is_alive(), "background render hung"
+    assert "error" not in result, result.get("error")
+    assert len(result["files"]) >= 3
+    assert (tmp_path / "figure_perception_3d.png").exists()

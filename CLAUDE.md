@@ -212,11 +212,16 @@ a single self-contained, reproducible folder `runs/run_<controller>_<ts>/`
 
 `--record` turns on `--telemetry` + `--slam` automatically and writes the
 manifest at start (so a crashed run is still identified) and the summary at
-exit.  It also snapshots a **real corrected LiDAR scan** (the densest
-high-confidence FOLLOW frame) and renders the **three perception figures** from
-it on exit (`scripts/viz_perception.py`); the raw `perception_scan.npy` is
-always saved, and if matplotlib is not installed on the brain the figures are
-skipped with a one-line command to render them offline.  **All raw data is
+exit.  It snapshots a **real corrected LiDAR scan** (the densest high-confidence
+FOLLOW frame) and renders the **three perception figures** from it **a few scans
+into the run** — once a confident FOLLOW lock has settled (`perception_capture_after`,
+default 5 qualifying scans), a one-shot **background thread** (`scripts/viz_perception.py`,
+never blocks driving) writes `perception_scan.npy` + `perception_state.json` +
+the figures seconds after start, so a crash mid-run still leaves them; an
+exit-time render runs only as a fallback if the run never reached a confident
+lock.  The raw `perception_scan.npy` is always saved, and if matplotlib is not
+installed on the brain the figures are skipped with a one-line command to render
+them offline.  **All raw data is
 kept regardless of matplotlib**: `telemetry.jsonl` is written continuously
 (one line per scan, survives a crash), and the `scans/` time series
 (`navigation/scan_recorder.py`, a background daemon thread so it never slows

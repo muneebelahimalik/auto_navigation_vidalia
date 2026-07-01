@@ -501,6 +501,12 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
     nav_ref.append(navigator)
     if args.record is not None:
         navigator.capture_perception = True   # snapshot a real scan for figures
+        # Early one-shot render: fire a few scans after a confident FOLLOW lock
+        # (off the control loop) so the scan + figures land seconds into the run,
+        # not at exit.  run_dir is args.save_dir (set in the --record block).
+        _run_dir = args.save_dir
+        navigator.perception_ready_cb = (
+            lambda cap: _render_perception(_run_dir, cap, when="early"))
         if getattr(args, "_scan_every", 0):
             from navigation.scan_recorder import ScanRecorder
             navigator.scan_recorder = ScanRecorder(args._scan_dir, every=args._scan_every)
@@ -609,17 +615,14 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
 # Entry point
 # ---------------------------------------------------------------------------
 
-def _save_perception_figures(run_record, navigator) -> None:
-    """On a --record run: save the captured real scan and render the three
-    perception figures (3-D, top-down, annotated) into the run folder.  The raw
-    scan is always saved; figure rendering needs matplotlib and is skipped with
-    instructions if it is not installed.  Never raises into shutdown."""
+def _render_perception(run_dir, cap, *, when: str) -> None:
+    """Save the captured real scan + render the three perception figures (3-D,
+    top-down, annotated) into the run folder.  The raw scan is always saved;
+    figure rendering needs matplotlib and is skipped with instructions if it is
+    not installed.  Never raises.  ``when`` = 'early' (fired a few scans into the
+    run, off the control loop) or 'exit' (fallback)."""
     import numpy as np
-    cap = getattr(navigator, "perception_capture", None)
-    if not cap:
-        print("[row_follow] perception figures: no confident FOLLOW scan captured — skipped.")
-        return
-    d = run_record.dir
+    d = Path(run_dir)
     try:
         np.save(d / "perception_scan.npy", cap["pts"])
         (d / "perception_state.json").write_text(json.dumps({
@@ -633,17 +636,30 @@ def _save_perception_figures(run_record, navigator) -> None:
         from scripts.viz_perception import render_all
         files = render_all(cap["pts"], cap["lateral"], cap["heading_deg"],
                            cap["spacing"], d)
-        print(f"[row_follow] perception figures ({len(files)}): "
+        print(f"\n[row_follow] perception figures ({len(files)}, {when}): "
               f"{d / 'figure_perception_3d.png'}, _bev.png, _annotated.png")
     except ImportError:
-        print(f"[row_follow] perception scan saved → {d / 'perception_scan.npy'}.  "
+        print(f"\n[row_follow] perception scan saved ({when}) → {d / 'perception_scan.npy'}.  "
               f"matplotlib not installed here; render the 3 figures on a laptop:\n"
               f"    python3 scripts/viz_perception.py --scan {d / 'perception_scan.npy'} "
               f"--telemetry {d / 'telemetry.jsonl'} --mode av3d --out {d / 'figure_perception_3d'}\n"
               f"    (repeat with --mode av_bev and --mode annotated)")
     except Exception as exc:
-        print(f"[row_follow] perception figure rendering failed: {exc} "
+        print(f"\n[row_follow] perception figure rendering failed: {exc} "
               f"(raw scan saved to {d / 'perception_scan.npy'})")
+
+
+def _save_perception_figures(run_record, navigator) -> None:
+    """Exit-time fallback: render the perception figures only if the early
+    one-shot trigger never fired (e.g. the run never reached a confident FOLLOW
+    lock)."""
+    if getattr(navigator, "perception_fired", False):
+        return  # already saved a few seconds into the run
+    cap = getattr(navigator, "perception_capture", None)
+    if not cap:
+        print("[row_follow] perception figures: no confident FOLLOW scan captured — skipped.")
+        return
+    _render_perception(run_record.dir, cap, when="exit")
 
 
 def main() -> None:

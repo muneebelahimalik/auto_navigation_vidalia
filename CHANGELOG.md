@@ -8,6 +8,17 @@ versions are git tags on `main`.
 
 Work toward the row-to-row turn milestone (built on the v0.1.0 baseline).
 
+### Changed — perception figures now render early, not at exit
+- The three perception figures (and `perception_scan.npy` / `perception_state.json`)
+  are now written **a few scans into the run** — once a confident FOLLOW lock has
+  settled (`perception_capture_after`, default 5 qualifying scans) a one-shot
+  **background daemon thread** saves the scan and renders the figures off the
+  control loop (matplotlib never blocks driving).  Previously this only happened
+  at exit, so a crash mid-run lost the figures and you had to wait for the whole
+  run to finish.  An exit-time render remains as a fallback only if the run never
+  reached a confident lock.  Regression-locked by a background-thread render test
+  in `tests/test_viz_perception.py`.
+
 ### Fixed — row distance wiped on every obstacle pause (grown-crop field)
 - Field telemetry (grown soybean) showed the forward safety zone tripping on
   the now-taller crop ~1.7 m ahead ~20 times in one row, each time cycling

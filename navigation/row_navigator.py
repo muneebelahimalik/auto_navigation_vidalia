@@ -27,6 +27,7 @@ import json
 import math
 import os
 import struct
+import threading
 import time
 from typing import Optional
 
@@ -194,6 +195,15 @@ class RowNavigator:
         # detected geometry) so the run can render real-data perception figures.
         self.capture_perception = False
         self._cap_best = None
+        # Early one-shot perception-figure trigger: once a confident FOLLOW lock
+        # has SETTLED (a few scans in), fire this callback ONCE with the capture
+        # dict so the scan + figures are saved a few seconds into the run — not
+        # held until exit (a crash mid-run then still leaves the figures).  The
+        # callback runs in a background thread so matplotlib never blocks driving.
+        self.perception_ready_cb = None
+        self.perception_capture_after = 5   # qualifying FOLLOW scans before firing
+        self._cap_qualify_count = 0
+        self._perception_fired = False
         # Optional raw-scan streamer (for --record): saves the corrected
         # point-cloud time series to disk in a background thread so any moment
         # can be re-rendered offline.  None = disabled (zero overhead).
@@ -1060,7 +1070,8 @@ class RowNavigator:
             pass  # /dev/shm not available or full — bridge is optional
 
     def _capture_perception(self, pts, est) -> None:
-        """Keep the densest high-confidence scan for the --record figures.
+        """Keep the densest high-confidence scan for the --record figures, and
+        fire the early one-shot render callback once the lock has settled.
 
         Stores the corrected robot-frame cloud + the detected strip-centre
         geometry; never raises into the control loop."""
@@ -1071,18 +1082,42 @@ class RowNavigator:
             n = int(getattr(est, "n_points", len(pts)))
             if conf < 0.70:
                 return
-            if self._cap_best is not None and n <= self._cap_best["n"]:
-                return
-            self._cap_best = {
-                "pts": np.asarray(pts, dtype=np.float32).copy(),
-                "lateral": float(est.lateral_offset),
-                "heading_deg": float(math.degrees(est.heading_error)),
-                "spacing": float(getattr(self.detector, "spacing_estimate",
-                                         getattr(self.detector, "row_spacing", 0.76))),
-                "confidence": conf, "n": n,
-            }
+            # Track the densest confident scan (used for the exit fallback and
+            # as the payload the moment the early trigger fires).
+            if self._cap_best is None or n > self._cap_best["n"]:
+                self._cap_best = {
+                    "pts": np.asarray(pts, dtype=np.float32).copy(),
+                    "lateral": float(est.lateral_offset),
+                    "heading_deg": float(math.degrees(est.heading_error)),
+                    "spacing": float(getattr(self.detector, "spacing_estimate",
+                                             getattr(self.detector, "row_spacing", 0.76))),
+                    "confidence": conf, "n": n,
+                }
+            # Early one-shot fire: after a few confident FOLLOW scans (settled
+            # lock), hand the best-so-far capture to the render callback in a
+            # background thread, ONCE per run.
+            self._cap_qualify_count += 1
+            if (not self._perception_fired
+                    and self.perception_ready_cb is not None
+                    and self._cap_qualify_count >= self.perception_capture_after):
+                self._perception_fired = True
+                cap = dict(self._cap_best)
+                threading.Thread(target=self._fire_perception_cb, args=(cap,),
+                                 daemon=True, name="perceptfig").start()
         except Exception:
             pass
+
+    def _fire_perception_cb(self, cap) -> None:
+        """Run the early perception-render callback off the control loop."""
+        try:
+            self.perception_ready_cb(cap)
+        except Exception:
+            pass
+
+    @property
+    def perception_fired(self) -> bool:
+        """True once the early perception render has been triggered."""
+        return self._perception_fired
 
     @property
     def perception_capture(self):
