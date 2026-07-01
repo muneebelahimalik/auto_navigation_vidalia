@@ -623,8 +623,9 @@ def _render_perception(run_dir, cap, *, when: str) -> None:
     run, off the control loop) or 'exit' (fallback)."""
     import numpy as np
     d = Path(run_dir)
+    pts_full = cap["pts"]
     try:
-        np.save(d / "perception_scan.npy", cap["pts"])
+        np.save(d / "perception_scan.npy", pts_full)   # ALWAYS the full cloud
         (d / "perception_state.json").write_text(json.dumps({
             "lateral": cap["lateral"], "heading_deg": cap["heading_deg"],
             "spacing": cap["spacing"], "confidence": cap["confidence"],
@@ -632,9 +633,18 @@ def _render_perception(run_dir, cap, *, when: str) -> None:
     except Exception as exc:
         print(f"[row_follow] could not save perception scan: {exc}")
         return
+    # The EARLY render runs in a background thread WHILE the robot drives — on the
+    # Jetson, rendering a dense 3-D scatter can hog CPU and stutter the control
+    # loop.  Decimate the cloud used for the figures (the FULL cloud is already
+    # saved above, so a full-quality figure can be regenerated offline anytime).
+    # The exit render (run is over) uses the full cloud.
+    pts_render = pts_full
+    if when == "early" and len(pts_full) > 6000:
+        step = int(len(pts_full) // 6000) + 1
+        pts_render = pts_full[::step]
     try:
         from scripts.viz_perception import render_all
-        files = render_all(cap["pts"], cap["lateral"], cap["heading_deg"],
+        files = render_all(pts_render, cap["lateral"], cap["heading_deg"],
                            cap["spacing"], d)
         print(f"\n[row_follow] perception figures ({len(files)}, {when}): "
               f"{d / 'figure_perception_3d.png'}, _bev.png, _annotated.png")

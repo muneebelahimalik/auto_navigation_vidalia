@@ -8,6 +8,25 @@ versions are git tags on `main`.
 
 Work toward the row-to-row turn milestone (built on the v0.1.0 baseline).
 
+### Fixed — heading runaway / cross-row weaving on terrain grade
+- Field RL run: on terrain grade spikes (`grade +7…+9°`, `drop −0.2 m`) the PCA
+  heading estimate ran away (0 → −57°) **while the lateral offset stayed ±0.05 m**
+  — geometrically impossible for a real orientation (a robot that angled would
+  pile up lateral offset), so it was a terrain/PCA artifact.  The heading-dominant
+  pure-pursuit (lookahead 2.0 m) chased it into a hard turn; the robot physically
+  rotated ~45°, lost the row, re-acquired **on the diagonal** and got stuck
+  crawling across the rows.  Added a **heading–lateral consistency clamp** in
+  `RowDetector._smooth`: when the robot is demonstrably still centred
+  (`|lateral| < heading_consistency_lat`, 0.22 m) the reported heading magnitude
+  is capped (`heading_consistency_cap`, 22°) — ample for real straight-row
+  corrections, but it removes the artifact the controller was amplifying, so the
+  runaway can't start.  Regression-locked in `test_large_heading_small_lateral_is_clamped`
+  / `_large_lateral_is_not_clamped` / `_normal_small_heading_unchanged`.
+- The **early** perception render now decimates the cloud used for the figures
+  (the full cloud is still saved to `perception_scan.npy`), so the background
+  render can't hog Jetson CPU and stutter the control loop; the exit-time render
+  still uses the full cloud.
+
 ### Changed — perception figures now render early, not at exit
 - The three perception figures (and `perception_scan.npy` / `perception_state.json`)
   are now written **a few scans into the run** — once a confident FOLLOW lock has

@@ -539,3 +539,43 @@ def test_sparse_scan_heading_gate():
     assert abs(est_after.heading_error) < math.radians(14.0), (
         f"Heading drifted to {math.degrees(est_after.heading_error):.1f}° from sparse dropout"
     )
+
+
+# ---------------------------------------------------------------------------
+# Heading–lateral consistency clamp: a large heading with a small, stable
+# lateral offset is a terrain/PCA artifact, not a real orientation; capping it
+# stops a heading-dominant pursuit from running away across the rows.
+# Regression for the field log where heading ramped 0 -> -57 deg on a +8 deg
+# grade while lateral stayed +/-0.05 m, and the robot turned ~45 deg and stuck.
+# ---------------------------------------------------------------------------
+
+def _smoothed(prev_hdg, prev_lat, fresh_hdg, fresh_lat, *, n=400, conf=0.8):
+    """Drive RowDetector._smooth directly with a known prev + fresh estimate."""
+    from navigation.row_perception import RowEstimate
+    det = RowDetector(dual_row=True)
+    det._est = RowEstimate(heading_error=prev_hdg, lateral_offset=prev_lat,
+                           confidence=conf, n_points=n, valid=True)
+    fresh = RowEstimate(heading_error=fresh_hdg, lateral_offset=fresh_lat,
+                        confidence=conf, n_points=n, valid=True)
+    return det._smooth(fresh), det
+
+
+def test_large_heading_small_lateral_is_clamped():
+    est, det = _smoothed(math.radians(-40), 0.0, math.radians(-51), 0.0)
+    # centred (lateral ~0) but heading huge -> clamped to the cap magnitude
+    assert abs(est.lateral_offset) < det.heading_consistency_lat
+    assert abs(est.heading_error) <= det.heading_consistency_cap + 1e-9
+    assert est.heading_error < 0                      # sign preserved
+
+
+def test_large_heading_large_lateral_is_not_clamped():
+    # genuinely off the strip AND angled -> real, must NOT be clamped
+    est, det = _smoothed(math.radians(-40), -0.5, math.radians(-45), -0.5)
+    assert abs(est.heading_error) > det.heading_consistency_cap
+
+
+def test_normal_small_heading_unchanged_by_clamp():
+    est, det = _smoothed(math.radians(3), 0.02, math.radians(4), 0.03)
+    # well inside the cap -> passes through as the plain EMA blend
+    assert abs(est.heading_error) < det.heading_consistency_cap
+    assert math.radians(2) < abs(est.heading_error) < math.radians(5)
