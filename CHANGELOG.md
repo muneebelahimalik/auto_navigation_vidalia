@@ -8,6 +8,24 @@ versions are git tags on `main`.
 
 Work toward the row-to-row turn milestone (built on the v0.1.0 baseline).
 
+### Fixed — row-hopping during corrections (all controllers; worst under RL)
+- In a periodic soybean field the dual-row midpoint is ambiguous: "on my strip,
+  offset +half" and "on the next strip, offset −half" produce two peak pairs that
+  both match the row spacing.  `find_row_midpoint` minimised spacing error only,
+  so it could pick the adjacent strip arbitrarily; the controller then centred on
+  it and the robot drifted onto the next strip / crossed rows (and RL, reacting
+  fastest, hopped most).  Added a **continuity ("strip-lock") prior**: the pair
+  cost is now `|sep − spacing| + prior_weight·|midpoint − tracked_lateral|`, so
+  the detector stays locked to the strip it is following — a jump to the adjacent
+  strip costs ≈ one row spacing and is rejected unless the robot has genuinely
+  crossed the half-way point.  `RowDetector.midpoint_prior_weight = 1.5`;
+  `prior_weight = 0` preserves the old behaviour for the camera tracker; on
+  `reset()` the prior is 0 so the post-turn re-acquire prefers the nearest
+  (centred) strip.  Also cleans the RL/MPC input (no more jumped target to
+  chase).  Regression-locked in `test_strip_lock_resists_row_hop` /
+  `test_strip_lock_off_by_default_in_find_row_midpoint`.
+
+
 ### Added — 3-D field mapping (`--map-3d`, mapping only)
 - **3-D point-cloud map of the field**, built on the corrected 2-D SLAM pose
   (2.5-D: a ground robot's 3-DOF pose + the static tilt correction registers the

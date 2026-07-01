@@ -83,6 +83,38 @@ def test_dual_row_single_side_fallback_right_row():
     assert est.lateral_offset < 0.0
 
 
+def test_strip_lock_resists_row_hop():
+    """Continuity prior: once tracking a strip, an ambiguous scene where the
+    ADJACENT strip is also visible must NOT make the midpoint jump a whole row
+    (the field-observed row-hop under an aggressive correction)."""
+    det = RowDetector(dual_row=True, row_spacing=0.76)
+    # lock onto the centre strip (rows at ±0.38) → tracked lateral ≈ 0
+    converge(det, np.vstack([make_row(-0.38), make_row(+0.38)]), iters=25)
+    assert abs(det._est.lateral_offset) < 0.06
+    # robot 0.20 m right of the centre strip; adjacent strip also in view.
+    # peaks at -0.58 (left row), +0.18 (shared inner row), +0.94 (adjacent outer).
+    scene = np.vstack([make_row(-0.58), make_row(+0.18), make_row(+0.94)])
+    est = converge(det, scene, iters=25)
+    # keeps tracking the CENTRE strip (offset ≈ -0.20), does NOT hop to the
+    # adjacent strip (which would read ≈ +0.56).
+    assert -0.35 < est.lateral_offset < 0.02
+
+
+def test_strip_lock_off_by_default_in_find_row_midpoint():
+    """The shared function keeps spacing-only behaviour at prior_weight=0 (so the
+    camera tracker and other callers are unchanged)."""
+    from navigation.row_perception import find_row_midpoint
+    # two equally-spaced pairs; with weight 0 the first (spacing-min) wins as before
+    cross = np.concatenate([
+        RNG.normal(-0.58, 0.02, 200), RNG.normal(0.18, 0.02, 200),
+        RNG.normal(0.94, 0.02, 200)])
+    lat0, _ = find_row_midpoint(cross, 1.2, 0.05, 0.76, prior_weight=0.0)
+    lat_prior, _ = find_row_midpoint(cross, 1.2, 0.05, 0.76,
+                                     prior_lateral=0.0, prior_weight=1.5)
+    # with the prior, the centred strip (-0.20) is chosen over the adjacent (+0.56)
+    assert lat_prior < 0.0
+
+
 def test_row_spacing_refines_toward_field_spacing():
     """The detector should REFINE the seed toward the field's actual spacing
     (within the anchored ±25% band) so the operator need not measure it exactly."""

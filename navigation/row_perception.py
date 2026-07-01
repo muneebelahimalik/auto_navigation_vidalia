@@ -56,6 +56,8 @@ def find_row_midpoint(
     bin_width: float,
     row_spacing: float,
     weights: "Optional[np.ndarray]" = None,
+    prior_lateral: float = 0.0,
+    prior_weight: float = 0.0,
 ) -> "tuple[float, float]":
     """Locate the residue-strip centre on the cross-row axis.
 
@@ -73,16 +75,26 @@ def find_row_midpoint(
     (0, 1] penalises confidence when the detected peak geometry deviates
     from the expected row spacing.
 
-    Pair selection uses a row-spacing prior: among all left/right peak
-    combinations, the pair whose separation is closest to ``row_spacing``
-    wins.  Picking the *innermost* pair instead locks onto weed clumps or
-    residue clutter near the centreline whenever they produce a histogram
-    peak, dragging the midpoint off the true centre.
+    Pair selection uses a row-spacing prior AND a continuity prior: among all
+    left/right peak combinations, the winning pair minimises
+    ``|separation − row_spacing| + prior_weight·|midpoint − prior_lateral|``.
 
-    When only one side is visible (robot far off-centre, or one row
-    occluded), the residue centre is half a row spacing INWARD from the
-    visible row.  Returning the peak itself would steer the robot directly
-    onto the visible crop row.
+    The spacing term alone is AMBIGUOUS in a periodic crop field: a soybean
+    field has rows every ``row_spacing`` m, so "on my strip, offset +half" and
+    "on the NEXT strip, offset −half" produce two peak pairs that BOTH match the
+    spacing.  Minimising spacing error alone then picks one arbitrarily, and when
+    the robot corrects past ~half a row the detector can jump the midpoint by a
+    whole strip — the controller centres on the adjacent strip and the robot
+    hops rows (worst under an aggressive controller).  The continuity term
+    (``prior_lateral`` = the strip currently tracked, ``prior_weight`` > 0) keeps
+    the detector locked to the strip it is following; a jump to the adjacent
+    strip costs ≈ one row spacing and is rejected unless the robot has genuinely
+    crossed the half-way point.  ``prior_weight = 0`` restores the old
+    spacing-only behaviour (used by the camera tracker).
+
+    When only one side is visible (robot far off-centre, or one row occluded),
+    the residue centre is half a row spacing INWARD from the visible row —
+    choosing, among candidates, the one nearest ``prior_lateral``.
     """
     peaks = histogram_peaks(cross, roi_x_half, bin_width, weights)
 
@@ -95,11 +107,15 @@ def find_row_midpoint(
 
     if left_peaks and right_peaks:
         best_pair = None
-        best_err = float("inf")
+        best_err = float("inf")           # spacing error of the winning pair
+        best_cost = float("inf")
         for pl in left_peaks:
             for pr in right_peaks:
                 err = abs((pr - pl) - row_spacing)
-                if err < best_err:
+                mid = 0.5 * (pl + pr)
+                cost = err + prior_weight * abs(mid - prior_lateral)
+                if cost < best_cost:
+                    best_cost = cost
                     best_err = err
                     best_pair = (pl, pr)
         pl, pr = best_pair
@@ -109,14 +125,19 @@ def find_row_midpoint(
         return 0.5 * (pl + pr), spacing_factor
 
     if left_peaks:
-        # Only the left row visible — centre is half a spacing to its right.
-        return max(left_peaks) + half_spacing, 0.7
+        # Only left rows visible — strip centre is half a spacing to the right
+        # of a left row; pick the candidate nearest the tracked strip.
+        cand = min((p + half_spacing for p in left_peaks),
+                   key=lambda m: abs(m - prior_lateral))
+        return cand, 0.7
     if right_peaks:
-        return min(right_peaks) - half_spacing, 0.7
+        cand = min((p - half_spacing for p in right_peaks),
+                   key=lambda m: abs(m - prior_lateral))
+        return cand, 0.7
 
     # All peaks inside the dead-band (clutter on the residue strip itself):
     # treat as "approximately centred" rather than steering at the clutter.
-    return min(peaks, key=abs), 0.5
+    return min(peaks, key=lambda p: abs(p - prior_lateral)), 0.5
 
 
 def histogram_peaks(
@@ -290,6 +311,10 @@ class RowDetector:
         self._spacing_est = row_spacing
         self.auto_spacing = True
         self.max_lateral_jump = max_lateral_jump
+        # Continuity ("strip-lock") prior for dual-row pairing: bias the midpoint
+        # toward the strip currently tracked so a correction that overshoots does
+        # not alias onto the adjacent strip and hop rows.  0 disables it.
+        self.midpoint_prior_weight = 1.5
         # Point-level fusion of camera ground points (aux_xy in update()):
         # aux_y_min lets near-field camera points (LiDAR self-filter blind
         # zone) into the fit; aux_mass_ratio caps the camera's total
@@ -470,7 +495,8 @@ class RowDetector:
             self._refine_spacing(cross, weights=w)
             lateral, self._spacing_factor = find_row_midpoint(
                 cross, self.roi_x_half, self.bin_width, self._spacing_est,
-                weights=w)
+                weights=w, prior_lateral=float(self._est.lateral_offset),
+                prior_weight=self.midpoint_prior_weight)
         else:
             # Single-row mode: histogram peak nearest the robot centreline,
             # then refine with a tight window so adjacent rows are not merged.
@@ -555,7 +581,9 @@ class RowDetector:
         single-side half-spacing fallback)."""
         self._refine_spacing(cross)
         lateral, self._spacing_factor = find_row_midpoint(
-            cross, self.roi_x_half, self.bin_width, self._spacing_est)
+            cross, self.roi_x_half, self.bin_width, self._spacing_est,
+            prior_lateral=float(self._est.lateral_offset),
+            prior_weight=self.midpoint_prior_weight)
         return lateral
 
     # ------------------------------------------------------------------
