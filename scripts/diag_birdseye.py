@@ -260,9 +260,10 @@ async def main() -> None:
     ap.add_argument("--lidar-yaw", type=float, default=0.0, metavar="DEG",
                     help="Mount yaw correction (CCW positive). Default 0 (2026-07 rigid "
                          "forward-facing re-mount; was 66). Verify with the object locator.")
-    ap.add_argument("--lidar-tilt", type=float, default=15.0, metavar="DEG",
+    ap.add_argument("--lidar-tilt", type=float, default=21.7, metavar="DEG",
                     help="Nose-down pitch correction (degrees), applied AFTER yaw. "
-                         "Default 15 (2026-07 forward-facing re-mount). Use --tilt-sweep to re-derive.")
+                         "Default 21.7 (2026-07 forward-facing re-mount, field-verified via "
+                         "--tilt-sweep 15:26:0.5). Use --tilt-sweep to re-derive.")
     ap.add_argument("--tilt-sweep", default="", metavar="LO:HI:STEP",
                     help="Sweep tilt (after yaw) and report the ground-ramp slope "
                          "per angle to find the value that flattens the ground, "
