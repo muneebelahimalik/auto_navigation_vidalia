@@ -35,6 +35,25 @@ from pathlib import Path
 
 import numpy as np
 
+def _height_cmap():
+    """A perceptual height colormap that exists on the brain's matplotlib.
+
+    'turbo' was added in matplotlib 3.3; the Jetson image ships an older build
+    that raises "Colormap turbo is not recognized" and kills the figure render.
+    Fall back to 'viridis' (present in every matplotlib) when turbo is missing."""
+    try:
+        import matplotlib
+        matplotlib.colormaps["turbo"]           # mpl >= 3.5
+        return "turbo"
+    except Exception:
+        try:
+            import matplotlib.cm as cm
+            cm.get_cmap("turbo")                 # older mpl API
+            return "turbo"
+        except Exception:
+            return "viridis"
+
+
 # ---- system constants (match lidar/obstacle_filter.py + navigation defaults) ----
 MOUNT_H = 0.75          # LiDAR drum-centre height above ground (m)
 ROI_Y = (1.5, 7.0)      # detection ROI forward extent (m)
@@ -336,7 +355,7 @@ def render_av3d(P, lateral, heading_deg, spacing, out_base, *, title=None):
 
     # point cloud — height-coloured on dark (classic Velodyne look)
     order = np.argsort(h)                      # draw low→high so rows pop
-    sc = ax.scatter(P[order, 0], P[order, 1], h[order], c=h[order], cmap="turbo",
+    sc = ax.scatter(P[order, 0], P[order, 1], h[order], c=h[order], cmap=_height_cmap(),
                     vmin=-0.05, vmax=0.45,
                     s=4.0, alpha=0.95, edgecolors="none", depthshade=False)
 
@@ -434,7 +453,7 @@ def render_av_bev(P, lateral, heading_deg, spacing, out_base, *, title=None):
         ax.text(0.0, r, f"{r} m", color="#3a4658", fontsize=8, ha="center", va="bottom", zorder=1)
 
     order = np.argsort(h)
-    sc = ax.scatter(P[order, 0], P[order, 1], c=h[order], cmap="turbo",
+    sc = ax.scatter(P[order, 0], P[order, 1], c=h[order], cmap=_height_cmap(),
                     vmin=-0.05, vmax=0.45, s=4.0, alpha=0.95, edgecolors="none", zorder=3)
 
     # detection ROI + safety zones

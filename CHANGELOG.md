@@ -8,6 +8,23 @@ versions are git tags on `main`.
 
 Work toward the row-to-row turn milestone (built on the v0.1.0 baseline).
 
+### Fixed — grade heading-runaway guard back ON; figure colormap crash
+- A field RL run tracked well for ~9 m, then on a +6° grade the heading estimate
+  ran away exactly as before (0 → −38° → +34° with |lateral| ≈ 0), the robot
+  turned ~75° and stuck in ACQUIRE.  The proportional heading-consistency clamp
+  prevents this, but it had been disabled.  **Re-enabled by default.**  The
+  proportional cap (unlike the earlier flat cap) is INERT in normal following —
+  small heading + small lateral is well under the near-centre cap, so it does
+  not shift the RL policy's input — and only bites on the pathological grade
+  spike (large heading while centred), capping it toward ~7° so no controller
+  can be driven into the runaway.  It is a SAFETY NET; the real fix is at the
+  PCA source (why heading spikes on a grade) and needs raw `scans/` from a
+  sloped run.  Test updated.
+- Perception figures failed to render on the brain with "Colormap turbo is not
+  recognized" (older Jetson matplotlib).  `viz_perception` now picks `turbo`
+  only when present and falls back to `viridis`, so the figures render on the
+  brain again.
+
 ### Changed — scan recorder saves from the very first scan; RL default policy
 - `ScanRecorder` now always saves the **first non-empty scan** (data from the
   very start of the run), then every ``every``-th scan after it — so a figure can

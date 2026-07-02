@@ -566,17 +566,25 @@ def _smoothed(prev_hdg, prev_lat, fresh_hdg, fresh_lat, *, n=400, conf=0.8,
     return det._smooth(fresh), det
 
 
-def test_heading_clamp_disabled_by_default():
-    """Default detector must NOT clamp heading (baseline steering path):
-    a big heading with small lateral passes through the plain EMA blend."""
+def test_heading_clamp_enabled_by_default_but_inert_in_normal_following():
+    """Clamp is ON by default (grade-runaway safety net) but INERT in normal
+    following — a small heading with a small lateral passes through unchanged, so
+    it does not shift the RL policy's input off-slope."""
     from navigation.row_perception import RowEstimate
     det = RowDetector(dual_row=True)
-    assert det.heading_consistency_lat == 0.0
-    det._est = RowEstimate(heading_error=math.radians(-40), lateral_offset=0.0,
+    assert det.heading_consistency_lat > 0.0
+    # normal following: small heading, small lateral -> untouched
+    det._est = RowEstimate(heading_error=math.radians(3), lateral_offset=0.02,
                            confidence=0.8, n_points=400, valid=True)
-    est = det._smooth(RowEstimate(heading_error=math.radians(-40), lateral_offset=0.0,
+    est = det._smooth(RowEstimate(heading_error=math.radians(3), lateral_offset=0.02,
                                   confidence=0.8, n_points=400, valid=True))
-    assert abs(est.heading_error) == pytest.approx(math.radians(40), abs=1e-6)
+    assert abs(est.heading_error) == pytest.approx(math.radians(3), abs=1e-6)
+    # pathological grade spike: big heading while centred -> clamped hard
+    det._est = RowEstimate(heading_error=math.radians(-38), lateral_offset=0.0,
+                           confidence=0.8, n_points=400, valid=True)
+    est2 = det._smooth(RowEstimate(heading_error=math.radians(-38), lateral_offset=0.0,
+                                   confidence=0.8, n_points=400, valid=True))
+    assert abs(est2.heading_error) <= det.heading_cap_centred + 1e-9
 
 
 def test_large_heading_when_centred_is_clamped_hard():

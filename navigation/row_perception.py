@@ -325,17 +325,20 @@ class RowDetector:
         #   cap = cap_centred + (cap_gate − cap_centred)·min(1, |lat|/lat_gate)
         # Beyond lat_gate the heading is left UNCLAMPED.
         #
-        # DISABLED BY DEFAULT (heading_consistency_lat = 0.0).  It was added to
-        # tame a terrain-grade heading artifact, but (1) it manipulates the very
-        # signal the learned RL policy was TRAINED on unclamped, so it is a
-        # distribution shift that can make RL steer unpredictably, and (2) near
-        # centre it suppresses a genuine heading correction, which can add its
-        # own weave.  The strip-lock (continuity) prior baseline without this
-        # clamp was the last configuration the operator judged good, so the clamp
-        # is off unless explicitly enabled (set heading_consistency_lat > 0).
-        # The real fix for the grade artifact is at the PCA source (needs raw
-        # scans from a sloped run), not this controller-input hack.
-        self.heading_consistency_lat = 0.0           # m; 0 = clamp DISABLED
+        # ENABLED BY DEFAULT.  History: a FLAT cap held heading at a large value
+        # near centre and drove a sustained turn (bad); it was briefly disabled
+        # entirely, but then a field run with NO guard ran away again on a +6°
+        # grade (heading spiked 0 → −38° → +34° with |lateral| ≈ 0, the robot
+        # turned ~75° and stuck in ACQUIRE) — the exact failure this clamp
+        # prevents.  The PROPORTIONAL cap resolves the earlier concern: in normal
+        # following |lateral| is small AND heading is small (±3°), which is well
+        # under the near-centre cap, so the clamp is INERT and does NOT shift the
+        # RL policy's input; it only bites on the pathological grade spike (large
+        # heading while centred), capping it toward ~7° so no controller can be
+        # driven into the runaway.  It is a SAFETY NET; the real fix is at the PCA
+        # source (why heading spikes on a grade) — needs raw scans from a sloped
+        # run.  Set heading_consistency_lat = 0 to disable.
+        self.heading_consistency_lat = 0.22          # m; 0 = clamp disabled
         self.heading_cap_centred = math.radians(7.0)   # rad; cap when perfectly centred
         self.heading_cap_gate = math.radians(22.0)     # rad; cap at the lateral gate
         # Continuity ("strip-lock") prior for dual-row pairing: bias the midpoint
