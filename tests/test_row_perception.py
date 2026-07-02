@@ -549,15 +549,34 @@ def test_sparse_scan_heading_gate():
 # grade while lateral stayed +/-0.05 m, and the robot turned ~45 deg and stuck.
 # ---------------------------------------------------------------------------
 
-def _smoothed(prev_hdg, prev_lat, fresh_hdg, fresh_lat, *, n=400, conf=0.8):
-    """Drive RowDetector._smooth directly with a known prev + fresh estimate."""
+def _smoothed(prev_hdg, prev_lat, fresh_hdg, fresh_lat, *, n=400, conf=0.8,
+              clamp_lat=0.22):
+    """Drive RowDetector._smooth directly with a known prev + fresh estimate.
+
+    The heading–lateral consistency clamp is DISABLED by default in the detector
+    (see RowDetector.__init__); these tests validate its math, so they enable it
+    explicitly via clamp_lat."""
     from navigation.row_perception import RowEstimate
     det = RowDetector(dual_row=True)
+    det.heading_consistency_lat = clamp_lat            # enable the clamp for the test
     det._est = RowEstimate(heading_error=prev_hdg, lateral_offset=prev_lat,
                            confidence=conf, n_points=n, valid=True)
     fresh = RowEstimate(heading_error=fresh_hdg, lateral_offset=fresh_lat,
                         confidence=conf, n_points=n, valid=True)
     return det._smooth(fresh), det
+
+
+def test_heading_clamp_disabled_by_default():
+    """Default detector must NOT clamp heading (baseline steering path):
+    a big heading with small lateral passes through the plain EMA blend."""
+    from navigation.row_perception import RowEstimate
+    det = RowDetector(dual_row=True)
+    assert det.heading_consistency_lat == 0.0
+    det._est = RowEstimate(heading_error=math.radians(-40), lateral_offset=0.0,
+                           confidence=0.8, n_points=400, valid=True)
+    est = det._smooth(RowEstimate(heading_error=math.radians(-40), lateral_offset=0.0,
+                                  confidence=0.8, n_points=400, valid=True))
+    assert abs(est.heading_error) == pytest.approx(math.radians(40), abs=1e-6)
 
 
 def test_large_heading_when_centred_is_clamped_hard():

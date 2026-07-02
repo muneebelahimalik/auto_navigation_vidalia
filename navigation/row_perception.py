@@ -321,16 +321,21 @@ class RowDetector:
         # on a +8° grade with lateral ±0.05 m; and a capped-but-still-large 20°
         # heading drove a sustained left turn on a centred straight row).
         #
-        # The cap is PROPORTIONAL to how far off-strip the robot is: a centred
-        # robot (lateral ≈ 0) on a straight row has ~0 real heading error, so the
-        # cap is small there and only opens up as the lateral offset grows (where
-        # a real heading IS needed to steer back).  This also damps overshoot:
-        # as a correction brings the robot back to centre the heading is pulled
-        # to ~0, instead of a residual heading carrying it past.
+        # The cap is PROPORTIONAL to how far off-strip the robot is:
         #   cap = cap_centred + (cap_gate − cap_centred)·min(1, |lat|/lat_gate)
-        # Beyond lat_gate the heading is left UNCLAMPED so a genuine angled
-        # approach / post-turn re-acquire keeps full steering authority.
-        self.heading_consistency_lat = 0.22          # m; lateral at which full heading is allowed
+        # Beyond lat_gate the heading is left UNCLAMPED.
+        #
+        # DISABLED BY DEFAULT (heading_consistency_lat = 0.0).  It was added to
+        # tame a terrain-grade heading artifact, but (1) it manipulates the very
+        # signal the learned RL policy was TRAINED on unclamped, so it is a
+        # distribution shift that can make RL steer unpredictably, and (2) near
+        # centre it suppresses a genuine heading correction, which can add its
+        # own weave.  The strip-lock (continuity) prior baseline without this
+        # clamp was the last configuration the operator judged good, so the clamp
+        # is off unless explicitly enabled (set heading_consistency_lat > 0).
+        # The real fix for the grade artifact is at the PCA source (needs raw
+        # scans from a sloped run), not this controller-input hack.
+        self.heading_consistency_lat = 0.0           # m; 0 = clamp DISABLED
         self.heading_cap_centred = math.radians(7.0)   # rad; cap when perfectly centred
         self.heading_cap_gate = math.radians(22.0)     # rad; cap at the lateral gate
         # Continuity ("strip-lock") prior for dual-row pairing: bias the midpoint

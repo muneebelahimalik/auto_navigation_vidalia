@@ -8,7 +8,19 @@ versions are git tags on `main`.
 
 Work toward the row-to-row turn milestone (built on the v0.1.0 baseline).
 
-### Fixed — heading runaway / cross-row weaving on terrain grade
+### Reverted — heading consistency clamp is now OFF by default
+- The heading–lateral consistency clamp (below) is **disabled by default**
+  (`heading_consistency_lat = 0.0`).  It manipulates the exact signal the learned
+  RL policy was trained on unclamped (a distribution shift that can make RL steer
+  unpredictably) and near centre it suppresses a genuine heading correction,
+  which can add its own weave — the operator reported steering got WORSE, not
+  better, with it active, relative to the strip-lock-prior baseline they judged
+  good.  The code path is retained behind the param (set `> 0` to re-enable for
+  testing), but the default steering path is now exactly the strip-lock baseline.
+  The correct fix for the terrain-grade heading artifact is at the PCA source
+  (needs raw `scans/` from a sloped run), not a controller-input clamp.
+
+### Added (default-off) — heading consistency clamp on terrain grade
 - Field RL run: on terrain grade spikes (`grade +7…+9°`, `drop −0.2 m`) the PCA
   heading estimate ran away (0 → −57°) **while the lateral offset stayed ±0.05 m**
   — geometrically impossible for a real orientation (a robot that angled would
