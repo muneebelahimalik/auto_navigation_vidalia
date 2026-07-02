@@ -426,12 +426,18 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
         # row fix is weak or no policy is loaded — never replaces safety/state.
         from navigation.rl_controller import RLController
         from navigation.rl_policy import MLPPolicy
+        # Default to the smoothest sweep policy (as smooth as MPC, tighter
+        # tracking) when no --policy is given, so `--controller rl` works
+        # out of the box.
+        policy_path = args.policy or "policies/follow_jerk8.0.npz"
         pol = None
-        if args.policy and Path(args.policy).exists():
-            pol = MLPPolicy.load(args.policy)
-            print(f" [row_follow] RL steering policy: {args.policy} ({pol.n_params} params)")
+        if policy_path and Path(policy_path).exists():
+            pol = MLPPolicy.load(policy_path)
+            default_tag = "" if args.policy else " (default)"
+            print(f" [row_follow] RL steering policy: {policy_path}{default_tag} "
+                  f"({pol.n_params} params)")
         else:
-            print(f" [row_follow] --controller rl but no policy at '{args.policy}' "
+            print(f" [row_follow] --controller rl but no policy at '{policy_path}' "
                   f"— running pure-pursuit fallback.")
         controller = RLController(
             policy=pol, max_linear=args.speed,
@@ -953,7 +959,8 @@ def main() -> None:
                              "headland turn are unchanged. Compare with scripts/eval_controller.py.")
     parser.add_argument("--policy", default="", metavar="PATH",
                         help="Trained steering policy .npz for --controller rl "
-                             "(missing/absent → pure-pursuit fallback).")
+                             "(default: policies/follow_jerk8.0.npz, the smoothest "
+                             "sweep policy; missing/absent → pure-pursuit fallback).")
     parser.add_argument("--lookahead", type=float, default=2.0, metavar="M",
                         help="Pure-pursuit lookahead distance in metres (default: 2.0). "
                              "Smaller = more aggressive lateral correction but risks oscillation. "

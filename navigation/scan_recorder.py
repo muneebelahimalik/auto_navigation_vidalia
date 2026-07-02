@@ -37,6 +37,7 @@ class ScanRecorder:
         self._lock = threading.Lock()
         self._stop = False
         self._seen = 0          # scans submitted (before downsample)
+        self._nonempty = 0      # non-empty scans submitted (downsample counter)
         self._sub = 0           # scans accepted for saving
         self.saved = 0
         self.dropped = 0
@@ -49,9 +50,18 @@ class ScanRecorder:
 
     # ------------------------------------------------------------------
     def submit(self, pts, meta: dict) -> None:
-        """Hand a corrected Nx3 scan + metadata to the writer.  Non-blocking."""
+        """Hand a corrected Nx3 scan + metadata to the writer.  Non-blocking.
+
+        The FIRST non-empty scan is always saved (so there is data from the very
+        START of the run to render figures from later), then every ``every``-th
+        non-empty scan after it (1st, 1+every, 1+2·every, …).  Counting only
+        non-empty scans makes the very-first save robust to any leading empty
+        scans while the sensor spins up."""
         self._seen += 1
-        if pts is None or len(pts) == 0 or (self._seen % self.every):
+        if pts is None or len(pts) == 0:
+            return
+        self._nonempty += 1
+        if self._nonempty != 1 and ((self._nonempty - 1) % self.every):
             return
         with self._lock:
             if len(self._q) >= self._q.maxlen:

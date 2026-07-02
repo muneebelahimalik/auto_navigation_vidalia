@@ -8,6 +8,15 @@ versions are git tags on `main`.
 
 Work toward the row-to-row turn milestone (built on the v0.1.0 baseline).
 
+### Changed — scan recorder saves from the very first scan; RL default policy
+- `ScanRecorder` now always saves the **first non-empty scan** (data from the
+  very start of the run), then every ``every``-th scan after it — so a figure can
+  be rendered from t≈0 offline, not only from the first downsample multiple.
+  Robust to leading empty scans while the sensor spins up.  Tests updated.
+- `--controller rl` with no `--policy` now defaults to
+  `policies/follow_jerk8.0.npz` (the smoothest sweep policy — as smooth as MPC,
+  tighter tracking), so RL works out of the box.
+
 ### Added — RL drift integrator + field-calibrated sim (cross-slope rejection)
 - A field RL run drifted downhill and off the row on cross-slopes.  Root cause is
   structural: the policy observed only `[lateral, heading, conf, prev_action]`,
