@@ -29,9 +29,16 @@ Work toward the row-to-row turn milestone (built on the v0.1.0 baseline).
   (edges MPC on tracking, 8.5 vs 14.2 cm; MPC still smoother).  `RLController`
   gained a `reset()` (drift integrator + prev-action), now called on a new row
   after a U-turn.  Note: results are IN SIM — the sim-to-real gap is the headline
-  risk, so field trials keep pure-pursuit armed and start perception-only.  The
-  `follow_jerk*.npz` sweep variants are pre-integrator (4-input) and now stale.
+  risk, so field trials keep pure-pursuit armed and start perception-only.
   Regression-locked in `tests/test_rl.py` (integrator, 5-dim obs, backward compat).
+- Retrained the jerk-sweep variants (`follow_jerk{1.0,3.0,8.0}.npz`) on the new
+  5-input architecture and regenerated `results/controller_pareto.csv` (new
+  reproducible generator `scripts/gen_controller_pareto.py`, 200 held-out
+  episodes, same seeds for every controller).  The smoothness dial is clean:
+  raising the jerk penalty `--c-du` 0.3 → 8.0 **halves control jerk
+  (0.099 → 0.051) with negligible tracking cost** (xtrack 8.5 → 8.9 cm, success
+  99.5 %); `rl_jerk8.0` is as smooth as MPC (0.051 vs 0.054) but tracks tighter
+  (8.9 vs 14.2 cm).  Pick the knee for the field.
 
 ### Reverted — heading consistency clamp is now OFF by default
 - The heading–lateral consistency clamp (below) is **disabled by default**
