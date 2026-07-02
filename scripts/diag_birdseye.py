@@ -268,11 +268,23 @@ async def main() -> None:
                     help="Sweep tilt (after yaw) and report the ground-ramp slope "
                          "per angle to find the value that flattens the ground, "
                          "e.g. --tilt-sweep 0:20:1")
+    ap.add_argument("--mount-height", type=float, default=None, metavar="M",
+                    help="Override LIDAR_MOUNT_HEIGHT for this run only (m). Use to test "
+                         "whether a candidate height (e.g. 1.17) zeroes the ground residual "
+                         "without editing obstacle_filter.py. Default: the code constant.")
     ap.add_argument("--self-radius", type=float, default=1.5)
     ap.add_argument("--range", type=float, default=6.0,
                     help="Plot radius (m)")
     ap.add_argument("--out", default=str(Path(__file__).resolve().parent.parent / "birdseye.png"))
     args = ap.parse_args()
+
+    if args.mount_height is not None:
+        # Rebind the module global so every helper here (object locator, ground
+        # ramp fit, ROI profile, PNG) uses the override for this run only.
+        global LIDAR_MOUNT_HEIGHT
+        LIDAR_MOUNT_HEIGHT = args.mount_height
+        print(f"  [override] LIDAR_MOUNT_HEIGHT = {LIDAR_MOUNT_HEIGHT:.3f} m "
+              f"(code constant not modified)")
 
     yaw_rad  = math.radians(args.lidar_yaw)
     tilt_rad = math.radians(args.lidar_tilt)
