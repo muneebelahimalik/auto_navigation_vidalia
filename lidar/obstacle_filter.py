@@ -17,8 +17,8 @@ A point at sensor-frame z has ground-relative height:
     h = z + LIDAR_MOUNT_HEIGHT
 
 Using ground-relative height instead of a fixed sensor-frame z threshold
-correctly handles objects below the LiDAR centreline (e.g. a 20-inch/0.508 m
-box whose top is at sensor-frame z ≈ −0.191 m with the current mount).
+correctly handles objects below the LiDAR centreline (e.g. a 16-inch/0.41 m
+box whose top is at sensor-frame z ≈ −0.39 m with the 0.80 m mount).
 
 Sector convention (azimuth 0°–360°, matches lidar_driver.py VLP-16 output):
     0°   → Y+  forward
@@ -39,7 +39,8 @@ from lidar.lidar_driver import LidarDriver, VelodynePoint
 # ---------------------------------------------------------------------------
 # Mount geometry — must match URDF and tf_static_base_to_velodyne.launch.py
 # ---------------------------------------------------------------------------
-LIDAR_MOUNT_HEIGHT = 0.75    # metres — measured: ground to VLP-16 drum centre
+LIDAR_MOUNT_HEIGHT = 0.80    # metres — measured: ground to VLP-16 drum centre
+                             # (2026-07 forward-facing re-mount; was 0.75)
 
 
 def tilt_correct_pts(pts: np.ndarray, tilt_rad: float) -> np.ndarray:
@@ -93,8 +94,8 @@ def yaw_correct_pts(pts: np.ndarray, yaw_rad: float) -> np.ndarray:
 # ---------------------------------------------------------------------------
 # Minimum height above ground to classify a return as an obstacle.
 # In sensor frame this equals z > MIN_OBSTACLE_GROUND_HEIGHT − LIDAR_MOUNT_HEIGHT
-# = 0.15 − 0.699 = −0.549 m, which captures a 20-in (0.508 m) box whose top
-# is at sensor-frame z ≈ −0.191 m.
+# = 0.15 − 0.80 = −0.65 m, which captures a 16-in (0.41 m) box whose top
+# is at sensor-frame z ≈ −0.39 m.
 MIN_OBSTACLE_GROUND_HEIGHT = 0.15   # metres above ground
 
 # Safety corridor geometry

@@ -845,18 +845,19 @@ def main() -> None:
                              "estimates the forward ground grade each scan and removes its slope "
                              "so crop stays inside the height band on sloped/undulating fields; "
                              "pass this to revert to a fixed flat-ground height band.")
-    parser.add_argument("--lidar-tilt", type=float, default=21.5, metavar="DEG",
+    parser.add_argument("--lidar-tilt", type=float, default=15.0, metavar="DEG",
                         help="Forward (nose-down) PITCH correction of the LiDAR mount in degrees, "
-                             "applied AFTER --lidar-yaw (default: 21.5 — field-calibrated via "
-                             "diag_birdseye.py --tilt-sweep: the 15° body lean resolves into a "
-                             "~21.5° robot-frame pitch once the 71° yaw is corrected; this is the "
-                             "angle that flattens the forward ground ramp).")
-    parser.add_argument("--lidar-yaw", type=float, default=66.0, metavar="DEG",
+                             "applied AFTER --lidar-yaw (default: 15 — 2026-07 rigid forward-facing "
+                             "re-mount, physical nose-down tilt. With yaw=0 the robot-frame pitch "
+                             "equals the mount tilt, so verify directly with "
+                             "diag_birdseye.py --tilt-sweep 12:18:0.25 — the ground slope crosses "
+                             "zero at the true pitch).")
+    parser.add_argument("--lidar-yaw", type=float, default=0.0, metavar="DEG",
                         help="Yaw of the LiDAR mount relative to robot forward, CCW positive "
-                             "(degrees, default: 66 — re-calibrated 2026-06 after a mount "
-                             "disturbance; was 71. Verify with diag_birdseye.py object locator "
-                             "if the mount is touched). Applied FIRST (after self-filter, before "
-                             "tilt) so the tilt then rotates the pitch about the robot's "
+                             "(degrees, default: 0 — 2026-07 rigid forward-facing re-mount; was 66. "
+                             "Verify with diag_birdseye.py object locator, a target placed straight "
+                             "ahead should read azimuth ~0°). Applied FIRST (after self-filter, "
+                             "before tilt) so the tilt then rotates the pitch about the robot's "
                              "left-right axis.")
     parser.add_argument("--debug", action="store_true",
                         help="Stream a LiDAR height profile instead of navigating")

@@ -214,7 +214,7 @@ def test_voxel_map_dedups_and_drops_out_of_band():
 
 def test_robot_xyz_to_world_applies_pose_and_height():
     # Robot at (10, 5) heading +90°: robot-forward (+y) maps to world +y→-x… check.
-    pts_robot = np.array([[0.0, 2.0, -0.75 + 0.30]])   # 2 m ahead, h = 0.30
+    pts_robot = np.array([[0.0, 2.0, -LIDAR_MOUNT_HEIGHT + 0.30]])   # 2 m ahead, h = 0.30
     pose = Pose2D(10.0, 5.0, math.pi / 2)
     w = robot_xyz_to_world(pts_robot, pose)
     # heading +90°: forward (+y) rotates to world -x → x = 10 - 2 = 8, y = 5.

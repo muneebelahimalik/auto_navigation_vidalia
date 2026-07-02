@@ -10,13 +10,13 @@ Copy the PNG off the robot with:
     scp farm-ng-user-laserweeding@100.66.121.56:/tmp/birdseye.png .
 
 Usage examples:
-    # Default: field-calibrated yaw=66° + tilt=21.5° applied, forward view:
+    # Default: forward-facing re-mount nominal yaw=0° + tilt=15° applied:
     python3 scripts/diag_birdseye.py
 
     # Re-derive the pitch that flattens the ground (yaw applied first):
-    python3 scripts/diag_birdseye.py --tilt-sweep 0:26:1
+    python3 scripts/diag_birdseye.py --tilt-sweep 12:18:0.25
 
-    # Raw sensor frame (no corrections — shows 71° rotated view):
+    # Raw sensor frame (no corrections):
     python3 scripts/diag_birdseye.py --lidar-yaw 0 --lidar-tilt 0
 
     # Wider range, more scans:
@@ -257,12 +257,12 @@ async def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--scans", type=int, default=5)
-    ap.add_argument("--lidar-yaw", type=float, default=66.0, metavar="DEG",
-                    help="Mount yaw correction (CCW positive). Default 66 (re-calibrated "
-                         "2026-06 via the object locator; was 71).")
-    ap.add_argument("--lidar-tilt", type=float, default=21.5, metavar="DEG",
+    ap.add_argument("--lidar-yaw", type=float, default=0.0, metavar="DEG",
+                    help="Mount yaw correction (CCW positive). Default 0 (2026-07 rigid "
+                         "forward-facing re-mount; was 66). Verify with the object locator.")
+    ap.add_argument("--lidar-tilt", type=float, default=15.0, metavar="DEG",
                     help="Nose-down pitch correction (degrees), applied AFTER yaw. "
-                         "Default 21.5 (field-calibrated). Use --tilt-sweep to re-derive.")
+                         "Default 15 (2026-07 forward-facing re-mount). Use --tilt-sweep to re-derive.")
     ap.add_argument("--tilt-sweep", default="", metavar="LO:HI:STEP",
                     help="Sweep tilt (after yaw) and report the ground-ramp slope "
                          "per angle to find the value that flattens the ground, "
