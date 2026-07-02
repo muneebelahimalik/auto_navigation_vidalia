@@ -350,9 +350,14 @@ async def main() -> None:
 
     locate_forward_objects(pts, args.lidar_yaw)
 
-    save_png(pts, args.out, args.range, args.lidar_yaw, args.lidar_tilt)
-    print(f"\n  Copy off the robot:")
-    print(f"    scp farm-ng-user-laserweeding@100.66.121.56:~/auto_navigation_vidalia/birdseye.png .")
+    try:
+        save_png(pts, args.out, args.range, args.lidar_yaw, args.lidar_tilt)
+        print(f"\n  Copy off the robot:")
+        print(f"    scp farm-ng-user-laserweeding@100.66.121.56:~/auto_navigation_vidalia/birdseye.png .")
+    except ModuleNotFoundError:
+        print("\n  [skip] matplotlib not installed on the brain — no birdseye.png this run.")
+        print("         All numeric diagnostics above are unaffected. To render the PNG,")
+        print("         run this same command on a machine with matplotlib installed.")
 
 
 if __name__ == "__main__":
