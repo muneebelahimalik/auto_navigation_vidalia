@@ -20,13 +20,38 @@ from __future__ import annotations
 import numpy as np
 
 # Fixed input scaling so the raw observation lands in ~[-1, 1] for the net.
-#                      lateral(m)  heading(rad)  conf  prev_action
-_OBS_SCALE = np.array([2.0,        2.5,          1.0,  1.0], dtype=np.float64)
+#                      lateral(m)  heading(rad)  conf  prev_action  drift_integral
+_OBS_SCALE = np.array([2.0,        2.5,          1.0,  1.0,         2.0], dtype=np.float64)
+
+# Leaky drift integrator — the RL analogue of the MPC disturbance observer.
+# A memoryless [e, theta, conf, prev] policy cannot cancel a STEADY cross-slope
+# drift (a constant disturbance gives constant steady-state error — it always
+# sags downhill).  Feeding a slow leaky integral of the lateral offset gives the
+# policy a signal proportional to accumulated drift, so it can learn a steady
+# counter-steer.  The SAME update runs in the sim, the eval, and the deployed
+# controller, so training == deployment.
+#   eint <- clip(EINT_LEAK * eint + lateral * EINT_DT, ±EINT_CLIP)
+EINT_LEAK = 0.97
+EINT_DT = 0.1
+EINT_CLIP = 0.5
 
 
-def encode_obs(lateral: float, heading: float, conf: float, prev_action: float) -> np.ndarray:
-    """Raw FOLLOW observation → normalised network input (training == deploy)."""
-    return np.array([lateral, heading, conf, prev_action], dtype=np.float64) * _OBS_SCALE
+def update_eint(eint: float, lateral: float) -> float:
+    """Advance the leaky drift integrator by one step (shared sim/deploy rule)."""
+    v = EINT_LEAK * float(eint) + float(lateral) * EINT_DT
+    return float(np.clip(v, -EINT_CLIP, EINT_CLIP))
+
+
+def encode_obs(lateral: float, heading: float, conf: float, prev_action: float,
+               drift_integral: float = 0.0) -> np.ndarray:
+    """Raw FOLLOW observation → normalised network input (training == deploy).
+
+    ``drift_integral`` is optional so a 4-input (pre-integrator) policy encodes
+    identically to before; the 5th slot is simply dropped by ``act`` when the
+    loaded network has obs_dim 4."""
+    full = np.array([lateral, heading, conf, prev_action, drift_integral],
+                    dtype=np.float64) * _OBS_SCALE
+    return full
 
 
 class MLPPolicy:
@@ -44,9 +69,13 @@ class MLPPolicy:
 
     # ------------------------------------------------------------------
     def act(self, raw_obs) -> float:
-        """Raw 4-vector observation → steering action in [-1, 1]."""
-        ro = np.asarray(raw_obs, dtype=np.float64).reshape(-1)
-        x = ro * _OBS_SCALE
+        """Raw observation → steering action in [-1, 1].
+
+        Accepts a 4- or 5-vector; the scaling is sliced to the network's input
+        width so a 4-input (pre-integrator) policy and a 5-input policy both
+        encode correctly from the same helper."""
+        ro = np.asarray(raw_obs, dtype=np.float64).reshape(-1)[:self.obs_dim]
+        x = ro * _OBS_SCALE[:self.obs_dim]
         for W, b in zip(self._W[:-1], self._b[:-1]):
             x = np.tanh(x @ W + b)
         x = np.tanh(x @ self._W[-1] + self._b[-1])   # bounded output

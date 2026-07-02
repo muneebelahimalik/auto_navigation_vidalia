@@ -40,6 +40,8 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from navigation.rl_policy import update_eint
+
 # Forward-speed constants — identical to PurePursuitController so steering is
 # the only difference between a learned policy and the baseline.
 _MAX_LINEAR = 0.30
@@ -64,7 +66,16 @@ class EnvConfig:
     grade_drift_std: float = 0.035  # m/s cross-slope lateral drift (1-sigma)
     # sensor model
     e_noise: float = 0.02           # m
-    theta_noise: float = 0.02       # rad
+    # Heading-noise model, CALIBRATED FROM FIELD TELEMETRY.  On flat ground the
+    # FOLLOW heading std was ~1.9° (0.033 rad); on graded/undulating ground it
+    # tripled to ~5.2° (0.091 rad) because the fixed tilt correction mis-rotates
+    # the PCA fit on a slope.  So the per-step heading noise is GRADE-CORRELATED:
+    #   theta_noise_ep = theta_noise_base + theta_noise_grade_k · |grade_drift|
+    # which reproduces both regimes (|grade|≈0 → ~0.02 rad; |grade|≈0.07 (2σ) →
+    # ~0.09 rad).  Training against this teaches the policy to DISTRUST a noisy
+    # heading and lean on the lateral offset — the source of the field weave.
+    theta_noise: float = 0.02       # rad — base (flat-ground) heading noise
+    theta_noise_grade_k: float = 1.0  # rad added per (m/s) of |grade drift|
     dropout_p: float = 0.08         # prob the row fix drops this step
     conf_hi: float = 0.92
     conf_lo: float = 0.20
@@ -83,7 +94,7 @@ class EnvConfig:
 
 
 class RowFollowEnv:
-    OBS_DIM = 4   # [lateral, heading, confidence, prev_action]
+    OBS_DIM = 5   # [lateral, heading, confidence, prev_action, drift_integral]
     ACT_DIM = 1   # angular command in [-1, 1]
 
     def __init__(self, config: EnvConfig | None = None) -> None:
@@ -99,6 +110,8 @@ class RowFollowEnv:
         self._step = 0
         self._slip = self.cfg.slip_mean
         self._grade = 0.0
+        self._theta_noise = self.cfg.theta_noise
+        self._eint = 0.0
         self._frozen_obs = None
 
     # ------------------------------------------------------------------
@@ -112,6 +125,9 @@ class RowFollowEnv:
         self._step = 0
         self._slip = float(np.clip(self._rng.normal(c.slip_mean, c.slip_std), 0.4, 1.0))
         self._grade = float(self._rng.normal(0.0, c.grade_drift_std))
+        # Grade-correlated heading noise (field-calibrated, see EnvConfig).
+        self._theta_noise = c.theta_noise + c.theta_noise_grade_k * abs(self._grade)
+        self._eint = 0.0
         self._frozen_obs = None
         return self._observe(conf=c.conf_hi)
 
@@ -119,8 +135,9 @@ class RowFollowEnv:
     def _observe(self, conf: float) -> np.ndarray:
         c = self.cfg
         e_m = self._e + self._rng.normal(0.0, c.e_noise)
-        th_m = self._theta + self._rng.normal(0.0, c.theta_noise)
-        return np.array([e_m, th_m, conf, self._prev_a], dtype=np.float64)
+        th_m = self._theta + self._rng.normal(0.0, self._theta_noise)
+        # 5th input = leaky drift integrator (RL analogue of the MPC observer).
+        return np.array([e_m, th_m, conf, self._prev_a, self._eint], dtype=np.float64)
 
     # ------------------------------------------------------------------
     def step(self, action) -> tuple[np.ndarray, float, bool, dict]:
@@ -159,7 +176,14 @@ class RowFollowEnv:
         done = bool(off_road or self._step >= c.max_steps)
 
         self._prev_a = a
-        obs = obs_for_speed if dropout else self._observe(conf=conf)
+        # Advance the leaky drift integrator from the lateral the policy just saw
+        # (same rule as the deployed controller), then expose the updated value.
+        self._eint = update_eint(self._eint, float(obs_for_speed[0]))
+        if dropout:
+            obs = obs_for_speed.copy()
+            obs[4] = self._eint
+        else:
+            obs = self._observe(conf=conf)          # reads the updated self._eint
         info = {"e": float(self._e), "theta": float(self._theta), "v": float(v),
                 "a": a, "off_road": off_road, "slip": self._slip, "grade": self._grade}
         return obs, float(reward), bool(done), info

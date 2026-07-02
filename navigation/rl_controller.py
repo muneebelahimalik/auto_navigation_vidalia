@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from navigation.row_controller import PurePursuitController
 from navigation.row_perception import RowEstimate
-from navigation.rl_policy import MLPPolicy
+from navigation.rl_policy import MLPPolicy, update_eint
 
 
 class RLController:
@@ -46,19 +46,33 @@ class RLController:
         self.min_confidence = min_confidence
         self.lookahead = lookahead
         self._prev_a = 0.0
+        self._eint = 0.0
+        # Whether the loaded policy takes the 5th (drift-integrator) input.
+        self._use_eint = policy is not None and getattr(policy, "obs_dim", 4) >= 5
+
+    # ------------------------------------------------------------------
+    def reset(self) -> None:
+        """Clear per-row controller state (call on a new row / after a U-turn)."""
+        self._prev_a = 0.0
+        self._eint = 0.0
 
     # ------------------------------------------------------------------
     def compute(self, est: RowEstimate) -> tuple[float, float]:
         v, w_pp = self.pursuit.compute(est)
+        # Keep the drift integrator warm every call (same as the sim, which
+        # integrates every step) so it is correct the moment the policy re-engages
+        # after a low-confidence stretch.
+        self._eint = update_eint(self._eint, est.lateral_offset)
         # Fall back to pure-pursuit when the fix is weak or no policy is loaded —
         # the learned policy never acts on a low-confidence observation.
         if self.policy is None or est.confidence < self.min_confidence or not est.valid:
             self._prev_a = (w_pp / self.max_angular) if self.max_angular else 0.0
             return v, w_pp
 
-        a = self.policy.act([
-            est.lateral_offset, est.heading_error, est.confidence, self._prev_a,
-        ])
+        obs = [est.lateral_offset, est.heading_error, est.confidence, self._prev_a]
+        if self._use_eint:
+            obs.append(self._eint)
+        a = self.policy.act(obs)
         a = max(-1.0, min(1.0, a))
         self._prev_a = a
         w = max(-self.max_angular, min(self.max_angular, a * self.max_angular))

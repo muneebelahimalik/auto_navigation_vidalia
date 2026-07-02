@@ -84,8 +84,8 @@ def test_policy_param_roundtrip_and_save_load(tmp_path):
 
 
 def test_encode_obs_scaling():
-    enc = encode_obs(0.5, 0.4, 1.0, 1.0)
-    assert np.allclose(enc, [1.0, 1.0, 1.0, 1.0])
+    enc = encode_obs(0.5, 0.4, 1.0, 1.0, 0.5)
+    assert np.allclose(enc, [1.0, 1.0, 1.0, 1.0, 1.0])
 
 
 # ---------------------------------------------------------------------------
@@ -168,3 +168,63 @@ def test_es_update_improves_quadratic_objective():
         theta = theta + lr * g / (2 * half * sigma)
     assert f(theta) > start                    # ES moved uphill
     assert np.linalg.norm(theta - target) < np.linalg.norm(target)
+
+
+# ---------------------------------------------------------------------------
+# Drift integrator (RL analogue of the MPC disturbance observer)
+# ---------------------------------------------------------------------------
+
+def test_update_eint_accumulates_and_clips():
+    from navigation.rl_policy import update_eint, EINT_CLIP
+    # constant lateral -> integrator grows toward a bounded steady state
+    e = 0.0
+    for _ in range(200):
+        e = update_eint(e, 0.2)
+    assert 0.0 < e <= EINT_CLIP + 1e-9
+    # opposite sign drives it negative
+    e2 = 0.0
+    for _ in range(200):
+        e2 = update_eint(e2, -0.2)
+    assert -EINT_CLIP - 1e-9 <= e2 < 0.0
+
+
+def test_update_eint_leaks_back_to_zero():
+    from navigation.rl_policy import update_eint
+    e = 0.4
+    for _ in range(300):
+        e = update_eint(e, 0.0)          # no input -> decays
+    assert abs(e) < 1e-3
+
+
+def test_env_obs_is_five_dim_with_integrator():
+    from sim.row_follow_env import RowFollowEnv
+    assert RowFollowEnv.OBS_DIM == 5
+    env = RowFollowEnv()
+    obs = env.reset(seed=1)
+    assert obs.shape == (5,)
+
+
+def test_rl_controller_feeds_five_inputs_to_five_dim_policy():
+    from navigation.rl_policy import MLPPolicy
+    pol = MLPPolicy(obs_dim=5)
+    c = RLController(policy=pol, min_confidence=0.35)
+    assert c._use_eint is True
+    est = RowEstimate(heading_error=0.05, lateral_offset=0.3, confidence=0.9, valid=True)
+    # several confident steps -> integrator becomes non-zero, no crash
+    for _ in range(20):
+        v, w = c.compute(est)
+    assert c._eint != 0.0
+    assert abs(w) <= c.max_angular + 1e-9
+    c.reset()
+    assert c._eint == 0.0 and c._prev_a == 0.0
+
+
+def test_rl_controller_backward_compatible_with_four_dim_policy():
+    """A pre-integrator 4-input policy must still run (fed 4 inputs, no crash)."""
+    from navigation.rl_policy import MLPPolicy
+    pol = MLPPolicy(obs_dim=4)
+    c = RLController(policy=pol, min_confidence=0.35)
+    assert c._use_eint is False
+    est = RowEstimate(heading_error=0.05, lateral_offset=0.2, confidence=0.9, valid=True)
+    v, w = c.compute(est)
+    assert abs(w) <= c.max_angular + 1e-9

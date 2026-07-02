@@ -23,7 +23,7 @@ def pursuit_act_fn(max_angular: float = 0.40):
     ctrl = PurePursuitController(max_angular=max_angular)
 
     def act(raw_obs) -> float:
-        e, theta, conf, _prev = raw_obs
+        e, theta, conf = raw_obs[0], raw_obs[1], raw_obs[2]
         est = RowEstimate(heading_error=float(theta), lateral_offset=float(e),
                           confidence=float(conf), valid=True)
         _v, w = ctrl.compute(est)
@@ -48,7 +48,7 @@ def mpc_act_fn(max_angular: float = 0.40, **mpc_kwargs):
     ctrl = RowMPCController(max_angular=max_angular, **mpc_kwargs)
 
     def act(raw_obs) -> float:
-        e, theta, conf, _prev = raw_obs
+        e, theta, conf = raw_obs[0], raw_obs[1], raw_obs[2]
         est = RowEstimate(heading_error=float(theta), lateral_offset=float(e),
                           confidence=float(conf), valid=True)
         _v, w = ctrl.compute(est)

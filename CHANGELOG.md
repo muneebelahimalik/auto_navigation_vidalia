@@ -8,6 +8,31 @@ versions are git tags on `main`.
 
 Work toward the row-to-row turn milestone (built on the v0.1.0 baseline).
 
+### Added — RL drift integrator + field-calibrated sim (cross-slope rejection)
+- A field RL run drifted downhill and off the row on cross-slopes.  Root cause is
+  structural: the policy observed only `[lateral, heading, conf, prev_action]`,
+  and a memoryless reactive policy CANNOT cancel a steady disturbance (constant
+  cross-slope drift → constant steady-state error).  Added a 5th observation — a
+  **leaky drift integrator** (`rl_policy.update_eint`, the RL analogue of the MPC
+  disturbance observer), maintained identically in the sim, the eval harness, and
+  the deployed `RLController`, so the policy can learn a steady counter-steer.
+  Network is now `[5→16→16→1]` (385 params); 4-input policies still load and run
+  (integrator dropped) for backward compatibility.
+- The sim's heading noise is now **grade-correlated, calibrated from field
+  telemetry** (`theta_noise + theta_noise_grade_k·|grade|`): flat ~1.9° → sloped
+  ~5.2° std, matching the measured flat-vs-graded FOLLOW heading spread.  Training
+  against the disturbance that actually caused the field weave teaches the policy
+  to distrust noisy heading and lean on the lateral offset.
+- Retrained `policies/follow.npz`.  Held-out (200 episodes): cross-track RMSE
+  **21.4 → 8.5 cm**, success **92 → 99.5 %**; on the steepest cross-slopes
+  pure-pursuit collapses to **7 %** where the integrator policy holds at **93 %**
+  (edges MPC on tracking, 8.5 vs 14.2 cm; MPC still smoother).  `RLController`
+  gained a `reset()` (drift integrator + prev-action), now called on a new row
+  after a U-turn.  Note: results are IN SIM — the sim-to-real gap is the headline
+  risk, so field trials keep pure-pursuit armed and start perception-only.  The
+  `follow_jerk*.npz` sweep variants are pre-integrator (4-input) and now stale.
+  Regression-locked in `tests/test_rl.py` (integrator, 5-dim obs, backward compat).
+
 ### Reverted — heading consistency clamp is now OFF by default
 - The heading–lateral consistency clamp (below) is **disabled by default**
   (`heading_consistency_lat = 0.0`).  It manipulates the exact signal the learned

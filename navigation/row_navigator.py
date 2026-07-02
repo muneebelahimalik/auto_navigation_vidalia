@@ -974,6 +974,11 @@ class RowNavigator:
                     self.detector.reset()
                 if self.vis_detector is not None and hasattr(self.vis_detector, "reset"):
                     self.vis_detector.reset()
+                # Clear stateful controller memory (MPC plan/observers, RL drift
+                # integrator + prev-action) so the new row starts without stale
+                # cross-slope bias carried over the turn.
+                if hasattr(self.controller, "reset"):
+                    self.controller.reset()
         self.state = state
 
     async def _drive(self, linear: float, angular: float) -> None:

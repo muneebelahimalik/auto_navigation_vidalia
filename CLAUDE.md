@@ -316,6 +316,21 @@ safety architecture: `RLController` falls back to pure-pursuit below
 opt in. Numpy-only (no torch/gym), so the policy deploys on the Jetson with zero
 new dependencies.
 
+**Drift integrator (field-motivated).** The policy observes
+`[lateral, heading, conf, prev_action, drift_integral]`. A field RL run drifted
+downhill and off the row on cross-slopes; a memoryless reactive policy
+*structurally cannot* cancel a steady disturbance (constant drift → constant
+steady-state error). The 5th input is a **leaky integral of the lateral offset**
+(`rl_policy.update_eint`, the RL analogue of the MPC disturbance observer),
+maintained identically in the sim, the eval, and the deployed controller, so the
+policy can learn a steady counter-steer. Held-out sim (200 episodes, disturbance
+model **calibrated from field telemetry** — grade-correlated heading noise +
+cross-slope drift): cross-track RMSE **21.4 → 8.5 cm**, success **92 → 99.5 %**;
+on the steepest cross-slopes pure-pursuit success **collapses to 7 %** where the
+integrator policy holds at **93 %**. It even edges MPC on tracking (8.5 vs
+14.2 cm) though MPC stays smoother (heading 6.1° vs 9.3°, jerk 0.054 vs 0.099).
+The old 4-input policies still load and run (integrator dropped).
+
 ```bash
 # 1. Train the steering policy in the simulator (Evolution Strategies):
 python3 scripts/train_rl.py --iters 300 --out policies/follow.npz
@@ -337,9 +352,9 @@ return) drops straight into a scatter (xtrack vs drift) or box plots.
 
 | File | Role |
 |---|---|
-| `sim/row_follow_env.py` | Gym-style steering simulator: skid-steer slip, cross-slope drift, sensor noise+dropout; forward speed = the real pure-pursuit formula so RL and pursuit face identical dynamics |
+| `sim/row_follow_env.py` | Gym-style steering simulator: skid-steer slip, cross-slope drift, sensor noise+dropout; **heading noise is grade-correlated, calibrated from field telemetry** (flat ~1.9° → sloped ~5.2° std) so training sees the disturbance that caused the field weave; forward speed = the real pure-pursuit formula so RL and pursuit face identical dynamics |
 | `sim/evaluate.py` | Shared rollout + metrics (cross-track RMSE, heading RMSE, control jerk, success rate); pure-pursuit-as-env-policy baseline |
-| `navigation/rl_policy.py` | Tiny numpy MLP (`[4→16→16→1]`, tanh); flatten/`.npz` save-load; single-source obs encoding |
+| `navigation/rl_policy.py` | Tiny numpy MLP (`[5→16→16→1]`, tanh, 385 params); flatten/`.npz` save-load; single-source obs encoding. Obs = `[lateral, heading, conf, prev_action, drift_integral]` — the 5th input is a **leaky drift integrator** (`update_eint`, the RL analogue of the MPC disturbance observer) so a memoryless policy can cancel steady cross-slope drift. 4-input policies still load/run (integrator dropped) for backward compat |
 | `navigation/rl_controller.py` | Drop-in for `PurePursuitController`; pursuit fallback + output clamp |
 | `scripts/train_rl.py` | Evolution-Strategies trainer (numpy-only, gradient-free); reports baseline throughout |
 | `scripts/eval_controller.py` | Held-out pursuit-vs-RL-vs-MPC table + cross-slope-severity breakdown (`--mpc` to include MPC) |
