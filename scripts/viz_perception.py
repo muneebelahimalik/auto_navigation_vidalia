@@ -3,7 +3,8 @@
 viz_perception.py — Poster/paper figure of what the LiDAR perception sees.
 
 Renders a professional two-panel figure of one VLP-16 scan in the ROBOT frame
-(after the 66° yaw / 21.5° nose-down tilt correction the navigation stack uses):
+(after the 0° yaw / 21.7° nose-down tilt correction the navigation stack uses
+on the 2026-07 forward-facing mount):
 
   LEFT  — bird's-eye "what the LiDAR sees", height-coloured, with every element
           of the autonomy pipeline annotated: forward direction, the two soybean
@@ -55,7 +56,7 @@ def _height_cmap():
 
 
 # ---- system constants (match lidar/obstacle_filter.py + navigation defaults) ----
-MOUNT_H = 0.75          # LiDAR drum-centre height above ground (m)
+MOUNT_H = 0.80          # LiDAR drum-centre height above ground (m); 2026-07 mount
 ROI_Y = (1.5, 7.0)      # detection ROI forward extent (m)
 ROI_X = 0.80            # detection ROI half-width (m)
 SELF_R = 1.5            # self-filter radius (m)
@@ -125,12 +126,12 @@ def _crop_height(x, y, lateral, theta, spacing):
 def generate_lidar_raycast(lateral=-0.06, heading_deg=4.0, spacing=0.62,
                            grade_deg=1.0, az_res_deg=0.35, seed=0):
     """Ray-cast a physically-faithful VLP-16 scan: 16 channels (−15°..+15°)
-    spun over azimuth, the unit pitched 21.5° nose-down at MOUNT_H, intersecting
+    spun over azimuth, the unit pitched 21.7° nose-down at MOUNT_H, intersecting
     a ground plane + crop-row ridges.  Produces the characteristic Velodyne
     ground rings that bend up over the crop rows.  Returns Nx3 robot-frame xyz
     (z = height above ground)."""
     rng = np.random.default_rng(seed)
-    T = np.radians(21.5)                      # nose-down pitch
+    T = np.radians(21.7)                      # nose-down pitch
     th = np.radians(heading_deg)
     gslope = np.tan(np.radians(grade_deg))
     eps = np.radians(np.linspace(-15, 15, 16))             # 16 channels

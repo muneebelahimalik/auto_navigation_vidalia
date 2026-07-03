@@ -115,6 +115,39 @@ def test_strip_lock_off_by_default_in_find_row_midpoint():
     assert lat_prior < 0.0
 
 
+def test_strip_lock_weight_configurable_and_stronger_default():
+    """The strip-lock prior is now constructor-configurable, and the default is
+    stronger than the old 1.5 so an over-correction is less likely to hop."""
+    assert RowDetector(dual_row=True).midpoint_prior_weight >= 2.5
+    det = RowDetector(dual_row=True, row_spacing=0.76, midpoint_prior_weight=4.0)
+    assert det.midpoint_prior_weight == 4.0
+
+
+def test_row_end_waits_for_the_longer_line():
+    """Soybean lines rarely end together.  When the LEFT line ends but the RIGHT
+    line still runs (thinning but clearly present), row-end confidence must stay
+    LOW — it is keyed off the STRONGER flanking side, not total density, so the
+    robot keeps following the longer line to its true end."""
+    det = RowDetector(dual_row=True, row_spacing=ROW_SPACING)
+    converge(det, np.vstack([make_row(-HALF), make_row(+HALF)]))
+    # left line ended; right line present but thinning (~50 pts near its peak)
+    est = converge(det, make_row(+HALF, n=50), iters=8)
+    assert est.valid
+    assert est.row_end_confidence < 0.15
+    # the OLD total-density criterion would already be rising here — proving the
+    # per-side rule is what keeps the robot on the remaining line.
+    assert 1.0 - min(1.0, 50 / det.row_end_density) > 0.2
+
+
+def test_row_end_high_once_both_lines_gone():
+    """When BOTH flanking lines disappear, row-end confidence rises to ~1 so the
+    navigator can trigger the headland turn."""
+    det = RowDetector(dual_row=True, row_spacing=ROW_SPACING)
+    converge(det, np.vstack([make_row(-HALF), make_row(+HALF)]))
+    est = det.update(np.empty((0, 3)))
+    assert est.row_end_confidence > 0.9
+
+
 def test_row_spacing_refines_toward_field_spacing():
     """The detector should REFINE the seed toward the field's actual spacing
     (within the anchored ±25% band) so the operator need not measure it exactly."""

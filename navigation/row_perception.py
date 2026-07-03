@@ -275,9 +275,12 @@ class RowDetector:
         refine_window: float = 0.18,
         bin_width: float = 0.05,
         row_end_density: float = 70.0,
+        row_end_side_density: float = 45.0,
+        row_end_side_window: float = 0.20,
         ema_alpha: float = 0.35,
         dual_row: bool = False,
         row_spacing: float = 0.76,
+        midpoint_prior_weight: float = 2.5,
         max_lateral_jump: float = 0.20,
         aux_y_min: float = 0.5,
         aux_mass_ratio: float = 0.5,
@@ -297,6 +300,19 @@ class RowDetector:
         self.refine_window = refine_window
         self.bin_width = bin_width
         self.row_end_density = row_end_density
+        # Per-side row-end criterion (dual-row): a row has only truly ENDED when
+        # BOTH flanking crop rows are gone.  In a soybean field the two rows
+        # rarely end at the same plant — one line runs longer.  Basing row-end
+        # on TOTAL density lets the confidence sag as the first row thins,
+        # which the navigator can misread as a row end while the longer line is
+        # still clearly there.  Instead we measure the mass near EACH flanking
+        # peak and key row-end off the STRONGER side: as long as either row
+        # keeps ≥ row_end_side_density points near its peak, the row has not
+        # ended and the robot keeps following the remaining (longer) line to
+        # its true end.  row_end_side_window is the cross-row half-width around
+        # each flanking peak the mass is counted in.
+        self.row_end_side_density = row_end_side_density
+        self.row_end_side_window = row_end_side_window
         self.ema_alpha = ema_alpha
         self.dual_row = dual_row
         # ``row_spacing`` is only a SEED for the self-calibrating estimate below
@@ -344,7 +360,15 @@ class RowDetector:
         # Continuity ("strip-lock") prior for dual-row pairing: bias the midpoint
         # toward the strip currently tracked so a correction that overshoots does
         # not alias onto the adjacent strip and hop rows.  0 disables it.
-        self.midpoint_prior_weight = 1.5
+        # Raised 1.5 -> 2.5 (and exposed via --strip-lock): a field run had the
+        # robot over-correct a lateral error far enough that the detector paired
+        # onto the ADJACENT strip and the robot committed to the next row.  The
+        # pair cost is |sep − spacing| + weight·|midpoint − tracked_lateral|, so
+        # a higher weight makes hopping a whole spacing (cost ≈ weight·spacing)
+        # decisively lose to staying on the tracked strip and steering back —
+        # the robot must genuinely cross past the half-way line before the
+        # detector will accept the new strip.
+        self.midpoint_prior_weight = midpoint_prior_weight
         # Point-level fusion of camera ground points (aux_xy in update()):
         # aux_y_min lets near-field camera points (LiDAR self-filter blind
         # zone) into the fit; aux_mass_ratio caps the camera's total
@@ -527,6 +551,22 @@ class RowDetector:
                 cross, self.roi_x_half, self.bin_width, self._spacing_est,
                 weights=w, prior_lateral=float(self._est.lateral_offset),
                 prior_weight=self.midpoint_prior_weight)
+            # Row-end on the LONGER line: count crop mass near each flanking row
+            # (at lateral ± half-spacing) and key row-end off the STRONGER side,
+            # so a row is only "ended" once BOTH flanking lines are gone — the
+            # robot keeps following whichever soybean line runs longer to its
+            # true end (see __init__ note).  LiDAR-ONLY (cross[:n]): like the
+            # total-density criterion above, the camera must not be able to mask
+            # a genuinely sparse LiDAR crop band and hide a real row end.
+            hs = 0.5 * self._spacing_est
+            cross_lidar = cross[:n]
+            if len(cross_lidar):
+                lsel = np.abs(cross_lidar - (lateral - hs)) <= self.row_end_side_window
+                rsel = np.abs(cross_lidar - (lateral + hs)) <= self.row_end_side_window
+                row_strength = float(max(int(lsel.sum()), int(rsel.sum())))
+            else:
+                row_strength = 0.0
+            row_end_conf = 1.0 - min(1.0, row_strength / self.row_end_side_density)
         else:
             # Single-row mode: histogram peak nearest the robot centreline,
             # then refine with a tight window so adjacent rows are not merged.

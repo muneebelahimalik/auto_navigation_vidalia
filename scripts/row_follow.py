@@ -411,6 +411,7 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
         crop_h_max=args.crop_max,
         dual_row=args.dual_row,
         row_spacing=args.row_spacing,
+        midpoint_prior_weight=args.strip_lock,
         ground_detrend=not args.no_ground_detrend,
     )
     tire_h = args.tire_height if args.tire_height is not None else args.obstacle_height
@@ -698,6 +699,15 @@ def main() -> None:
                              "offset. The detector self-calibrates it from the data "
                              "(watch sp= in the status line), so the default is fine for "
                              "most fields — you normally only set --rows.")
+    parser.add_argument("--strip-lock", type=float, default=2.5, metavar="W",
+                        help="Continuity ('strip-lock') prior weight for the dual-row "
+                             "midpoint (default: 2.5). Biases the detected strip-centre "
+                             "toward the strip currently being followed so an over-correction "
+                             "cannot alias onto — and commit the robot to — the ADJACENT row. "
+                             "Higher = harder to hop rows (the robot steers back to the "
+                             "current row instead); 0 disables the prior (spacing-only pairing). "
+                             "Raise it if you still see the robot jump to the next row on a "
+                             "large correction.")
     parser.add_argument("--turn-dir", choices=["right", "left"], default="right",
                         help="Direction of the FIRST headland U-turn (default: right). "
                              "Subsequent turns alternate for serpentine coverage.")
