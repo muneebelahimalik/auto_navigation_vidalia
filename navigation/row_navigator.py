@@ -1140,6 +1140,7 @@ class RowNavigator:
             "heading_deg":    round(math.degrees(est.heading_error), 3),
             "row_end_conf":   round(float(est.row_end_confidence), 4),
             "grade_deg":      round(math.degrees(math.atan(gs)), 3),
+            "roll_deg":       round(math.degrees(math.atan(getattr(self.detector, "last_ground_roll", 0.0) or 0.0)), 3),
             "drop_m":         round(float(getattr(self.detector, "last_ground_shift", 0.0) or 0.0), 3),
             "lin_cmd":        round(float(linear), 4),
             "ang_cmd":        round(float(angular), 4),
@@ -1194,6 +1195,9 @@ class RowNavigator:
         _gs = getattr(self.detector, "last_ground_slope", 0.0)
         if _gs:
             grade_str += f" grade={math.degrees(math.atan(_gs)):+.0f}°"
+        _gr = getattr(self.detector, "last_ground_roll", 0.0)
+        if _gr:
+            grade_str += f" roll={math.degrees(math.atan(_gr)):+.0f}°"
         _sh = getattr(self.detector, "last_ground_shift", 0.0)
         if _sh:
             grade_str += f" drop={_sh:+.2f}m"

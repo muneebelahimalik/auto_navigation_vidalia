@@ -295,7 +295,66 @@ def test_flat_ground_detrend_is_noop():
     pts = np.vstack([make_row(-HALF), make_row(+HALF), make_ground_graded(0.0)])
     converge(det, pts)
     assert det.last_ground_slope == 0.0
+    assert det.last_ground_roll == 0.0
     assert det.last_ground_shift == 0.0
+
+
+def make_row_rolled(x_centre, roll_deg, n=130, y_lo=1.6, y_hi=6.8,
+                    x_sigma=0.03, h_lo=0.08, h_hi=0.25):
+    """Crop-row canopy on ground tilted about the FORWARD axis (cross-slope):
+    absolute height rises with the cross-row coordinate x by tan(roll)*x."""
+    y = RNG.uniform(y_lo, y_hi, n)
+    x = x_centre + RNG.normal(0.0, x_sigma, n)
+    h_local = RNG.uniform(h_lo, h_hi, n)
+    z = (h_local - LIDAR_MOUNT_HEIGHT) + math.tan(math.radians(roll_deg)) * x
+    return np.column_stack((x, y, z))
+
+
+def make_ground_rolled(roll_deg, n=900, y_lo=1.6, y_hi=6.8, roi_x=2.0):
+    """Bare-soil returns across a WIDE cross-row swath on a cross-slope, so the
+    detector can estimate the lateral (roll) slope."""
+    y = RNG.uniform(y_lo, y_hi, n)
+    x = RNG.uniform(-roi_x, roi_x, n)
+    h_local = RNG.uniform(-0.02, 0.02, n)
+    z = (h_local - LIDAR_MOUNT_HEIGHT) + math.tan(math.radians(roll_deg)) * x
+    return np.column_stack((x, y, z))
+
+
+def test_cross_slope_roll_estimated_and_crop_survives():
+    """10° cross-slope: the roll detrend must estimate dz/dx and keep BOTH
+    flanking rows inside the crop band (they sit at different absolute heights
+    on the tilt), so the midpoint stays centred and confident."""
+    det = RowDetector(dual_row=True, row_spacing=ROW_SPACING)
+    pts = np.vstack([
+        make_row_rolled(-HALF, 10.0), make_row_rolled(+HALF, 10.0),
+        make_ground_rolled(10.0),
+    ])
+    est = converge(det, pts)
+    assert est.valid
+    assert abs(det.last_ground_roll - math.tan(math.radians(10.0))) < 0.05
+    assert abs(est.lateral_offset) < 0.07
+    assert est.confidence > 0.5
+
+
+def test_cross_slope_ground_leak_removed_by_roll_detrend():
+    """On a cross-slope the ground on the UP-slope side rises INTO the absolute
+    crop band and is misread as crop (contaminating the row fit).  The roll
+    detrend flattens the ground so that leak is removed: with the detrend the
+    in-band count reflects real crop; without it the count is inflated by ground.
+    Same cloud fed to both detectors so the only difference is the detrend."""
+    pts = np.vstack([make_row_rolled(-HALF, 12.0), make_row_rolled(+HALF, 12.0),
+                     make_ground_rolled(12.0)])
+    det_on = RowDetector(dual_row=True, row_spacing=ROW_SPACING)
+    est_on = converge(det_on, pts)
+    det_off = RowDetector(dual_row=True, row_spacing=ROW_SPACING,
+                          ground_deadband_deg=45.0)   # suppresses both slope terms
+    est_off = converge(det_off, pts)
+    assert det_on.last_ground_roll != 0.0                   # detrend engaged
+    assert det_off.last_ground_roll == 0.0                  # detrend suppressed
+    # ground leaked into the band when the roll went uncorrected
+    assert est_off.n_points > est_on.n_points + 40
+    # and both still lock the (symmetric) strip centre
+    assert abs(est_on.lateral_offset) < 0.07
 
 
 def make_dipped_scene(drop=0.33):

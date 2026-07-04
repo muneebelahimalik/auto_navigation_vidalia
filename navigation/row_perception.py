@@ -289,6 +289,7 @@ class RowDetector:
         ground_max_grade_deg: float = 25.0,
         ground_deadband_deg: float = 2.0,
         ground_level_spread: float = 0.35,
+        ground_roll_x_half: float = 2.0,
     ) -> None:
         self.roi_y_min = roi_y_min
         self.roi_y_max = roi_y_max
@@ -386,9 +387,22 @@ class RowDetector:
         self.ground_detrend = ground_detrend
         self.ground_min_pts = ground_min_pts
         self.ground_level_spread = ground_level_spread
+        # Lateral (roll) ground detrend: the forward detrend above removes dz/dy,
+        # but a CROSS-SLOPE (or lateral undulation ahead) tilts the ground about
+        # the forward axis — dz/dx — which the forward-only detrend cannot see.
+        # Uncorrected, one flanking soybean row rides higher than the other, the
+        # absolute crop band clips the high (or low) side asymmetrically, and the
+        # dual-row midpoint/heading is biased toward the better-seen row — the
+        # downhill drift seen in the sloped field runs.  The roll slope is fit
+        # from a WIDER cross-row swath (|x| <= ground_roll_x_half, past the
+        # detection ROI) so the estimate has a long lever arm and is stable even
+        # with the crop rows sitting inside the ROI.  Pure-LiDAR (no IMU); b ≈ 0
+        # on flat/level ground, so the flat behaviour is byte-identical.
+        self.ground_roll_x_half = ground_roll_x_half
         self._gmax = math.tan(math.radians(ground_max_grade_deg))
         self._gdead = math.tan(math.radians(ground_deadband_deg))
         self.last_ground_slope = 0.0   # dz/dy actually applied last scan (diag)
+        self.last_ground_roll = 0.0    # dz/dx actually applied last scan (diag)
         self.last_ground_shift = 0.0   # band level shift applied last scan (diag)
         self._spacing_factor = 1.0   # confidence penalty when peak pair spacing is off
         self._est = RowEstimate()
@@ -439,7 +453,17 @@ class RowDetector:
             # flat-ground behaviour byte-identical and is robust to the
             # furrow/soil height split (both ramp together → shared slope).
             a = self._ground_slope(y[in_xy], z[in_xy]) if self.ground_detrend else 0.0
-            h_eff = h - a * y if a else h
+            # Lateral (roll) slope dz/dx from a wider cross-row swath, fit on the
+            # FORWARD-detrended height so the two axes are decoupled (see
+            # __init__ note).  b == 0 on flat ground → no-op.
+            b = 0.0
+            if self.ground_detrend:
+                wide = ((y >= self.roi_y_min) & (y <= self.roi_y_max)
+                        & (np.abs(x) <= self.ground_roll_x_half))
+                if int(wide.sum()) >= self.ground_min_pts:
+                    b = self._ground_roll(x[wide], z[wide] - a * y[wide])
+            self.last_ground_roll = b
+            h_eff = (h - a * y - b * x) if (a or b) else h
             # Level correction: on undulating terrain the local ground can sit
             # well below the flat-calibrated h=0 (field-observed: ROI ground at
             # ~-0.35 m, the whole canopy pushed below the 0.03 m crop floor and
@@ -624,6 +648,36 @@ class RowDetector:
         a = float(np.polyfit(np.asarray(yc), np.asarray(gc), 1)[0])
         a = max(-self._gmax, min(self._gmax, a))
         return a if abs(a) > self._gdead else 0.0
+
+    # ------------------------------------------------------------------
+    def _ground_roll(self, x: np.ndarray, z: np.ndarray) -> float:
+        """Residual lateral ground slope (dz/dx) across the forward swath.
+
+        Mirrors ``_ground_slope`` but bins by the cross-row coordinate x: per
+        0.25 m x-bin the ground is the low percentile of z (bare soil / furrow,
+        whatever its absolute height), and a line is fit through the per-bin
+        ground points.  ``z`` is passed already forward-detrended so this
+        isolates the lateral (roll) tilt of the ground plane.  Dead-banded and
+        clamped exactly like the forward slope, so it is a no-op on level ground
+        and cannot run away on a bad bin.
+        """
+        if len(x) < self.ground_min_pts:
+            return 0.0
+        edges = np.arange(-self.ground_roll_x_half,
+                          self.ground_roll_x_half + 0.25, 0.25)
+        xc, gc = [], []
+        idx = np.digitize(x, edges)
+        for b in range(1, len(edges)):
+            sel = idx == b
+            if int(sel.sum()) < 8:
+                continue
+            xc.append(0.5 * (edges[b - 1] + edges[b]))
+            gc.append(float(np.percentile(z[sel], 20)))
+        if len(xc) < 3:
+            return 0.0
+        b = float(np.polyfit(np.asarray(xc), np.asarray(gc), 1)[0])
+        b = max(-self._gmax, min(self._gmax, b))
+        return b if abs(b) > self._gdead else 0.0
 
     # ------------------------------------------------------------------
     def _nearest_peak(self, cross: np.ndarray, weights: Optional[np.ndarray] = None) -> float:
