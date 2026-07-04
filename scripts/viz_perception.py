@@ -3,8 +3,8 @@
 viz_perception.py — Poster/paper figure of what the LiDAR perception sees.
 
 Renders a professional two-panel figure of one VLP-16 scan in the ROBOT frame
-(after the 0° yaw / 21.7° nose-down tilt correction the navigation stack uses
-on the 2026-07 forward-facing mount):
+(after the 0° yaw / 15° nose-down tilt correction the navigation stack uses
+on the 2026-07 forward-facing mount; VLP-16 Hi-Res channel angles):
 
   LEFT  — bird's-eye "what the LiDAR sees", height-coloured, with every element
           of the autonomy pipeline annotated: forward direction, the two soybean
@@ -131,7 +131,7 @@ def generate_lidar_raycast(lateral=-0.06, heading_deg=4.0, spacing=0.62,
     ground rings that bend up over the crop rows.  Returns Nx3 robot-frame xyz
     (z = height above ground)."""
     rng = np.random.default_rng(seed)
-    T = np.radians(21.7)                      # nose-down pitch
+    T = np.radians(15.0)                      # nose-down pitch
     th = np.radians(heading_deg)
     gslope = np.tan(np.radians(grade_deg))
     eps = np.radians(np.linspace(-15, 15, 16))             # 16 channels

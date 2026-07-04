@@ -61,17 +61,34 @@ VELODYNE_BLOCK_COUNT = 12
 VELODYNE_BLOCK_SIZE = 100
 VELODYNE_BLOCK_FLAG = 0xEEFF
 
-# VLP-16 vertical elevation angles per channel (degrees), channels 0-15
-VLP16_VERTICAL_ANGLES = (
-    -15.0,  1.0,
-    -13.0,  3.0,
-    -11.0,  5.0,
-     -9.0,  7.0,
-     -7.0,  9.0,
-     -5.0, 11.0,
-     -3.0, 13.0,
-     -1.0, 15.0,
+# Vertical elevation angles per channel (degrees), channels 0-15, firing order.
+#
+# THIS UNIT IS A VLP-16 PUCK HI-RES, confirmed 2026-07 from the packet product-ID
+# byte (0x24) via scripts/diag_sensor_model.py.  The Hi-Res packs its 16 beams
+# into a ±10° fan (1.33° spacing) instead of the standard VLP-16's ±15° (2.00°).
+# The standard table was in use here originally; with the wrong (wider) angles
+# the driver stretched the vertical geometry, so a true 15° nose-down / 0.80 m
+# mount reconstructed as ~22° / 1.17 m — which sent the whole tilt/height
+# calibration chasing phantom values.  Field tape (0.80 m) + phone level (~15°)
+# were correct; the driver table was not.  Hi-Res angles = standard × (2/3).
+#
+# Standard VLP-16 (kept for reference / other units):
+VLP16_VERTICAL_ANGLES_STD = (
+    -15.0,  1.0, -13.0,  3.0, -11.0,  5.0,  -9.0,  7.0,
+     -7.0,  9.0,  -5.0, 11.0,  -3.0, 13.0,  -1.0, 15.0,
 )
+# VLP-16 Puck Hi-Res (this unit):
+VLP16_VERTICAL_ANGLES_HIRES = (
+    -10.00,  0.67,
+     -8.67,  2.00,
+     -7.33,  3.33,
+     -6.00,  4.67,
+     -4.67,  6.00,
+     -3.33,  7.33,
+     -2.00,  8.67,
+     -0.67, 10.00,
+)
+VLP16_VERTICAL_ANGLES = VLP16_VERTICAL_ANGLES_HIRES
 
 # Precomputed trig for the 32 channel slots in a data block (two 16-channel
 # firing sequences).  Used by the vectorised parser _parse_scan_np().

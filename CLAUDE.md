@@ -763,9 +763,29 @@ python3 scripts/row_follow.py --auto --dual-row --camera --no-cam-obstacles --ro
 
 ### Sensor Frame Convention
 
+> **⚠️ SENSOR IS A VLP-16 PUCK HI-RES (±10°, 1.33° spacing) — NOT a standard VLP-16.**
+> Confirmed 2026-07 from the packet product-ID byte `0x24`
+> (`scripts/diag_sensor_model.py`).  The driver originally used the standard
+> Puck's ±15° / 2.00° angle table; with the wrong (wider) angles the vertical
+> geometry is stretched, so a true **15° nose-down / 0.80 m** mount reconstructs
+> as a phantom **~22° / 1.17 m** — which sent the tilt/height calibration below
+> chasing wrong values for months.  `lidar/lidar_driver.py::VLP16_VERTICAL_ANGLES`
+> is now the Hi-Res table (regression-locked in `tests/test_lidar_driver.py`).
+> **Diagnose any future "pitch/height doesn't match the tape" with
+> `scripts/diag_pitch_rings.py`** — it solves pitch & height from raw ring
+> geometry with no correction code in the loop (correct angles → all 16 channels
+> agree; wrong angles → they fan out 9–19°).
+>
+> **CURRENT MOUNT (2026-07 forward-facing re-mount, Hi-Res angles):**
+> `--lidar-yaw 0`, `--lidar-tilt 15` (raw ring fit 14.8°, phone level ~15°),
+> `LIDAR_MOUNT_HEIGHT = 0.80 m` (tape, robot on wheels).  Re-verify tilt with
+> `diag_birdseye.py --tilt-sweep 12:18:0.25` (slope → 0 near 15°).  **Everything
+> below about 66° yaw / 21.5° pitch / 0.75 m predates BOTH this re-mount AND the
+> Hi-Res fix — treat it as history, not current calibration.**
+
 - **X** = right, **Y** = forward, **Z** = up (sensor frame, after tilt correction)
 - Ground-relative height: `h = z_corrected + LIDAR_MOUNT_HEIGHT`
-- `LIDAR_MOUNT_HEIGHT = 0.75 m` (defined in `lidar/obstacle_filter.py`; measured: ground to VLP-16 drum centre)
+- `LIDAR_MOUNT_HEIGHT = 0.80 m` (defined in `lidar/obstacle_filter.py`; measured: ground to VLP-16 Hi-Res drum centre, robot on wheels)
 - **LiDAR yaw: 66° CCW (re-calibrated 2026-06; was 71°).** A mount disturbance (lens cleaning)
   rotated the sensor ~5°; re-measured with the `diag_birdseye.py` forward-object locator — a
   bucket placed straight ahead read azimuth +5.4° at yaw 71, and 0.0° at yaw 66 (corrected
