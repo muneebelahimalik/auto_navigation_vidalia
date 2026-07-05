@@ -1,5 +1,5 @@
 controller,xtrack_rmse_cm,heading_rmse_deg,control_jerk,success_rate,mean_return
-pursuit,21.36,4.84,0.0321,0.92,82.81
+pursuit,17.88,7.81,0.0285,0.98,88.95
 rl_jerk0.3,8.46,9.3,0.0986,0.995,99.31
 rl_jerk1.0,8.52,9.43,0.0769,0.995,99.57
 rl_jerk3.0,8.85,9.54,0.059,0.995,99.54
