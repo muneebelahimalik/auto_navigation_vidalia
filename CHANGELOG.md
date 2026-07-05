@@ -8,6 +8,23 @@ versions are git tags on `main`.
 
 Work toward the row-to-row turn milestone (built on the v0.1.0 baseline).
 
+### Added — advanced baseline controller (leaky integral) + POV video
+- **PurePursuitController now has integral (disturbance-cancelling) action** —
+  the memoryless geometric baseline that RL/MPC ride on top of (and fall back
+  to) settled with a STANDING cross-track error on cross-slopes it could only
+  chase.  Added a leaky, anti-windup, confidence- and RATE-gated integral of the
+  cross-track offset (rate gate engages on a steady slope error but refuses to
+  wind up on a fast transient); ki=0 restores the exact geometric law.  Held-out
+  sim (200 eps): cross-track RMSE 23.5→19.2 cm, success 85.5→95.3 %, flat-ground
+  tracking also better, noiseless convergence unchanged (tuned against BOTH so a
+  latent limit cycle was caught and damped).  Wired through RL/MPC reset().
+  Tests: test_integral_rejects_steady_drift, test_ki_zero_is_pure_geometric.
+- **`scripts/render_pov_video.py`** — cinematic self-driving-style POV video of
+  the LiDAR navigation from a --record run (or --demo): chase-cam perspective
+  cloud + live overlays (planned path, heading, look-ahead, ROI, safety zone
+  reddening when blocked, ego robot) + HUD.  Views: chase / pov / high / orbit /
+  scope / split.  PNG frames → GIF (Pillow, no ffmpeg) + MP4 via ffmpeg.
+
 ### Fixed — ROOT CAUSE: LiDAR is a VLP-16 Puck Hi-Res, not a standard VLP-16
 - The driver's `VLP16_VERTICAL_ANGLES` used the standard Puck's ±15° / 2.00°
   channel table, but the packet product-ID byte is `0x24` = **Puck Hi-Res**
