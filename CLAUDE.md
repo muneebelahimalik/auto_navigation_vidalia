@@ -258,7 +258,7 @@ python3 scripts/slam_mapper.py
 python3 scripts/slam_mapper.py --slice-min 0.20
 
 # Override mount calibration (defaults match the row-follow stack):
-python3 scripts/slam_mapper.py --lidar-yaw 66 --lidar-tilt 21.5
+python3 scripts/slam_mapper.py --lidar-yaw 0 --lidar-tilt 15
 
 # 3-D field map (point cloud) alongside the 2-D grid:
 python3 scripts/slam_mapper.py --map-3d                  # → maps/<ts>/map3d.ply
@@ -282,9 +282,9 @@ memory). Regression-locked in `tests/test_slam.py`.
 
 **Critical — same yaw/tilt correction as row-follow.** SLAM yaw/tilt-corrects
 the raw VLP-16 cloud into the robot frame (`slam/scan_matcher.py::correct_scan`,
-**yaw first then tilt**) before slicing. Without it the 21.5° nose-down tilt
+**yaw first then tilt**) before slicing. Without it the ~15° nose-down tilt
 ramps far-field ground returns up into the slice band — flat ground 6 m ahead
-reads h≈1.4 m — flooding the 2-D slice with ground that moves with the robot,
+reads h≈1.5 m — flooding the 2-D slice with ground that moves with the robot,
 which wrecks ICP and smears the map. The slice band defaults to h ∈ [0.05, 1.50]
 m so the crop rows are captured as map structure (the dominant repeatable
 feature in an open field, and what ICP locks onto); `--slice-min 0.20` excludes
@@ -292,8 +292,8 @@ the crop for a structure-only map. Regression-locked in `tests/test_slam.py`.
 
 | `slam_mapper.py` flag | Default | Description |
 |---|---|---|
-| `--lidar-yaw DEG` | **66.0** | Mount yaw correction (applied FIRST) — matches row-follow |
-| `--lidar-tilt DEG` | **21.5** | Nose-down pitch correction (applied AFTER yaw) |
+| `--lidar-yaw DEG` | **0.0** | Mount yaw correction (applied FIRST) — matches row-follow (forward-facing) |
+| `--lidar-tilt DEG` | **15.0** | Nose-down pitch correction (applied AFTER yaw); VLP-16 Hi-Res angles |
 | `--slice-min M` | **0.05** | Slice lower bound, ground-relative m (includes crop; raise to 0.20 for structure-only) |
 | `--slice-max M` | **1.50** | Slice upper bound, ground-relative m |
 | `--map-3d` | off | Also build a 3-D point-cloud map → `map3d.ply` + `.npz` |
@@ -786,34 +786,29 @@ python3 scripts/row_follow.py --auto --dual-row --camera --no-cam-obstacles --ro
 - **X** = right, **Y** = forward, **Z** = up (sensor frame, after tilt correction)
 - Ground-relative height: `h = z_corrected + LIDAR_MOUNT_HEIGHT`
 - `LIDAR_MOUNT_HEIGHT = 0.80 m` (defined in `lidar/obstacle_filter.py`; measured: ground to VLP-16 Hi-Res drum centre, robot on wheels)
-- **LiDAR yaw: 66° CCW (re-calibrated 2026-06; was 71°).** A mount disturbance (lens cleaning)
-  rotated the sensor ~5°; re-measured with the `diag_birdseye.py` forward-object locator — a
-  bucket placed straight ahead read azimuth +5.4° at yaw 71, and 0.0° at yaw 66 (corrected
-  yaw = applied_yaw − straight-ahead-azimuth).  **Re-verify after ANY mount change**:
-  `python3 scripts/diag_birdseye.py --range 3` and read the straight-ahead object's azimuth
-  (should be ~0).  The pitch is independent and stayed 21.5°.  Implemented in
-  `lidar/obstacle_filter.py::yaw_correct_pts()`.
+- **LiDAR yaw: 0° (forward-facing, 2026-07 re-mount).** The sensor Y+ axis points along
+  robot-forward, so `yaw_correct_pts` is a no-op.  **Verify after ANY mount change** with the
+  `diag_birdseye.py` object locator: place a target straight ahead and read its azimuth
+  (should be ~0; corrected yaw = applied − straight-ahead azimuth).  Earlier side-yawed mounts
+  used ~66–71°.  Implemented in `lidar/obstacle_filter.py::yaw_correct_pts()`.
 - **Correction order: YAW FIRST, then TILT** (`row_navigator.py`, `scripts/diag_birdseye.py`).
   The two corrections do NOT commute when yaw ≠ 0: yaw aligns the cloud to the robot frame so
-  the subsequent tilt rotates the nose-down PITCH about the robot's left-right (X) axis.
-  Applying tilt first rotates about the un-yawed sensor X axis (~66–71° off) and leaves a >1 m
-  residual ground ramp (regression-locked in `test_yaw_then_tilt_recovers_flat_ground` /
+  the subsequent tilt rotates the nose-down PITCH about the robot's left-right (X) axis.  With
+  the current yaw=0 mount the order is moot, but the pipeline keeps it for any future side-yaw
+  (regression-locked in `test_yaw_then_tilt_recovers_flat_ground` /
   `test_tilt_then_yaw_leaves_residual_ramp`).
-- **LiDAR tilt: 21.5° (field-calibrated; default).** The 15° body lean the phone level measured
-  is a roll about the sensor's *own* forward axis; because the sensor is yawed ~66°, that lean
-  resolves IN THE ROBOT FRAME into a **~21.5° nose-down PITCH** (the eyeballed 15° was the body
-  lean, not the robot-frame pitch).  Without it, flat ground reads h≈0 near the robot but
-  h≈1.4 m at 6 m — that ramp is the uncorrected pitch.  Calibrated with
-  `python3 scripts/diag_birdseye.py --tilt-sweep 20.5:22.5:0.25`: the ground SLOPE crosses zero
-  at **21.5°** (slope +0.002).  The slope is mount-height-independent, so it pins the pitch
-  unambiguously.  **Earlier "tilt 0 is correct / tilt 15 drives everything below ground" note was
-  an artifact of the OLD tilt→yaw order and a missing yaw correction** — `tilt 15` then yawing
-  over-rotated returns to h<0, misread as "no pitch needed".
-- **`LIDAR_MOUNT_HEIGHT = 0.75 m` is correct — tape-confirmed (~74 cm).** The sweep's secondary
-  "ground level" metric reads ~−0.37 m at the flat tilt, but that is NOT a mount-height error:
-  it is the 15th-percentile tracking the **furrow bottoms**, which sit ~0.3 m below the crop bed
-  (raised-bed / onion-bed geometry).  Crop on the bed correctly reads h ∈ [0.05, 0.30 m] with
-  mount = 0.75 m.  Re-derive pitch with the slope (mount-independent), not the ground level.
+- **LiDAR tilt: 15° (verified).** Phone level on the sensor read ~15°, and the raw ring geometry
+  (`diag_pitch_rings.py`, pipeline-independent) fits **14.8°** — all 16 channels agree to ±0.1°.
+  The ground-slope sweep (`diag_birdseye.py --tilt-sweep 12:18:0.25`) crosses zero at **~15°**.
+  **The old "21.5°" was NOT a real pitch** — it was an artifact of the driver using the standard
+  VLP-16 ±15° angle table on a unit that is actually a **Puck Hi-Res** (±10°); the stretched
+  vertical geometry inflated a true 15° into a phantom 22°.  Fixed in
+  `lidar/lidar_driver.py` (Hi-Res table), regression-locked in `tests/test_lidar_driver.py`.
+- **`LIDAR_MOUNT_HEIGHT = 0.80 m` — tape-confirmed (robot on wheels), and the raw ring fit agrees
+  (0.81 m).** Before the Hi-Res driver fix the ground read ~−0.37 m at the flat tilt (the same
+  angle-table artifact that inflated the pitch also inflated the apparent height to ~1.17 m);
+  with the correct angles the floor now reads h ≈ 0.  Re-derive from `diag_pitch_rings.py` (solves
+  pitch AND height from raw geometry) if the mount is ever disturbed.
 - Crop geometry (soybean): seedling canopy h ≈ 0.03–0.30 m; tires run in furrows between soybean beds
 - Crop geometry (onion): canopy h ≈ 0.10–0.60 m; adjacent row canopy h ≈ 0.70–0.85 m
 
@@ -835,9 +830,11 @@ z_world = −y_sensor · sin(θ) + z_sensor · cos(θ)
 ```
 Applied in `row_navigator.py` after self-filtering, before `detector.update()` and `safety.check()`.
 
-**CLI flag:** `--lidar-tilt DEG` (default: **21.5**) — applied AFTER `--lidar-yaw`.  Field-calibrated
-via `scripts/diag_birdseye.py --tilt-sweep 20.5:22.5:0.25` (ground slope crosses zero at 21.5°).
-Re-run the sweep if the mount is disturbed.
+**CLI flag:** `--lidar-tilt DEG` (default: **15.0**) — applied AFTER `--lidar-yaw`.  Verified
+via `scripts/diag_birdseye.py --tilt-sweep 12:18:0.25` (ground slope crosses zero at ~15°) and
+`scripts/diag_pitch_rings.py` (raw ring geometry, pipeline-independent: 14.8°).  Re-run the
+sweep if the mount is disturbed.  (The old 21.5° was an artifact of the driver's wrong ±15°
+VLP-16 angle table — this unit is a Puck **Hi-Res** (±10°); fixed in `lidar_driver.py`.)
 
 ---
 
@@ -918,8 +915,8 @@ Re-run the sweep if the mount is disturbed.
 | `--post-turn-max-dist M` | **5.0** | Cumulative distance after a U-turn (APPROACH creep + short un-settled FOLLOW segments) before a stable down-row FOLLOW is required; hard guard against driving off the field |
 | `--slam` | off | Enable SLAM odometry integration (currently no-op) |
 | `--speed M` | 0.30 | Max forward speed m/s |
-| `--lidar-tilt DEG` | **21.5** | Nose-down PITCH correction (degrees), applied AFTER `--lidar-yaw`. The body lean resolves into a ~21.5° robot-frame pitch once the yaw is corrected; field-calibrated via `diag_birdseye.py --tilt-sweep 20.5:22.5:0.25` (ground slope → 0 at 21.5°, unchanged across the yaw re-calibration) |
-| `--lidar-yaw DEG` | **66.0** | Sensor mount yaw (CCW positive) relative to robot-forward (re-calibrated 2026-06 via the `diag_birdseye.py` object locator; was 71). Applied FIRST (before tilt). Re-verify after any mount change |
+| `--lidar-tilt DEG` | **15.0** | Nose-down PITCH correction (degrees), applied AFTER `--lidar-yaw` (2026-07 forward-facing mount). Verify via `diag_birdseye.py --tilt-sweep 12:18:0.25` (ground slope → 0 at ~15°) and `diag_pitch_rings.py` (raw geometry: 14.8°). Old 21.5° was an artifact of the driver's wrong angle table — this is a VLP-16 Puck **Hi-Res** (±10°), fixed in `lidar_driver.py` |
+| `--lidar-yaw DEG` | **0.0** | Sensor mount yaw (CCW positive) relative to robot-forward (0 = forward-facing, 2026-07 re-mount; was 66/71 on the side-yawed mount). Applied FIRST (before tilt). Verify with `diag_birdseye.py` object locator (straight-ahead target → azimuth ~0). Re-verify after any mount change |
 | `--roi-x W` | 0.80 | Row detection ROI half-width m — applies to BOTH the LiDAR detector and the dual-camera tracker (wired in both scripts) |
 | `--crop-min H` | 0.05 | Minimum crop height above ground m |
 | `--crop-max H` | 0.60 | Maximum crop height above ground m |
@@ -1178,7 +1175,7 @@ journalctl --user -u vidalia-ros2-bridge -f
 | Topic | Type | Notes |
 |---|---|---|
 | `/velodyne_points` | `sensor_msgs/PointCloud2` | xyz + intensity (height-relative); frame `velodyne` |
-| `/tf_static` | TF | `base_link → velodyne`: z=0.705 m, pitch=−15° (tilt corrected) |
+| `/tf_static` | TF | `base_link → velodyne`: z=0.80 m, identity rotation (cloud is already yaw+tilt corrected upstream) |
 | `/row_viz` | `visualization_msgs/MarkerArray` | Arrow = row direction; green line = lateral offset |
 | `/safety_viz` | `visualization_msgs/MarkerArray` | Wireframe boxes: forward zone + tire zones; green = clear, red = blocked |
 | `/cmd_vel` | `geometry_msgs/Twist` | Current commanded velocity (linear.x, angular.z) |

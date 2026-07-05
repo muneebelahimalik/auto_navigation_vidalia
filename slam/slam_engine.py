@@ -51,11 +51,13 @@ from slam.occupancy_grid import OccupancyGrid
 from slam.voxel_map import VoxelMap
 
 # ---------- LiDAR mount correction (field-calibrated, matches row-follow) -----
-# The VLP-16 is mounted yawed ~66° and pitched ~21.5° nose-down.  SLAM must
-# correct the raw cloud into the robot frame before slicing — see
-# scan_matcher.correct_scan and CLAUDE.md (LiDAR yaw/tilt calibration).
-_DEFAULT_YAW_DEG = 66.0
-_DEFAULT_TILT_DEG = 21.5
+# 2026-07 forward-facing re-mount: yaw 0°, ~15° nose-down pitch (VLP-16 Puck
+# Hi-Res angles now correct in lidar_driver).  SLAM must correct the raw cloud
+# into the robot frame before slicing — see scan_matcher.correct_scan and
+# CLAUDE.md (LiDAR yaw/tilt calibration).  Older 66°/21.5° predates both the
+# re-mount and the Hi-Res angle fix.
+_DEFAULT_YAW_DEG = 0.0
+_DEFAULT_TILT_DEG = 15.0
 
 # ---------- ICP / submap parameters -----------------------------------------
 # ICP result is rejected if mean error exceeds this (metres).

@@ -373,9 +373,10 @@ class RowNavigator:
                 # to the robot frame so the subsequent tilt rotates about the
                 # robot's left-right (X) axis — i.e. corrects a true nose-down
                 # PITCH that flattens the forward ground ramp.  Applying tilt
-                # first would rotate about the un-yawed sensor X axis (71° off),
-                # leaving a >1 m residual ground ramp (see
-                # test_correction_order_matters / scratchpad verify_order.py).
+                # first would rotate about the un-yawed sensor X axis, leaving a
+                # residual ground ramp at any non-zero yaw (see
+                # test_correction_order_matters).  The current forward-facing
+                # mount is yaw 0 / ~15° tilt; the order still matters if yaw ≠ 0.
                 # Must match the order in scripts/diag_birdseye.py.
                 if self.yaw_rad != 0.0:
                     pts = yaw_correct_pts(pts, self.yaw_rad)

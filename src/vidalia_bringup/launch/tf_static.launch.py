@@ -2,11 +2,14 @@ from launch import LaunchDescription
 from launch_ros.actions import Node
 
 def generate_launch_description():
-    # Physically measured 2025: 37.75 in forward, 27.5 in up
-    # Matches amiga_min.urdf and tf_static_base_to_velodyne.launch.py
+    # 2026-07 forward-facing re-mount: z = 0.80 m (tape, robot on wheels).
+    # NOTE: this RAW-cloud ROS stack needs the ~15° nose-down mount pitch in this
+    # transform (pitch ≈ -0.262 rad) AND the velodyne driver set to VLP-16 Puck
+    # Hi-Res calibration (this unit is Hi-Res). Forward x offset changed with the
+    # re-mount and must be re-measured. See tf_static_base_to_velodyne.launch.py.
     x = 0.959
     y = 0.0
-    z = 0.699
+    z = 0.80
     roll = 0.0
     pitch = 0.0
     yaw = 0.0

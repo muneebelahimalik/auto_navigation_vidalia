@@ -96,7 +96,8 @@ def correct_scan(pts_xyz: np.ndarray, yaw_rad: float, tilt_rad: float) -> np.nda
     """Map raw sensor-frame points into the robot frame.
 
     Applies the SAME correction the row-follow stack uses — **yaw first, then
-    tilt** (the two do not commute at the ~66° mount yaw).  After this the
+    tilt** (the two do not commute at a non-zero mount yaw; the current
+    forward-facing mount is yaw 0, so here tilt dominates).  After this the
     cloud's +Y axis is robot-forward and ``z + LIDAR_MOUNT_HEIGHT`` is the true
     ground-relative height, so the 2D slice is a genuine horizontal band and
     the deskew (which assumes +Y = forward) acts along the right axis.

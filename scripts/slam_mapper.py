@@ -377,13 +377,15 @@ def main() -> None:
                         help="Update occupancy grid every N scans (default: 1)")
     parser.add_argument("--no-odom",     action="store_true",
                         help="Disable wheel odometry (use constant-velocity only)")
-    parser.add_argument("--lidar-yaw",   type=float, default=66.0, metavar="DEG",
+    parser.add_argument("--lidar-yaw",   type=float, default=0.0, metavar="DEG",
                         help="Sensor mount yaw correction (deg, CCW+); applied "
-                             "FIRST. Matches the row-follow calibration (default: 66).")
-    parser.add_argument("--lidar-tilt",  type=float, default=21.5, metavar="DEG",
+                             "FIRST. Matches the row-follow calibration "
+                             "(default: 0 — 2026-07 forward-facing re-mount).")
+    parser.add_argument("--lidar-tilt",  type=float, default=15.0, metavar="DEG",
                         help="Sensor nose-down pitch correction (deg); applied "
                              "AFTER yaw. Flattens far-field ground out of the slice "
-                             "band (default: 21.5).")
+                             "band (default: 15 — VLP-16 Hi-Res angles; was 21.5 "
+                             "before the Hi-Res driver fix).")
     parser.add_argument("--slice-min",   type=float, default=0.05, metavar="M",
                         help="Lower bound of the 2-D slice height band, ground-"
                              "relative metres (default: 0.05 — includes crop rows "

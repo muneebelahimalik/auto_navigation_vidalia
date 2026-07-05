@@ -70,7 +70,9 @@ def yaw_correct_pts(pts: np.ndarray, yaw_rad: float) -> np.ndarray:
 
     yaw_rad is the sensor's physical yaw (radians, CCW positive when viewed from
     above) relative to the robot's forward axis.  For a sensor whose Y+ axis points
-    71° CCW of robot-forward, pass yaw_rad = math.radians(71).
+    N° CCW of robot-forward, pass yaw_rad = math.radians(N).  The current
+    forward-facing mount is yaw 0 (this is then a no-op); earlier side-yawed
+    mounts used ~66–71°.
 
     The correction rotates points CW by yaw_rad (i.e. by -yaw_rad in the standard
     CCW convention), mapping sensor-frame coordinates to robot-frame coordinates:

@@ -24,9 +24,10 @@ Coordinate frame (robot-centric, right-hand rule):
     Y  — forward (direction of travel)
     Z  — up
 
-The VLP-16 mount is at base_link origin offset:
-    x=+0.959 m (forward, 37.75 in), z=+0.699 m (up, 27.5 in)
-    (matches tf_static_base_to_velodyne.launch.py and amiga_min.urdf)
+The LiDAR (a VLP-16 Puck Hi-Res — see VLP16_VERTICAL_ANGLES) is mounted
+forward-facing (yaw 0), ~15° nose-down, at z ≈ 0.80 m above ground (2026-07
+re-mount; forward x offset re-measured).  Earlier side-yawed mount used
+z=0.699 m / x=0.959 m.
 
 For Foxglove visualisation, the brain's built-in Foxglove service streams
 sensor data to a browser — no ROS 2 needed on the dev PC.

@@ -8,6 +8,40 @@ versions are git tags on `main`.
 
 Work toward the row-to-row turn milestone (built on the v0.1.0 baseline).
 
+### Fixed — ROOT CAUSE: LiDAR is a VLP-16 Puck Hi-Res, not a standard VLP-16
+- The driver's `VLP16_VERTICAL_ANGLES` used the standard Puck's ±15° / 2.00°
+  channel table, but the packet product-ID byte is `0x24` = **Puck Hi-Res**
+  (±10° / 1.33°).  Wrong (wider) angles stretch the reconstructed vertical
+  geometry, so the real **15° nose-down / 0.80 m** mount reconstructed as a
+  phantom **~22° / 1.17 m** — which made the tilt sweep, box test, and ring-fit
+  all agree on wrong values while the tape (0.80 m) and phone level (~15°)
+  disagreed.  **The field measurements were right; the driver table was wrong.**
+  Fixed: `VLP16_VERTICAL_ANGLES` → Hi-Res table.  On-robot verification: with the
+  correct angles the per-channel pitch collapses from a 9–19° fan to 14.6°±0.1°
+  and the raw-geometry fit returns 14.8° / 0.81 m.  Re-derived calibration:
+  `--lidar-tilt` 21.7 → **15.0**, `--lidar-yaw` **0**, `LIDAR_MOUNT_HEIGHT`
+  **0.80** (floor now reads h≈0, no −0.37 m offset).  Propagated through
+  `slam_engine`/`slam_mapper` defaults, the ROS bridge + dev-PC TF launch files,
+  `viz_perception`, README and CLAUDE.md.  Regression-locked in
+  `tests/test_lidar_driver.py`.
+- New diagnostics: `scripts/diag_sensor_model.py` (reads the packet product-ID),
+  `scripts/diag_pitch_rings.py` (solves pitch AND height from raw ring geometry,
+  no correction code in the loop — the tool that cracked this), and
+  `scripts/diag_filter_imu.py` (probes the filter/OAK IMU for pitch/roll).
+
+### Added — row-follow robustness (strip-lock, longer-line row-end, roll detrend)
+- **Strip-lock** default raised 1.5 → 2.5 and exposed as `--strip-lock W`: a
+  large lateral correction can no longer alias onto the adjacent strip and commit
+  the robot to the next row.
+- **Row-end on the longer line** (dual-row): row-end keys off the STRONGER
+  flanking row's mass, so a row only ends once BOTH soybean lines are gone —
+  the robot follows whichever line runs longer to its true end.
+- **LiDAR-only lateral (roll) ground detrend**: extends the forward-slope
+  detrend with `dz/dx` from a wide cross-row swath, so a cross-slope no longer
+  makes one flanking row read higher than the other or leaks ground into the
+  crop band.  No IMU/cameras; no-op on flat ground.  Shown as `roll=` in status /
+  `roll_deg` in telemetry.  Tests in `tests/test_row_perception.py`.
+
 ### Fixed — grade heading-runaway guard back ON; figure colormap crash
 - A field RL run tracked well for ~9 m, then on a +6° grade the heading estimate
   ran away exactly as before (0 → −38° → +34° with |lateral| ≈ 0), the robot

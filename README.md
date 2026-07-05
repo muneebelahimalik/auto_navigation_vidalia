@@ -54,8 +54,8 @@ fill + visual supplement). A pure-pursuit controller steers the robot along the 
 |---|---|
 | **Robot** | farm-ng Amiga (differential drive, 0.915 m half-track) |
 | **Brain** | camphor-clone — Jetson Xavier NX, Ubuntu 20.04 ARM64, farm-ng OS 2.0 / Barley |
-| **LiDAR** | Velodyne VLP-16 — 192.168.1.201, UDP port 2368, 10 Hz, 16 rings |
-| **LiDAR mount** | 0.699 m above ground, **15° forward (nose-down) tilt** |
+| **LiDAR** | Velodyne VLP-16 **Puck Hi-Res** (±10°, product-ID 0x24) — 192.168.1.201, UDP port 2368, 10 Hz, 16 rings |
+| **LiDAR mount** | 0.80 m above ground, forward-facing (yaw 0), **15° forward (nose-down) tilt** |
 | **Cameras** | 2× OAK-D (PoE switch) — managed by `amiga_service` on localhost:50010 |
 | **Camera mount** | ±0.915 m from robot centreline, forward-facing, service names `oak0` / `oak1` |
 | **Dev PC** | Ubuntu 22.04, SSH via Tailscale `100.66.121.56` |
@@ -301,7 +301,7 @@ This is the same approach used by farm-ng's official `amiga-ros-bridge` (which u
 | Topic | Type | Description |
 |---|---|---|
 | `/velodyne_points` | `sensor_msgs/PointCloud2` | Live LiDAR scan with height-relative intensity field |
-| `/tf_static` | TF | `base_link → velodyne` (x=0.959 m, z=0.699 m, pitch=−15°) |
+| `/tf_static` | TF | `base_link → velodyne` (z=0.80 m; identity rotation — cloud already yaw+tilt corrected upstream) |
 | `/row_viz` | `visualization_msgs/MarkerArray` | Arrow = row direction; line = lateral offset |
 | `/safety_viz` | `visualization_msgs/MarkerArray` | Wireframe boxes for forward + tire zones (green = clear, red = blocked) |
 | `/cmd_vel` | `geometry_msgs/Twist` | Current velocity command |
@@ -401,7 +401,7 @@ ros2_bridge/
 
 | Parameter | Value | Rationale |
 |---|---|---|
-| `obstacle_height` (forward) | **0.75 m** | Above LIDAR_MOUNT_HEIGHT (0.699 m); onion plants (h ≤ 0.60 m) pass; humans/posts stop |
+| `obstacle_height` (forward) | **0.75 m** | Above LIDAR_MOUNT_HEIGHT (0.80 m); onion plants (h ≤ 0.60 m) pass; humans/posts stop |
 | `tire_obstacle_height` | **0.85 m** | Above adjacent onion row canopy (h ≈ 0.80–0.84 m); eliminates false tire-zone stops |
 | `forward_dist` | 2.5 m | Stopping horizon ahead |
 | `forward_half_width` | 0.95 m | Robot body width + margin |

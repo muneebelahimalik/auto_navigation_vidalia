@@ -34,8 +34,11 @@ from slam.scan_matcher import scan_to_xyz
 from slam.voxel_map import VoxelMap
 from slam.map_io import save_ply
 
-YAW = math.radians(66.0)
-TILT = math.radians(21.5)
+# Match the current SlamEngine defaults (2026-07 forward-facing re-mount,
+# VLP-16 Hi-Res angles): yaw 0°, 15° nose-down.  The engine smoke tests below
+# build raw clouds with these and rely on the engine's default correction.
+YAW = math.radians(0.0)
+TILT = math.radians(15.0)
 
 
 def _robot_to_raw(pts_robot: np.ndarray) -> np.ndarray:
@@ -58,11 +61,14 @@ def _as_scan(pts_xyz: np.ndarray):
 
 def test_correct_scan_round_trips_robot_frame():
     """A known robot-frame cloud, pushed out to raw sensor coords and back
-    through correct_scan, returns to the robot frame."""
+    through correct_scan, returns to the robot frame.  Uses explicit NON-zero
+    yaw so the yaw↔tilt composition is exercised (independent of the mount
+    defaults)."""
+    yaw, tilt = math.radians(66.0), math.radians(21.5)
     rng = np.random.default_rng(0)
     pts_robot = rng.uniform(-5, 5, size=(50, 3))
-    raw = _robot_to_raw(pts_robot)
-    recovered = correct_scan(raw, YAW, TILT)
+    raw = yaw_correct_pts(tilt_correct_pts(pts_robot, -tilt), -yaw)
+    recovered = correct_scan(raw, yaw, tilt)
     assert np.allclose(recovered, pts_robot, atol=1e-9)
 
 
