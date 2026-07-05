@@ -183,14 +183,14 @@ VIEWS = {          # (elev, azim) — cinematic chase / POV looking down the row
     "chase": (26, -68),   # 3/4 self-driving chase cam (default, most cinematic)
     "pov":   (12, -89),   # low first-person, looking straight down the rows
     "high":  (40, -72),   # elevated survey angle
+    "orbit": (28, -68),   # third-person orbit — camera pans around the robot
     "scope": None,        # 2-D top-down handled separately
+    "split": None,        # chase 3-D + top-down scope, side by side
 }
 
 
-def render_frame_3d(frame: Frame, cfg, out_path: Path):
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
+def _draw_3d(ax, frame: Frame, cfg, azim=None, hud=True):
+    """Draw the 3-D POV scene + overlays onto a given 3-D axis."""
     from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
     P = frame.P
@@ -199,9 +199,6 @@ def render_frame_3d(frame: Frame, cfg, out_path: Path):
     h = P[:, 2] + MOUNT_H
     th = math.radians(frame.heading_deg)
 
-    fig = plt.figure(figsize=(cfg.w / cfg.dpi, cfg.h / cfg.dpi), dpi=cfg.dpi,
-                     facecolor=BG)
-    ax = fig.add_subplot(111, projection="3d", facecolor=BG)
     ax.set_position([-0.06, -0.10, 1.12, 1.20])          # fill the frame
     try:
         ax.set_proj_type("persp", focal_length=0.62)     # true POV perspective
@@ -249,32 +246,52 @@ def render_frame_3d(frame: Frame, cfg, out_path: Path):
         ax.set_box_aspect((5.2, 8.0, 1.4))
     except Exception:
         pass
-    elev, azim = cfg.elev_azim
-    ax.view_init(elev=elev, azim=azim)
+    elev, base_azim = cfg.elev_azim
+    ax.view_init(elev=elev, azim=azim if azim is not None else base_azim)
     for pane in (ax.xaxis, ax.yaxis, ax.zaxis):
         pane.pane.set_facecolor(BG); pane.pane.set_edgecolor("#0e141d")
         pane.line.set_color("#0e141d")
     ax.grid(False)
     ax.set_xticks([]); ax.set_yticks([]); ax.set_zticks([])
+    if hud:
+        _hud(ax, frame)
 
-    _hud(ax, frame)
+
+def render_frame_3d(frame: Frame, cfg, out_path: Path, azim=None):
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    fig = plt.figure(figsize=(cfg.w / cfg.dpi, cfg.h / cfg.dpi), dpi=cfg.dpi, facecolor=BG)
+    ax = fig.add_subplot(111, projection="3d", facecolor=BG)
+    _draw_3d(ax, frame, cfg, azim=azim)
     fig.subplots_adjust(left=0, right=1, bottom=0, top=1)
     fig.savefig(out_path, facecolor=BG)
     plt.close(fig)
 
 
-def render_frame_scope(frame: Frame, cfg, out_path: Path):
-    """Top-down 'sensor scope' frame (2-D) — cheaper, also paper-friendly."""
+def render_frame_split(frame: Frame, cfg, out_path: Path, azim=None):
+    """Chase 3-D (left) + top-down sensor scope (right), side by side."""
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
+    fig = plt.figure(figsize=(cfg.w / cfg.dpi, cfg.h / cfg.dpi), dpi=cfg.dpi, facecolor=BG)
+    ax3 = fig.add_subplot(1, 2, 1, projection="3d", facecolor=BG)
+    _draw_3d(ax3, frame, cfg, azim=azim, hud=False)       # HUD lives on the scope panel
+    ax3.set_position([-0.05, -0.06, 0.62, 1.12])          # left ~55%
+    ax2 = fig.add_subplot(1, 2, 2, facecolor=BG)
+    _draw_scope(ax2, frame, cfg)
+    ax2.set_position([0.60, 0.04, 0.38, 0.92])            # right ~40%
+    fig.savefig(out_path, facecolor=BG)
+    plt.close(fig)
+
+
+def _draw_scope(ax, frame: Frame, cfg):
+    """Draw the top-down 'sensor scope' scene onto a given 2-D axis."""
     from matplotlib.patches import Circle, Rectangle
 
     P = frame.P
     h = P[:, 2] + MOUNT_H
     th = math.radians(frame.heading_deg)
-    fig = plt.figure(figsize=(cfg.w / cfg.dpi, cfg.h / cfg.dpi), dpi=cfg.dpi, facecolor=BG)
-    ax = fig.add_subplot(111, facecolor=BG)
     for r in (2, 4, 6, 8):
         ax.add_patch(Circle((0, 0), r, fill=False, ec="#1b2531", lw=1.0, zorder=1))
     order = np.argsort(h)
@@ -302,7 +319,16 @@ def render_frame_scope(frame: Frame, cfg, out_path: Path):
     for s in ax.spines.values():
         s.set_color("#1c2430")
     _hud(ax, frame, twod=True)
-    fig.subplots_adjust(left=0, right=1, bottom=0, top=1)
+
+
+def render_frame_scope(frame: Frame, cfg, out_path: Path, azim=None):
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    fig = plt.figure(figsize=(cfg.w / cfg.dpi, cfg.h / cfg.dpi), dpi=cfg.dpi, facecolor=BG)
+    ax = fig.add_subplot(111, facecolor=BG)
+    _draw_scope(ax, frame, cfg)
+    fig.subplots_adjust(left=0.01, right=0.99, bottom=0.01, top=0.99)
     fig.savefig(out_path, facecolor=BG)
     plt.close(fig)
 
@@ -387,6 +413,8 @@ def main() -> None:
     ap.add_argument("--dpi", type=int, default=100)
     ap.add_argument("--psize", type=float, default=4.0, help="point size")
     ap.add_argument("--max-points", type=int, default=26000, help="thin cloud for speed")
+    ap.add_argument("--orbit-deg", type=float, default=42.0,
+                    help="orbit view: half-amplitude of the camera azimuth sweep (deg)")
     ap.add_argument("--no-gif", action="store_true", help="skip the GIF (MP4 only if ffmpeg)")
     ap.add_argument("--out", default="results/pov", help="output base path")
     args = ap.parse_args()
@@ -394,7 +422,9 @@ def main() -> None:
     w, hh = (int(v) for v in args.res.lower().split("x"))
     cfg = argparse.Namespace(w=w, h=hh, dpi=args.dpi, psize=args.psize,
                              max_points=args.max_points,
-                             elev_azim=VIEWS[args.view] or (16, -90))
+                             # scope/split have no fixed 3-D angle → use chase for the 3-D panel
+                             elev_azim=VIEWS[args.view] or VIEWS["chase"],
+                             orbit_deg=args.orbit_deg)
 
     if args.demo:
         frames = make_demo(args.frames, args.fps)
@@ -411,11 +441,20 @@ def main() -> None:
     frames_dir = Path(str(out_base) + "_frames")
     frames_dir.mkdir(parents=True, exist_ok=True)
 
-    render = render_frame_scope if args.view == "scope" else render_frame_3d
+    render = {"scope": render_frame_scope,
+              "split": render_frame_split}.get(args.view, render_frame_3d)
+    n = len(frames)
+
+    def azim_for(i):
+        if args.view != "orbit":
+            return None
+        # smooth there-and-back orbit around the chase angle
+        return cfg.elev_azim[1] + cfg.orbit_deg * math.sin(2 * math.pi * i / max(1, n))
+
     paths = []
     for i, fr in enumerate(frames):
         p = frames_dir / f"frame_{i:05d}.png"
-        render(fr, cfg, p)
+        render(fr, cfg, p, azim=azim_for(i))
         paths.append(p)
         if (i + 1) % 10 == 0 or i + 1 == len(frames):
             print(f"  rendered {i+1}/{len(frames)}")
