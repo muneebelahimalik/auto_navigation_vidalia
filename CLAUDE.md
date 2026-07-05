@@ -902,6 +902,27 @@ VLP-16 angle table — this unit is a Puck **Hi-Res** (±10°); fixed in `lidar_
 | `min_linear` | 0.08 m/s | Minimum creep speed when turning hard |
 | `min_confidence` | 0.35 | Zero output below this |
 | Speed formula | `conf × max(0.25, 1.0 − \|θ\|/1.0) × max_linear` | Slows for both low confidence and large heading error |
+| `ki` | **0.15** | Leaky-integral gain on the cross-track offset — the disturbance-cancelling term (see below). `ki=0` restores the pure geometric law |
+| `i_leak` | **0.94** | Per-step integral leak (~1.6 s memory at 10 Hz) — fast enough to stay damped (no limit cycle in the noiseless closed loop) |
+| `i_clamp` | **0.15 rad/s** | Anti-windup cap on the integral's steering contribution |
+| `i_rate` | **0.20 m/s** | Integrate only when the offset is PERSISTENT (\|Δoffset\| < i_rate·dt) — engages on a steady slope error, refuses to wind up on a fast transient approach |
+
+**Integral (disturbance-cancelling) action — the "advanced" baseline.** Plain
+pure pursuit is memoryless: on a cross-slope it settles with a STANDING
+cross-track error because the geometric feedback needs a non-zero offset to
+produce the counter-steer that balances a constant drift.  That standing error
+is the field slope-weave, and it is why the MPC (disturbance observer) and the
+RL policy (drift integrator) were added on top.  The baseline itself now carries
+the same idea at its simplest and safest: a **leaky, anti-windup,
+confidence-and-rate-gated integral** of the cross-track offset adds a
+counter-steer so a steady drift is cancelled and the steady-state offset → ~0.
+It is the fallback under BOTH `--controller rl` and `--controller mpc`, so the
+whole stack rides on a stronger foundation.  Held-out sim (200 episodes, same
+cross-slope disturbances): cross-track RMSE **23.5 → 19.2 cm**, success
+**85.5 → 95.3 %** (the integral keeps the robot on the row on steep slopes where
+plain pure pursuit ran off), with cleaner flat-ground tracking too and no change
+to the noiseless convergence.  Regression-locked in `tests/test_row_controller.py`
+(`test_integral_rejects_steady_drift`, `test_ki_zero_is_pure_geometric`).
 
 ---
 

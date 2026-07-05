@@ -5,13 +5,13 @@ drop-in for PurePursuitController, with an online disturbance observer.
 
 Why this is the state-of-the-art upgrade over pure pursuit
 ----------------------------------------------------------
-Pure pursuit is a *memoryless geometric* law: it maps the current (heading,
-offset) to a curvature with no model of the robot and no notion of a persistent
-disturbance.  Its weakness in the field is exactly the slope/cross-slope
-weaving seen in the logs — a steady lateral drift it can only chase, never
-cancel, because it has no integral action and no preview.
+Pure pursuit is fundamentally a geometric law.  The baseline now carries a
+bounded leaky-integral term (see row_controller.py) that cancels much of a
+steady cross-slope drift, but it has no model of the robot and no PREVIEW: it
+still reacts one step at a time and its integral authority is deliberately
+capped for stability.
 
-This controller addresses both:
+This controller goes further on both counts:
 
   1. **MPPI** (Model-Predictive Path Integral control; Williams et al. 2017,
      "Information-Theoretic MPC") — a sampling-based MPC.  Each step it samples
@@ -110,6 +110,7 @@ class RowMPCController:
         self._d_hat = 0.0                  # estimated cross-slope drift (m/s)
         self._slip_hat = self.slip_nominal  # estimated achieved-rate fraction
         self._last = None                  # (e, theta, w_cmd) for the observers
+        self.pursuit.reset()               # clear the baseline's integral too
 
     # ------------------------------------------------------------------
     def _update_observers(self, e: float, theta: float) -> None:

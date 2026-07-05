@@ -55,6 +55,7 @@ class RLController:
         """Clear per-row controller state (call on a new row / after a U-turn)."""
         self._prev_a = 0.0
         self._eint = 0.0
+        self.pursuit.reset()          # clear the baseline's integral too
 
     # ------------------------------------------------------------------
     def compute(self, est: RowEstimate) -> tuple[float, float]:

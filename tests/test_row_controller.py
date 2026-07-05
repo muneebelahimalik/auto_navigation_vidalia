@@ -102,3 +102,52 @@ def test_converges_from_combined_error():
     assert abs(x) < 0.05
     assert abs(phi) < 0.06
     assert x_max < 0.45
+
+
+# ---------------------------------------------------------------------------
+# Integral (disturbance-cancelling) action
+# ---------------------------------------------------------------------------
+
+def simulate_drift(ki, drift=0.03, steps=900, dt=0.1, conf=0.8):
+    """Closed loop with a CONSTANT cross-slope drift pushing the robot off the
+    row.  Returns the steady-state |offset| (mean over the last 20 s)."""
+    ctrl = PurePursuitController(ki=ki)
+    x, phi, xs = 0.0, 0.0, []
+    for _ in range(steps):
+        v, w = ctrl.compute(est(lat=-x, hdg=phi, conf=conf))
+        phi += w * dt
+        x += (v * -math.sin(phi) + drift) * dt      # drift pushes +x
+        xs.append(abs(x))
+    return sum(xs[-200:]) / 200.0
+
+
+def test_integral_rejects_steady_drift():
+    """The leaky integral must cut the standing cross-track error a constant
+    cross-slope drift leaves — the whole point of the enhancement.  Plain
+    geometric pure pursuit (ki=0) can only chase the drift."""
+    ss_geom = simulate_drift(ki=0.0)
+    ss_integ = simulate_drift(ki=0.15)
+    assert ss_integ < 0.6 * ss_geom          # materially smaller standing error
+    assert ss_integ < 0.12                     # and small in absolute terms
+
+
+def test_ki_zero_is_pure_geometric():
+    """ki=0 restores the exact memoryless geometric law (backward compat): the
+    integral never accumulates and does not shift the command."""
+    geom = PurePursuitController(ki=0.0)
+    for _ in range(50):
+        geom.compute(est(lat=0.08, hdg=0.03))
+    assert geom._eint == 0.0
+    # one-shot command matches a hand-rolled controller with no integral history
+    a = PurePursuitController(ki=0.0).compute(est(lat=0.08, hdg=0.03))
+    b = geom.compute(est(lat=0.08, hdg=0.03))
+    assert a == b
+
+
+def test_reset_clears_integral():
+    ctrl = PurePursuitController(ki=0.15)
+    for _ in range(60):                        # wind the integral up on a steady offset
+        ctrl.compute(est(lat=0.05, hdg=0.0))
+    assert abs(ctrl._eint) > 0.0
+    ctrl.reset()
+    assert ctrl._eint == 0.0

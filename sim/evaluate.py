@@ -29,6 +29,7 @@ def pursuit_act_fn(max_angular: float = 0.40):
         _v, w = ctrl.compute(est)
         return float(np.clip(w / max_angular, -1.0, 1.0)) if max_angular else 0.0
 
+    act.reset = ctrl.reset            # clear the integral between episodes
     return act
 
 
