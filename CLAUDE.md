@@ -226,7 +226,17 @@ kept regardless of matplotlib**: `telemetry.jsonl` is written continuously
 (one line per scan, survives a crash), and the `scans/` time series
 (`navigation/scan_recorder.py`, a background daemon thread so it never slows
 driving) lets you render every figure later, offline, from any moment of the
-run.  Metrics are computed by `navigation/run_metrics.py` (numpy-only, runs on
+run.  **POV navigation VIDEO** — `scripts/render_pov_video.py` turns the `scans/`
+time series + `telemetry.jsonl` into a cinematic self-driving-style POV movie
+(chase-cam perspective, height-coloured Hi-Res cloud with the rows/structure,
+live overlays: detected strip-centre path, heading, look-ahead, ROI, forward
+safety zone that reddens when blocked, ego robot, and a HUD of
+state/cross-track/heading/speed/ω/grade/roll).  Renders PNG frames → GIF via
+Pillow (no ffmpeg needed) and an MP4 via ffmpeg when present (else prints the
+command).  `--view chase|pov|high|scope`, `--fps`, `--stride`, `--res`, and a
+`--demo` synthetic fly-through for previewing with no run:
+`python3 scripts/render_pov_video.py --run runs/run_<ts> --view chase --out results/pov`.
+Metrics are computed by `navigation/run_metrics.py` (numpy-only, runs on
 the brain): FOLLOW cross-track RMSE/MAE/p95/max (cm), heading RMSE/MAE/max (°),
 control effort + jerk, forward-speed mean/std, state-time budget, event counts
 (obstacle stops, FOLLOW losses, dropout scans), terrain grade/drop, per-row
