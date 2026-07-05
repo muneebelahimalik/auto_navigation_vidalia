@@ -26,7 +26,7 @@ Coordinate frame (velodyne, with default zero-yaw mount):
   x = forward  (same axis as base_link +x)
   y = left     (same axis as base_link +y)
   z = up
-  lidar_x_offset=0.959 m forward from base_link origin
+  lidar_x_offset=0.85 m forward from base_link origin (1 ft ahead of front tires)
   lidar_z_offset=0.80 m above ground (2026-07 re-mount)
 
 Usage:
@@ -257,7 +257,7 @@ class LidarCenterRowFollower(Node):
         self.declare_parameter('speed_heading_scale',    0.60)   # reduce speed when misaligned
 
         # Sensor geometry (matches amiga_min.urdf)
-        self.declare_parameter('lidar_x_offset',         0.959)  # m fwd from base_link
+        self.declare_parameter('lidar_x_offset',         0.85)   # m fwd from base_link (1 ft ahead of front tires)
         self.declare_parameter('lidar_z_offset',         0.80)   # m above ground (2026-07 re-mount)
 
         # Center crop ROI (base_link frame)
