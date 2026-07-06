@@ -198,30 +198,29 @@ def rowend_count_update(
     Called only while in a *came-from-FOLLOW* ACQUIRE (we were actively on a row
     and lost it).  The counter drives ``acquire_rowend_escape``.
 
-    The subtlety is the FLICKER in ``row_end_confidence`` at a real row end:
-    residual sparse clutter (a few dozen weed / crop-residue returns after the
-    last plants) intermittently lands near a flanking peak and momentarily reads
-    as "row still here", so ``row_end_confidence`` bounces above and below its
-    threshold scan-to-scan.  A naive "reset to 0 whenever row_end_confidence
-    dips" never accumulates ``row_end_frames`` in a row, and the robot hangs in
-    ACQUIRE at the field edge (field log: stuck at row_dist≈8 m for 16 s, crop
-    confidence pinned 0.28–0.34, row_end_confidence flickering 0.16↔0.91).
-
-    The only evidence that the row has NOT ended is a genuinely confident
-    re-acquire: a real row right in front of a *stationary* ACQUIRE sensor
-    yields ``confidence ≥ acquire_conf``.  So:
+    The robust signal that the row has ended is simply the SUSTAINED INABILITY
+    to re-lock a row while the sensor is stationary.  A confident re-acquire — a
+    real row right in front of a stationary ACQUIRE sensor — yields
+    ``confidence ≥ acquire_conf``; anything less means there is no followable row
+    ahead, so it counts toward the escape:
 
       * ``confidence ≥ acquire_conf`` → a real row is back → reset to 0.
-      * else ``row_end_confidence ≥ row_end_conf`` → empty ahead → increment.
-      * else (low conf AND low row-end conf: ambiguous residual clutter) → HOLD
-        the count — a dip is not evidence of a row, so it must not restart the
-        confirmation.
+      * else (cannot re-lock) → increment toward the row-end escape.
+
+    An earlier version only incremented when the crop band read "empty"
+    (``row_end_confidence ≥ row_end_conf``) and HELD otherwise.  But at a real
+    row end the residual sparse clutter (a few dozen weed / crop-residue returns
+    after the last plants) holds ``row_end_confidence`` in a MID range — field
+    logs show it pinned 0.3–0.6, only occasionally touching 0.70 — so "empty"
+    never latched and the robot HUNG in ACQUIRE (stuck 130+ scans at conf ≈0.28,
+    end flickering 0.13–0.76, never turning).  Keying the count off the plain
+    can't-re-lock condition fixes that; a genuine transient dropout recovers
+    ``confidence`` within a scan or two and resets.  ``row_end_confidence`` is
+    kept in the signature for callers/telemetry but no longer gates the count.
     """
     if confidence >= acquire_conf:
         return 0
-    if row_end_confidence >= row_end_conf:
-        return prev_count + 1
-    return prev_count
+    return prev_count + 1
 
 
 def acquire_rowend_escape(

@@ -263,15 +263,25 @@ def test_rowend_counter_survives_flicker_field_case():
         assert old < ROW_END_FRAMES_ESC                 # confirms the bug it fixes
 
 
-def test_rowend_counter_resets_only_on_confident_reacquire():
-    """A genuinely confident re-acquire (real row back in front) cancels the
-    escape; a mere row_end_confidence dip does not."""
+def test_rowend_counter_counts_whenever_it_cannot_relock():
+    """Any scan that fails to re-lock a confident row counts toward the escape —
+    regardless of row_end_confidence — so mid-range clutter can't stall it; only
+    a confident re-acquire resets."""
     assert rowend_count_update(14, 0.10, 0.30,
-                               acquire_conf=ACQ_CONF, row_end_conf=REACQ) == 14  # ambiguous → hold
+                               acquire_conf=ACQ_CONF, row_end_conf=REACQ) == 15  # can't re-lock → count
     assert rowend_count_update(14, 0.80, 0.30,
                                acquire_conf=ACQ_CONF, row_end_conf=REACQ) == 0   # real row → reset
     assert rowend_count_update(14, 0.20, 0.90,
-                               acquire_conf=ACQ_CONF, row_end_conf=REACQ) == 15  # empty → increment
+                               acquire_conf=ACQ_CONF, row_end_conf=REACQ) == 15  # can't re-lock → count
+
+
+def test_rowend_counter_escapes_on_midrange_clutter_field_case():
+    """The exact field hang: conf pinned ~0.28, row_end_confidence stuck in a
+    MID range (0.13–0.76) that rarely reaches 0.70.  The old logic HELD and the
+    robot hung 130+ scans; now it counts every can't-re-lock scan and escapes."""
+    scans = [(0.28, 0.51), (0.30, 0.44), (0.29, 0.31), (0.27, 0.60),
+             (0.28, 0.24), (0.30, 0.49)] * 4              # 24 scans, end never ≥0.70
+    assert _run_counter(scans) is not None
 
 
 def test_rowend_counter_no_false_escape_on_recovering_row():
