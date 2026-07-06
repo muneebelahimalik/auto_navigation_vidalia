@@ -124,6 +124,38 @@ def turn_reacquired(
     )
 
 
+def headland_exit_row_continues(
+    valid: bool,
+    confidence: float,
+    heading_error: float,
+    lateral_offset: float,
+    *,
+    acquire_conf: float,
+    align_thresh: float,
+    offset_thresh: float,
+) -> bool:
+    """True when the crop reappearing during the turn's straight EXIT leg is the
+    SAME row genuinely continuing — i.e. the row-end was a LiDAR blind-spot gap,
+    not a real end, so the turn should abort back to FOLLOW.
+
+    It must be a real ALIGNED, CENTRED row (small heading, small offset), not
+    merely "some crop at conf ≥ acquire_conf".  At a REAL row end a dense field
+    still returns crop (headland margin, adjacent rows, the just-ended row seen
+    at an angle), but MISALIGNED (field log: conf 0.5 at hdg +34–55°,
+    lat −0.40).  Keying the abort only off confidence made the turn bail every
+    time on that clutter and the robot never turned — it drove diagonally across
+    the headland.  Requiring alignment (same thresholds as ``turn_reacquired``)
+    means only a row that truly runs straight ahead — where the robot was
+    already pointing, the real blind-spot case — aborts the turn.
+    """
+    return (
+        valid
+        and confidence >= acquire_conf
+        and abs(heading_error) <= align_thresh
+        and abs(lateral_offset) <= offset_thresh
+    )
+
+
 def post_turn_loss_action(
     action: str,
     post_turn: bool,

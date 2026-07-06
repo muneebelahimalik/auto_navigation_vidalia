@@ -40,7 +40,7 @@ from navigation.headland import HeadlandTurn
 from navigation.state_logic import (
     follow_loss_is_row_end, follow_loss_action, approach_action,
     acquire_rowend_escape, rowend_count_update, post_turn_loss_action,
-    turn_reacquired)
+    turn_reacquired, headland_exit_row_continues)
 from navigation.row_controller import PurePursuitController
 from navigation.row_perception import RowDetector, RowEstimate
 from navigation.row_safety import SafetyMonitor
@@ -824,12 +824,27 @@ class RowNavigator:
         # Blind-spot guard: the VLP-16 is blind inside ~1.5 m, so a brief sparse
         # patch (or the last plants sitting in the near zone) can read as a row
         # end.  The turn opens with a straight EXIT leg — drive that little bit
-        # of extra distance forward and, if solid crop comes back into the ROI,
+        # of extra distance forward and, if the SAME row comes back into the ROI,
         # the row had NOT actually ended: abort the turn and resume FOLLOW.
         # Only during EXIT (before any rotation), so an abort never leaves the
         # robot half-turned.
+        #
+        # CRITICAL — the reappeared crop must be a genuinely ALIGNED, CENTRED row
+        # (small heading, small offset), not just "any crop at conf≥0.35".  At a
+        # REAL row end a dense field still returns plenty of crop — the headland
+        # margin, the adjacent rows, or the just-ended row seen at an angle — but
+        # it comes back MISALIGNED (field log: conf 0.5 at hdg +34–55°, lat
+        # −0.40).  The old guard keyed only off confidence, so it aborted every
+        # turn on that clutter and the robot never turned — it drove diagonally
+        # across the headland instead.  Requiring alignment means only a row that
+        # truly continues straight ahead (where the robot was already pointing —
+        # the real blind-spot case) aborts the turn.
         if (est is not None and self._headland_turn.phase == "EXIT"
-                and est.valid and est.confidence >= self.acquire_conf):
+                and headland_exit_row_continues(
+                    est.valid, est.confidence, est.heading_error, est.lateral_offset,
+                    acquire_conf=self.acquire_conf,
+                    align_thresh=self.reacquire_align,
+                    offset_thresh=self.reacquire_offset)):
             self._headland_abort_count += 1
             if self._headland_abort_count >= self.headland_abort_frames:
                 print(f"\n[navigator] row end was a LiDAR blind-spot gap — crop "

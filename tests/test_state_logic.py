@@ -279,3 +279,43 @@ def test_rowend_counter_no_false_escape_on_recovering_row():
     not a row end), the counter is repeatedly reset and never escapes."""
     scans = [(0.80, 0.10), (0.20, 0.90), (0.75, 0.10), (0.25, 0.85)] * 10
     assert _run_counter(scans) is None
+
+
+# ---------------------------------------------------------------------------
+# headland_exit_row_continues — abort the turn only for a genuinely aligned row
+# (field bug: the turn aborted on misaligned headland clutter and never turned)
+# ---------------------------------------------------------------------------
+
+from navigation.state_logic import headland_exit_row_continues
+import math as _m
+
+ALIGN = _m.radians(11.5)
+OFFSET = 0.40
+ACQ = 0.35
+
+
+def _continues(conf, hdg_deg, lat):
+    return headland_exit_row_continues(
+        True, conf, _m.radians(hdg_deg), lat,
+        acquire_conf=ACQ, align_thresh=ALIGN, offset_thresh=OFFSET)
+
+
+def test_headland_no_abort_on_misaligned_clutter():
+    """The field row-end signature: crop reappears at conf 0.5 but hdg +34–55°
+    and lat −0.40 → NOT the row continuing → do not abort the turn."""
+    assert _continues(0.50, 34.0, -0.40) is False
+    assert _continues(0.57, 55.0, -0.43) is False
+    assert _continues(0.68, 29.0, -0.38) is False
+
+
+def test_headland_aborts_on_genuine_aligned_row():
+    """A true blind-spot gap: the same row reappears straight ahead and centred
+    → abort the turn and resume FOLLOW."""
+    assert _continues(0.60, 2.0, 0.05) is True
+    assert _continues(0.80, -5.0, -0.10) is True
+
+
+def test_headland_abort_needs_all_three():
+    assert _continues(0.20, 1.0, 0.02) is False        # low confidence
+    assert _continues(0.90, 20.0, 0.02) is False        # aligned offset but angled
+    assert _continues(0.90, 1.0, 0.55) is False         # aligned heading but off-strip
