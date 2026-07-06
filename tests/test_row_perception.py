@@ -707,3 +707,83 @@ def test_normal_small_heading_unchanged_by_clamp():
     est, det = _smoothed(math.radians(3), 0.02, math.radians(4), 0.03)
     # a few degrees is below even the centred cap -> plain EMA blend, untouched
     assert math.radians(2) < abs(est.heading_error) < math.radians(5)
+
+
+# ---------------------------------------------------------------------------
+# Dense / tall-canopy adaptive fit — when the canopy closes over and the
+# ground/furrow is no longer visible, weight the fit by canopy-height
+# prominence so the taller rows dominate and the residue strip (a height
+# VALLEY) is recovered.  Early growth stays on the plain density fit.
+# ---------------------------------------------------------------------------
+
+def _canopy_row(x_centre, n, h_lo, h_hi, sigma, y_lo=1.6, y_hi=6.6):
+    rng = np.random.default_rng(int(abs(x_centre * 1000)) + n)
+    y = rng.uniform(y_lo, y_hi, n)
+    x = x_centre + rng.normal(0.0, sigma, n)
+    h = rng.uniform(h_lo, h_hi, n)
+    return np.column_stack((x, y, h - LIDAR_MOUNT_HEIGHT))
+
+
+def make_dense_canopy_scene(offset):
+    """Tall closed-canopy centre-residue scene.  ``offset`` = robot metres RIGHT
+    of the strip centre → the strip appears at x=-offset, the two crop rows at
+    -offset ± HALF.  The rows are tall ridges (canopy 0.45–0.78 m); the residue
+    strip is a LOW valley; and dense low leaf/weed clutter fills the inter-row
+    space (biased left) so the plain DENSITY midpoint is dragged off — the
+    field failure this fixes."""
+    c = -offset
+    rng = np.random.default_rng(99)
+    parts = [
+        _canopy_row(c - HALF, 340, 0.45, 0.78, 0.08),   # tall left crop row
+        _canopy_row(c + HALF, 340, 0.45, 0.78, 0.08),   # tall right crop row
+        _canopy_row(c,        200, 0.05, 0.22, 0.12),   # low residue strip (valley)
+    ]
+    xg = rng.uniform(-0.78, 0.40, 420)                  # low clutter, biased left
+    yg = rng.uniform(1.6, 6.6, 420)
+    hg = rng.uniform(0.08, 0.30, 420)
+    parts.append(np.column_stack((xg, yg, hg - LIDAR_MOUNT_HEIGHT)))
+    return np.vstack(parts)
+
+
+def test_dense_canopy_regime_engages_on_tall_crop():
+    det = RowDetector(dual_row=True, row_spacing=ROW_SPACING,
+                      crop_h_min=0.03, crop_h_max=1.0)
+    converge(det, make_dense_canopy_scene(0.0))
+    assert det.last_dense is True                 # closed canopy → weighted fit engaged
+    assert det.last_tall_frac >= det.dense_canopy_frac
+
+
+def test_dense_canopy_recovers_offset_where_plain_fails():
+    """Robot 0.20 m right of the strip: the height-weighted fit recovers
+    lateral≈-0.20, while the plain density fit is dragged toward the low clutter."""
+    pts = make_dense_canopy_scene(0.20)
+    dense = RowDetector(dual_row=True, row_spacing=ROW_SPACING,
+                        crop_h_min=0.03, crop_h_max=1.0, dense_canopy=True)
+    plain = RowDetector(dual_row=True, row_spacing=ROW_SPACING,
+                        crop_h_min=0.03, crop_h_max=1.0, dense_canopy=False)
+    ed = converge(dense, pts)
+    ep = converge(plain, pts)
+    assert ed.lateral_offset == pytest.approx(-0.20, abs=0.06)     # accurate
+    # the plain fit is off by > 0.15 m (the weave / row-hop error the fix removes)
+    assert abs(ep.lateral_offset - (-0.20)) > 0.15
+    assert abs(ed.lateral_offset - (-0.20)) < abs(ep.lateral_offset - (-0.20))
+
+
+def test_early_growth_untouched_by_dense_canopy():
+    """Short seedlings (all returns well below canopy_tall_h): the dense regime
+    never engages and the fit is byte-identical to dense_canopy=False."""
+    pts = np.vstack([make_row(-HALF - 0.20), make_row(+HALF - 0.20)])   # h 0.08–0.25
+    on = RowDetector(dual_row=True, row_spacing=ROW_SPACING, dense_canopy=True)
+    off = RowDetector(dual_row=True, row_spacing=ROW_SPACING, dense_canopy=False)
+    e_on = converge(on, pts)
+    e_off = converge(off, pts)
+    assert on.last_dense is False                          # never triggered
+    assert e_on.lateral_offset == pytest.approx(e_off.lateral_offset, abs=1e-9)
+    assert e_on.heading_error == pytest.approx(e_off.heading_error, abs=1e-9)
+
+
+def test_dense_canopy_can_be_disabled():
+    det = RowDetector(dual_row=True, row_spacing=ROW_SPACING,
+                      crop_h_min=0.03, crop_h_max=1.0, dense_canopy=False)
+    converge(det, make_dense_canopy_scene(0.0))
+    assert det.last_dense is False

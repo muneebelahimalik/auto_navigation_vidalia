@@ -478,7 +478,12 @@ class RowNavigator:
             if len(cam_stable):
                 safety_pts = np.vstack([pts, cam_stable]) if len(pts) else cam_stable
 
-            safety = self.safety.check(safety_pts)
+            # Detrend the forward ground grade in the safety height test too, so
+            # tall crop ahead on a slope is not read as an obstacle (uses the
+            # detector's per-scan ground-slope estimate; 0 on flat ground).
+            safety = self.safety.check(
+                safety_pts,
+                ground_slope=getattr(self.detector, "last_ground_slope", 0.0) or 0.0)
 
             # --- Legacy strip-based camera obstacle detection ---
             # Only runs when old DepthObstacleDetector objects are provided AND
@@ -1156,6 +1161,8 @@ class RowNavigator:
             "grade_deg":      round(math.degrees(math.atan(gs)), 3),
             "roll_deg":       round(math.degrees(math.atan(getattr(self.detector, "last_ground_roll", 0.0) or 0.0)), 3),
             "drop_m":         round(float(getattr(self.detector, "last_ground_shift", 0.0) or 0.0), 3),
+            "dense":          bool(getattr(self.detector, "last_dense", False)),
+            "tall_frac":      round(float(getattr(self.detector, "last_tall_frac", 0.0) or 0.0), 3),
             "lin_cmd":        round(float(linear), 4),
             "ang_cmd":        round(float(angular), 4),
             "fwd_blocked":    bool(safety.forward_blocked),
@@ -1215,6 +1222,9 @@ class RowNavigator:
         _sh = getattr(self.detector, "last_ground_shift", 0.0)
         if _sh:
             grade_str += f" drop={_sh:+.2f}m"
+        # Dense/tall-canopy regime: canopy-height-weighted row fit is engaged.
+        if getattr(self.detector, "last_dense", False):
+            grade_str += f" DENSE({getattr(self.detector, 'last_tall_frac', 0.0):.0%})"
         # Live self-calibrated row spacing (dual-row) so the operator can see it
         # converge to the field's actual spacing — no need to measure/pass it.
         if getattr(self.detector, "dual_row", False):

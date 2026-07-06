@@ -415,6 +415,9 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
         ground_detrend=not args.no_ground_detrend,
         heading_cap_deg=args.heading_cap,
         heading_gate_deg=args.heading_gate,
+        dense_canopy=not args.no_dense_canopy,
+        canopy_tall_h=args.canopy_tall_h,
+        dense_canopy_frac=args.dense_frac,
     )
     tire_h = args.tire_height if args.tire_height is not None else args.obstacle_height
     safety = SafetyMonitor(
@@ -728,6 +731,26 @@ def main() -> None:
                              "ramps from --heading-cap (centred) up to this value as |lateral| "
                              "reaches heading_consistency_lat (0.22 m); beyond that the heading "
                              "is left unclamped so real off-strip recoveries steer fully.")
+    parser.add_argument("--no-dense-canopy", action="store_true",
+                        help="Disable the tall/dense-canopy adaptive row fit. By default, "
+                             "when the canopy has closed over and the ground/furrow is no "
+                             "longer visible (a large fraction of the crop band is tall), the "
+                             "detector weights each point by its canopy-height prominence so "
+                             "the two taller crop rows dominate and the residue strip re-appears "
+                             "as a gap between them — fixing the lateral/heading/spacing weave "
+                             "that a plateau-shaped histogram causes in dense crop. Early growth "
+                             "is unaffected (the weighting only engages in the dense regime; live "
+                             "`DENSE(NN%)` in the status line). Pass this to force the plain "
+                             "density fit at all growth stages.")
+    parser.add_argument("--canopy-tall-h", type=float, default=0.45, metavar="M",
+                        help="Ground-relative height (m, default: 0.45) above which a return "
+                             "counts as 'tall canopy' for the dense-regime trigger. Points above "
+                             "this are clearly crop, not early seedlings / residue / furrow floor.")
+    parser.add_argument("--dense-frac", type=float, default=0.35, metavar="F",
+                        help="Fraction of crop-band points that must be tall (> --canopy-tall-h) "
+                             "for the dense-canopy weighted fit to engage (default: 0.35). Lower "
+                             "it (e.g. 0.25) to engage the robust fit earlier as the crop fills in; "
+                             "raise it to keep the plain density fit until the canopy is fully closed.")
     parser.add_argument("--turn-dir", choices=["right", "left"], default="right",
                         help="Direction of the FIRST headland U-turn (default: right). "
                              "Subsequent turns alternate for serpentine coverage.")

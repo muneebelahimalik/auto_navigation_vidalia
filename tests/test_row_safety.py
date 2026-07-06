@@ -93,3 +93,44 @@ def test_default_forward_half_width_does_not_false_alarm_in_forward_zone():
     assert not status.forward_blocked, (
         "Returns outside the 0.60 m body corridor must not trip the forward zone"
     )
+
+
+# ---------------------------------------------------------------------------
+# Forward ground-grade detrend — tall crop ahead on a slope must not read as
+# an obstacle, while a real obstacle on the same slope still stops the robot.
+# ---------------------------------------------------------------------------
+
+def _sloped_crop(slope, y0=2.4, h_true=0.40, n=30):
+    """Crop of true ground-relative height h_true at range y0, but the fixed
+    tilt correction leaves it ramped up by slope·y (apparent height)."""
+    apparent = h_true + slope * y0
+    return cluster(0.0, y0, h=apparent, n=n)
+
+
+def test_tall_crop_on_slope_no_false_obstacle_with_detrend():
+    """0.40 m crop 2.4 m ahead (below the 0.50 m threshold on flat ground) reads
+    ~0.76 m to the fixed tilt correction on an up-slope and trips the forward
+    zone; detrending the ground slope cancels the ramp so it passes.  (Crop
+    genuinely TALLER than the threshold still needs --obstacle-height raised —
+    the detrend only recovers the slope-induced margin.)"""
+    slope = 0.15  # ~8.5° grade
+    pts = _sloped_crop(slope)
+    assert soybean_defaults().check(pts).forward_blocked                    # false alarm w/o detrend
+    assert not soybean_defaults().check(pts, ground_slope=slope).forward_blocked  # cleared with detrend
+
+
+def test_real_obstacle_on_slope_still_blocks_with_detrend():
+    """A person (1.3 m above local ground) on the same slope still exceeds the
+    threshold after detrending — the detrend removes only the ground ramp."""
+    slope = 0.15
+    y0 = 1.8
+    apparent = 1.3 + slope * y0
+    pts = cluster(0.0, y0, h=apparent, n=20)
+    assert soybean_defaults().check(pts, ground_slope=slope).forward_blocked
+
+
+def test_detrend_zero_is_identical():
+    pts = cluster(0.0, 1.8, h=1.2)
+    a = soybean_defaults().check(pts)
+    b = soybean_defaults().check(pts, ground_slope=0.0)
+    assert a.forward_blocked == b.forward_blocked and a.fwd_points == b.fwd_points

@@ -292,6 +292,10 @@ class RowDetector:
         ground_roll_x_half: float = 2.0,
         heading_cap_deg: float = 7.0,
         heading_gate_deg: float = 22.0,
+        dense_canopy: bool = True,
+        canopy_tall_h: float = 0.45,
+        dense_canopy_frac: float = 0.35,
+        strip_floor_pct: float = 25.0,
     ) -> None:
         self.roi_y_min = roi_y_min
         self.roi_y_max = roi_y_max
@@ -375,6 +379,33 @@ class RowDetector:
         # the robot must genuinely cross past the half-way line before the
         # detector will accept the new strip.
         self.midpoint_prior_weight = midpoint_prior_weight
+        # --- Dense / tall-canopy robustness (growth-stage adaptive) ---------
+        # The default row fit keys the two flanking soybean rows off a DENSITY
+        # contrast: at early growth the rows carry crop returns while the furrow
+        # / residue strip between them is bare GROUND (few in-band points), so
+        # the cross-row histogram has two clean peaks with a gap.  As the canopy
+        # grows tall and closes over (field: ~0.70–0.75 m), the crop band fills
+        # solid — the VLP-16 sees leaves/stems everywhere and almost no ground —
+        # so the histogram becomes a plateau, the peak-pairing jitters, and the
+        # lateral/heading/spacing estimates weave (field log: sp bouncing
+        # 0.60↔0.76, heading ±5–22°, robot hopping strips).
+        #
+        # But the residue strip the robot straddles is still a canopy-height
+        # VALLEY between the two taller crop rows.  So in the dense regime we
+        # weight every point by its canopy-height PROMINENCE (height above the
+        # local strip floor): the taller row-ridge returns dominate the fit and
+        # the strip re-appears as a gap between two weighted-density peaks.  This
+        # reuses the ENTIRE existing pipeline (weighted histogram_peaks,
+        # find_row_midpoint spacing-prior + strip-lock, cluster-centred PCA) —
+        # it only supplies a per-point weight.  Early growth is untouched:
+        # dense_frac stays below the gate so the weight is never applied and the
+        # fit is byte-identical to before.
+        self.dense_canopy = dense_canopy
+        self.canopy_tall_h = canopy_tall_h            # m; a point above this (ground-relative) is "tall canopy"
+        self.dense_canopy_frac = dense_canopy_frac    # fraction of ROI pts tall → dense regime
+        self.strip_floor_pct = strip_floor_pct        # percentile of ROI height = residue-strip canopy floor
+        self.last_dense = False                       # diagnostic: dense regime this scan?
+        self.last_tall_frac = 0.0                     # diagnostic: fraction of ROI pts above canopy_tall_h
         # Point-level fusion of camera ground points (aux_xy in update()):
         # aux_y_min lets near-field camera points (LiDAR self-filter blind
         # zone) into the fit; aux_mass_ratio caps the camera's total
@@ -490,10 +521,31 @@ class RowDetector:
             roi = (in_xy & (h_eff >= self.crop_h_min + shift)
                    & (h_eff <= self.crop_h_max + shift))
             cx, cy = x[roi], y[roi]
+            ch = h_eff[roi]                    # ground-relative height of each ROI point
             n = int(cx.shape[0])
         else:
-            cx = cy = np.empty(0)
+            cx = cy = ch = np.empty(0)
             n = 0
+
+        # --- Dense / tall-canopy regime: height-prominence point weights ------
+        # When the canopy has closed over (a large fraction of the ROID band is
+        # tall), weight each point by how far it rises above the residue-strip
+        # floor so the two taller crop rows dominate the fit and the strip shows
+        # as a gap between them.  Off in early growth (weight vector = None →
+        # original unweighted fit).  See __init__ note.
+        dense = False
+        h_weight = None
+        if self.dense_canopy and n >= self.min_points:
+            self.last_tall_frac = float(np.mean(ch > self.canopy_tall_h))
+            if self.last_tall_frac >= self.dense_canopy_frac:
+                floor = float(np.percentile(ch, self.strip_floor_pct))
+                hw = np.clip(ch - floor, 0.0, None)
+                if float(hw.max()) > 1e-6:
+                    dense = True
+                    h_weight = hw
+        else:
+            self.last_tall_frac = 0.0
+        self.last_dense = dense
 
         # Row-end confidence stays LiDAR-only: the camera's contribution to
         # row-end detection is the separate green-fraction veto, and camera
@@ -521,12 +573,18 @@ class RowDetector:
             return self._decay(row_end_conf=row_end_conf)
 
         # --- pooled point set + per-point weights ---
+        # Base LiDAR weight: canopy-height prominence in the dense regime
+        # (emphasises the taller row ridges so the residue strip re-appears as a
+        # gap), else uniform (original behaviour).
+        lidar_w = h_weight if dense else np.ones(n)
         P = np.column_stack((cx, cy))
         if A is not None:
-            w = np.concatenate([np.ones(n), np.full(len(A), cam_mass / len(A))])
+            w = np.concatenate([lidar_w, np.full(len(A), cam_mass / len(A))])
             P = np.vstack([P, A]) if n else np.asarray(A, dtype=float)
+        elif dense:
+            w = lidar_w   # tall-canopy weighting even with no camera
         else:
-            w = None   # pure-LiDAR path: identical to the original unweighted fit
+            w = None   # pure-LiDAR early-growth path: identical to the original unweighted fit
 
         # --- PCA: dominant axis = row direction (rows are parallel) ---
         # Heading seed for mixed-sensor fits comes from the LiDAR points

@@ -86,13 +86,25 @@ class SafetyMonitor:
         self.tire_min_points = tire_min_points
 
     # ------------------------------------------------------------------
-    def check(self, pts: np.ndarray) -> SafetyStatus:
-        """Classify obstacles in the three zones from an Nx3 point array."""
+    def check(self, pts: np.ndarray, ground_slope: float = 0.0) -> SafetyStatus:
+        """Classify obstacles in the three zones from an Nx3 point array.
+
+        ``ground_slope`` (dz/dy, radians→slope) removes the forward ground RAMP
+        from the height test — pass the row detector's per-scan estimate.  On a
+        grade the fixed mount-tilt correction leaves flat ground (and the crop
+        growing on it) ramping up with range, so tall crop a few metres ahead on
+        an up-slope reads as a tall obstacle and stops the robot in clear rows
+        (field-observed).  Subtracting the linear ground ramp (pivot at the
+        sensor, y=0) cancels that, while a REAL obstacle — which rises above the
+        local ground — still exceeds the height threshold and stops the robot.
+        0.0 (flat / not supplied) → byte-identical to the original check."""
         if pts is None or len(pts) == 0:
             return SafetyStatus()
 
         x, y, z = pts[:, 0], pts[:, 1], pts[:, 2]
         h = z + LIDAR_MOUNT_HEIGHT
+        if ground_slope:
+            h = h - ground_slope * y
         ahead = y > self.near
 
         fwd = (
