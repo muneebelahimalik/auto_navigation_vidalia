@@ -28,14 +28,15 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from navigation.rl_policy import MLPPolicy
-from sim.evaluate import evaluate, policy_act_fn, pursuit_act_fn, rollout
+from sim.evaluate import (evaluate, policy_act_fn, pursuit_act_fn,
+                          residual_act_fn, rollout)
 from sim.row_follow_env import EnvConfig, RowFollowEnv
 
 
-def fitness(policy: MLPPolicy, flat, env: RowFollowEnv, seeds) -> float:
+def fitness(policy: MLPPolicy, flat, env: RowFollowEnv, seeds, make_act) -> float:
     """Mean episode return of the policy(flat) over the given eval seeds."""
     policy.set_params(flat)
-    act = policy_act_fn(policy)
+    act = make_act(policy)
     return float(np.mean([rollout(env, act, int(s))["return"] for s in seeds]))
 
 
@@ -62,6 +63,12 @@ def main() -> None:
     ap.add_argument("--c-e", type=float, default=2.0, help="lateral-error penalty")
     ap.add_argument("--c-theta", type=float, default=0.5, help="heading-error penalty")
     ap.add_argument("--c-u", type=float, default=0.05, help="control-effort penalty")
+    ap.add_argument("--residual", action="store_true",
+                    help="train a RESIDUAL policy: total steer = pursuit baseline "
+                         "(+integral) + scale·policy_delta. Starts at the baseline "
+                         "and learns only the correction on top.")
+    ap.add_argument("--residual-scale", type=float, default=0.5,
+                    help="authority of the residual delta (fraction of max_angular)")
     args = ap.parse_args()
 
     rng = np.random.default_rng(args.seed)
@@ -71,6 +78,15 @@ def main() -> None:
     theta = policy.get_params()
     n = theta.size
     half = max(1, args.pop // 2)
+
+    # Standalone policy replaces steering; residual policy adds a delta on top of
+    # the geometric+integral baseline.
+    if args.residual:
+        make_act = lambda p: residual_act_fn(p, scale=args.residual_scale)
+        print(f"[RESIDUAL policy]  total steer = pursuit(+integral) baseline + "
+              f"{args.residual_scale}·delta")
+    else:
+        make_act = policy_act_fn
 
     # Held-out seeds (never used to compute the ES gradient) for honest reporting.
     held = list(range(10_000, 10_000 + args.eval_seeds))
@@ -89,8 +105,8 @@ def main() -> None:
         eps = rng.normal(0.0, 1.0, size=(half, n))
         scores = np.empty(2 * half)
         for i in range(half):
-            scores[2 * i]     = fitness(policy, theta + args.sigma * eps[i], env, seeds)
-            scores[2 * i + 1] = fitness(policy, theta - args.sigma * eps[i], env, seeds)
+            scores[2 * i]     = fitness(policy, theta + args.sigma * eps[i], env, seeds, make_act)
+            scores[2 * i + 1] = fitness(policy, theta - args.sigma * eps[i], env, seeds, make_act)
         # Antithetic ES gradient with rank-normalised utilities.
         util = rank_normalise(scores)
         grad = np.zeros(n)
@@ -100,7 +116,7 @@ def main() -> None:
         theta = theta + args.lr * grad
 
         if it % 10 == 0 or it == 1:
-            cur = evaluate(policy_act_fn(policy.set_params(theta)), held)
+            cur = evaluate(make_act(policy.set_params(theta)), held)
             score = cur["return"][0]
             if score > best_score:
                 best_score, best_theta = score, theta.copy()

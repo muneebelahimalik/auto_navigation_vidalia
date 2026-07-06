@@ -20,7 +20,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from navigation.rl_policy import MLPPolicy
-from sim.evaluate import evaluate, mpc_act_fn, policy_act_fn, pursuit_act_fn
+from sim.evaluate import (evaluate, mpc_act_fn, policy_act_fn, pursuit_act_fn,
+                          residual_act_fn)
 
 
 def _row(name, agg):
@@ -45,7 +46,14 @@ def main() -> None:
         "policies/follow_jerk1.0.npz:rl_jerk1.0",
         "policies/follow_jerk3.0.npz:rl_jerk3.0",
         "policies/follow_jerk8.0.npz:rl_jerk8.0",
-    ], help="each entry PATH:label")
+    ], help="standalone RL policies — each entry PATH:label")
+    ap.add_argument("--residual-policies", nargs="+", default=[
+        "policies/follow_residual.npz:rl_residual_jerk0.3",
+        "policies/follow_residual_jerk1.0.npz:rl_residual_jerk1.0",
+        "policies/follow_residual_jerk3.0.npz:rl_residual_jerk3.0",
+        "policies/follow_residual_jerk8.0.npz:rl_residual_jerk8.0",
+    ], help="RESIDUAL RL policies (evaluated on top of the baseline) — PATH:label")
+    ap.add_argument("--residual-scale", type=float, default=0.5)
     args = ap.parse_args()
 
     seeds = list(range(args.seed_base, args.seed_base + args.episodes))
@@ -60,6 +68,17 @@ def main() -> None:
             continue
         pol = MLPPolicy.load(path)
         rows.append(_row(label, evaluate(policy_act_fn(pol), seeds)))
+        print(f"{label}: {rows[-1]}")
+
+    for spec in args.residual_policies:
+        path, _, label = spec.partition(":")
+        label = label or Path(path).stem
+        if not Path(path).exists():
+            print(f"  skip {label}: {path} not found")
+            continue
+        pol = MLPPolicy.load(path)
+        rows.append(_row(label, evaluate(
+            residual_act_fn(pol, scale=args.residual_scale), seeds)))
         print(f"{label}: {rows[-1]}")
 
     if not args.no_mpc:

@@ -38,6 +38,32 @@ def policy_act_fn(policy):
     return lambda raw_obs: policy.act(raw_obs)
 
 
+def residual_act_fn(policy, max_angular: float = 0.40, scale: float = 0.5,
+                    **pursuit_kwargs):
+    """A RESIDUAL policy as an env policy: the total steering is the geometric+
+    integral pure-pursuit baseline PLUS ``scale`` × the policy's delta, clipped
+    to [-1, 1].  The policy therefore only has to learn the small correction ON
+    TOP of a known-good baseline — it starts near the baseline's performance
+    (delta≈0 at init) and can only improve, and is strictly a bounded
+    perturbation of a safe geometric law.  Stateful (the baseline carries its
+    integral); exposes ``.reset`` so the rollout clears it per episode."""
+    from navigation.row_controller import PurePursuitController
+
+    ctrl = PurePursuitController(max_angular=max_angular, **pursuit_kwargs)
+
+    def act(raw_obs) -> float:
+        e, theta, conf = raw_obs[0], raw_obs[1], raw_obs[2]
+        est = RowEstimate(heading_error=float(theta), lateral_offset=float(e),
+                          confidence=float(conf), valid=True)
+        _v, w_pp = ctrl.compute(est)
+        a_pp = float(np.clip(w_pp / max_angular, -1.0, 1.0)) if max_angular else 0.0
+        delta = float(policy.act(raw_obs))
+        return float(np.clip(a_pp + scale * delta, -1.0, 1.0))
+
+    act.reset = ctrl.reset
+    return act
+
+
 def mpc_act_fn(max_angular: float = 0.40, **mpc_kwargs):
     """The MPPI controller as an env policy (stateful: warm-start + observers).
 

@@ -36,8 +36,11 @@ class RLController:
         max_angular: float = 0.40,
         lookahead: float = 2.0,
         min_confidence: float = 0.35,
+        residual: bool = False,
+        residual_scale: float = 0.5,
     ) -> None:
-        # Reused for forward speed + as the low-confidence / no-policy fallback.
+        # Reused for forward speed + as the low-confidence / no-policy fallback,
+        # AND (in residual mode) as the base steering the policy corrects on top of.
         self.pursuit = PurePursuitController(
             max_linear=max_linear, min_linear=min_linear, max_angular=max_angular,
             lookahead=lookahead, min_confidence=min_confidence)
@@ -45,6 +48,10 @@ class RLController:
         self.max_angular = max_angular
         self.min_confidence = min_confidence
         self.lookahead = lookahead
+        # Residual mode: the policy outputs a DELTA added to the geometric+integral
+        # baseline steering (bounded, strictly safer), instead of replacing it.
+        self.residual = residual
+        self.residual_scale = residual_scale
         self._prev_a = 0.0
         self._eint = 0.0
         # Whether the loaded policy takes the 5th (drift-integrator) input.
@@ -73,8 +80,13 @@ class RLController:
         obs = [est.lateral_offset, est.heading_error, est.confidence, self._prev_a]
         if self._use_eint:
             obs.append(self._eint)
-        a = self.policy.act(obs)
-        a = max(-1.0, min(1.0, a))
+        delta = max(-1.0, min(1.0, self.policy.act(obs)))
+        if self.residual:
+            # Total action = baseline (with integral) + bounded policy correction.
+            a_pp = w_pp / self.max_angular if self.max_angular else 0.0
+            a = max(-1.0, min(1.0, a_pp + self.residual_scale * delta))
+        else:
+            a = delta                                  # policy replaces the steering
         self._prev_a = a
         w = max(-self.max_angular, min(self.max_angular, a * self.max_angular))
         return v, w

@@ -127,6 +127,47 @@ def test_policy_steering_is_clamped():
 
 
 # ---------------------------------------------------------------------------
+# Residual composition: policy adds a bounded delta on top of the baseline
+# ---------------------------------------------------------------------------
+
+def test_residual_zero_policy_equals_baseline():
+    """A residual policy that outputs ~0 must reproduce the pure-pursuit baseline
+    (delta≈0 → total = baseline).  This is why residual RL starts at the
+    baseline's performance instead of learning steering from scratch."""
+    from navigation.row_controller import PurePursuitController
+    pol = MLPPolicy(seed=3)
+    pol.set_params(pol.get_params() * 0.0)        # exactly-zero network → delta≈0
+    rl = RLController(policy=pol, residual=True, residual_scale=0.5)
+    base = PurePursuitController()
+    est = RowEstimate(heading_error=0.10, lateral_offset=0.12, confidence=0.9, valid=True)
+    _v0, w_base = base.compute(est)
+    _v1, w_res = rl.compute(est)
+    assert abs(w_res - w_base) < 1e-6
+
+
+def test_residual_output_is_bounded():
+    """Even a saturating residual policy stays within ±max_angular."""
+    pol = MLPPolicy(seed=7)
+    pol.set_params(pol.get_params() * 50.0)
+    rl = RLController(policy=pol, residual=True, residual_scale=0.5, max_angular=0.40)
+    est = RowEstimate(heading_error=0.3, lateral_offset=0.4, confidence=0.9, valid=True)
+    _v, w = rl.compute(est)
+    assert -0.40 <= w <= 0.40
+
+
+def test_residual_act_fn_starts_near_baseline_in_sim():
+    """The residual env-policy with a near-zero net scores ≈ the pursuit baseline
+    over held-out episodes (the residual head-start)."""
+    from sim.evaluate import residual_act_fn
+    pol = MLPPolicy(obs_dim=RowFollowEnv.OBS_DIM, seed=1)
+    pol.set_params(pol.get_params() * 0.0)
+    seeds = list(range(300, 340))
+    base = evaluate(pursuit_act_fn(), seeds)["return"][0]
+    res = evaluate(residual_act_fn(pol, scale=0.5), seeds)["return"][0]
+    assert abs(res - base) < 1.0                    # essentially the baseline
+
+
+# ---------------------------------------------------------------------------
 # Pure-pursuit baseline keeps the simulated robot on the row (sanity that the
 # env + baseline are coherent before any learning).
 # ---------------------------------------------------------------------------

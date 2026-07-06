@@ -442,7 +442,11 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
                   f"— running pure-pursuit fallback.")
         controller = RLController(
             policy=pol, max_linear=args.speed,
-            lookahead=args.lookahead, max_angular=args.max_angular)
+            lookahead=args.lookahead, max_angular=args.max_angular,
+            residual=args.rl_residual, residual_scale=args.residual_scale)
+        if args.rl_residual:
+            print(f" [row_follow] RESIDUAL RL: steer = pursuit(+integral) + "
+                  f"{args.residual_scale}·policy_delta")
     elif args.controller == "mpc":
         # Optional sampling-based MPC (MPPI) with an online disturbance observer
         # for slope-drift rejection (opt-in). Falls back to pure-pursuit when the
@@ -973,6 +977,16 @@ def main() -> None:
                         help="Trained steering policy .npz for --controller rl "
                              "(default: policies/follow_jerk8.0.npz, the smoothest "
                              "sweep policy; missing/absent → pure-pursuit fallback).")
+    parser.add_argument("--rl-residual", action="store_true",
+                        help="RESIDUAL RL (with --controller rl): the policy adds a bounded "
+                             "delta ON TOP of the geometric+integral pure-pursuit baseline "
+                             "instead of replacing the steering. Strictly safer (bounded "
+                             "perturbation of a known-good law) and the policy only learns "
+                             "the transient correction. Use a policy trained with "
+                             "train_rl.py --residual.")
+    parser.add_argument("--residual-scale", type=float, default=0.5, metavar="S",
+                        help="Authority of the residual delta as a fraction of --max-angular "
+                             "(default: 0.5). Must match the value the policy was trained with.")
     parser.add_argument("--lookahead", type=float, default=2.0, metavar="M",
                         help="Pure-pursuit lookahead distance in metres (default: 2.0). "
                              "Smaller = more aggressive lateral correction but risks oscillation. "
