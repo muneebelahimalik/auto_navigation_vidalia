@@ -39,7 +39,8 @@ from lidar.obstacle_filter import tilt_correct_pts, yaw_correct_pts
 from navigation.headland import HeadlandTurn
 from navigation.state_logic import (
     follow_loss_is_row_end, follow_loss_action, approach_action,
-    acquire_rowend_escape, post_turn_loss_action, turn_reacquired)
+    acquire_rowend_escape, rowend_count_update, post_turn_loss_action,
+    turn_reacquired)
 from navigation.row_controller import PurePursuitController
 from navigation.row_perception import RowDetector, RowEstimate
 from navigation.row_safety import SafetyMonitor
@@ -625,10 +626,22 @@ class RowNavigator:
         # check from tripping) leaves the robot stuck in ACQUIRE at the field
         # edge.  Uses the same continuous-absence requirement as a real row end.
         if self._came_from_follow:
-            if est.row_end_confidence >= self.row_end_conf:
-                self._acq_rowend_count += 1
-            else:
-                self._acq_rowend_count = 0
+            # Count scans toward a row-end escape.  The counter must survive the
+            # FLICKER in row_end_confidence caused by residual sparse clutter at
+            # the row end (a few dozen weed/residue returns land near a flanking
+            # peak and momentarily read as "row still here", dropping
+            # row_end_confidence below threshold).  The old logic reset the count
+            # to 0 on every such dip, so it never reached row_end_frames and the
+            # robot hung in ACQUIRE at the field edge (observed: stuck at
+            # row_dist≈8 m for 16 s, conf pinned 0.28–0.34, end= flickering
+            # 0.16↔0.91).  The ONLY signal that the row has NOT ended is a
+            # genuinely confident re-acquire — a real row right in front of a
+            # stationary sensor gives conf ≥ acquire_conf.  So reset only on
+            # that; a low-confidence sparse scan HOLDS the count (it is not
+            # evidence of a row), and a sparse-ahead scan increments it.
+            self._acq_rowend_count = rowend_count_update(
+                self._acq_rowend_count, est.confidence, est.row_end_confidence,
+                acquire_conf=self.acquire_conf, row_end_conf=self.row_end_conf)
             if acquire_rowend_escape(self._came_from_follow,
                                      self._acq_rowend_count,
                                      row_end_frames=self.row_end_frames):

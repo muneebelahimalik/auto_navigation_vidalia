@@ -221,3 +221,61 @@ def test_acquire_no_escape_before_sustained():
     """A brief empty patch in ACQUIRE is not yet a row end."""
     assert escape(True, ROW_END_FRAMES_ESC - 1) is False
     assert escape(True, 0) is False
+
+
+# ---------------------------------------------------------------------------
+# rowend_count_update — the counter must survive row_end_confidence FLICKER
+# (the field hang: robot stuck in ACQUIRE at the row end for 16 s because the
+# residual-clutter flicker kept resetting the confirmation counter to 0)
+# ---------------------------------------------------------------------------
+
+from navigation.state_logic import rowend_count_update
+
+ACQ_CONF = 0.35
+REACQ = 0.70
+
+
+def _run_counter(scans):
+    """Replay (confidence, row_end_confidence) scans; return frames-to-escape or
+    None if it never reached ROW_END_FRAMES_ESC."""
+    c = 0
+    for i, (conf, endc) in enumerate(scans):
+        c = rowend_count_update(c, conf, endc,
+                                acquire_conf=ACQ_CONF, row_end_conf=REACQ)
+        if c >= ROW_END_FRAMES_ESC:
+            return i + 1
+    return None
+
+
+def test_rowend_counter_survives_flicker_field_case():
+    """The field row-end signature: crop confidence pinned below acquire_conf,
+    row_end_confidence oscillating above/below its threshold every couple of
+    scans.  The counter must still accumulate to the escape (the OLD reset-on-dip
+    logic never would → the robot hung)."""
+    # conf never re-acquires (all < 0.35); end flickers high/low
+    scans = [(0.30, 0.85), (0.31, 0.60), (0.29, 0.80), (0.33, 0.45),
+             (0.28, 0.90), (0.32, 0.20)] * 6           # 36 scans
+    assert _run_counter(scans) is not None              # DOES escape now
+    # the old naive logic (reset to 0 on any end-conf dip) would never reach 15
+    old = 0
+    for conf, endc in scans:
+        old = old + 1 if endc >= REACQ else 0
+        assert old < ROW_END_FRAMES_ESC                 # confirms the bug it fixes
+
+
+def test_rowend_counter_resets_only_on_confident_reacquire():
+    """A genuinely confident re-acquire (real row back in front) cancels the
+    escape; a mere row_end_confidence dip does not."""
+    assert rowend_count_update(14, 0.10, 0.30,
+                               acquire_conf=ACQ_CONF, row_end_conf=REACQ) == 14  # ambiguous → hold
+    assert rowend_count_update(14, 0.80, 0.30,
+                               acquire_conf=ACQ_CONF, row_end_conf=REACQ) == 0   # real row → reset
+    assert rowend_count_update(14, 0.20, 0.90,
+                               acquire_conf=ACQ_CONF, row_end_conf=REACQ) == 15  # empty → increment
+
+
+def test_rowend_counter_no_false_escape_on_recovering_row():
+    """If the crop keeps coming back confidently (a transient mid-row dropout,
+    not a row end), the counter is repeatedly reset and never escapes."""
+    scans = [(0.80, 0.10), (0.20, 0.90), (0.75, 0.10), (0.25, 0.85)] * 10
+    assert _run_counter(scans) is None
