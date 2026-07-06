@@ -290,6 +290,8 @@ class RowDetector:
         ground_deadband_deg: float = 2.0,
         ground_level_spread: float = 0.35,
         ground_roll_x_half: float = 2.0,
+        heading_cap_deg: float = 7.0,
+        heading_gate_deg: float = 22.0,
     ) -> None:
         self.roi_y_min = roi_y_min
         self.roi_y_max = roi_y_max
@@ -356,8 +358,11 @@ class RowDetector:
         # source (why heading spikes on a grade) — needs raw scans from a sloped
         # run.  Set heading_consistency_lat = 0 to disable.
         self.heading_consistency_lat = 0.22          # m; 0 = clamp disabled
-        self.heading_cap_centred = math.radians(7.0)   # rad; cap when perfectly centred
-        self.heading_cap_gate = math.radians(22.0)     # rad; cap at the lateral gate
+        # cap when perfectly centred (tighten on sloped/tall-crop fields where the
+        # PCA heading wanders — a lower cap stops pursuit chasing the artifact and
+        # walking the robot across rows); exposed as --heading-cap.
+        self.heading_cap_centred = math.radians(heading_cap_deg)   # rad; cap when perfectly centred
+        self.heading_cap_gate = math.radians(heading_gate_deg)     # rad; cap at the lateral gate
         # Continuity ("strip-lock") prior for dual-row pairing: bias the midpoint
         # toward the strip currently tracked so a correction that overshoots does
         # not alias onto the adjacent strip and hop rows.  0 disables it.

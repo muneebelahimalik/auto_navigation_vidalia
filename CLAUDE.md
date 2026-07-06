@@ -953,6 +953,8 @@ to the noiseless convergence.  Regression-locked in `tests/test_row_controller.p
 | `--crop-max H` | 0.60 | Maximum crop height above ground m |
 | `--no-ground-detrend` | off | Disable the terrain-adaptive crop band. By default the detector estimates the forward ground grade per scan (low percentile of z per range-bin) and removes its slope so crop stays inside the height band on sloped/undulating fields; the live grade is shown as `grade=±N°` in the status line. Pass this to revert to a fixed flat-ground band |
 | `--self-radius R` | **1.5** | Self-filter radius — discard returns within R m (robot body) |
+| `--heading-cap DEG` | **7.0** | Near-centre heading-consistency cap (deg). On-strip (small lateral offset) the detected row heading is clamped to this magnitude — a large heading with a small offset is a PCA/terrain artifact, and pure-pursuit chasing it walks the robot across rows on **sloped / tall-bushy-crop** fields. **Lower to 4–5 if the robot drifts sideways and crosses rows on a slope.** Relaxes proportionally toward `--heading-gate` as the offset grows, so genuine off-strip corrections steer fully |
+| `--heading-gate DEG` | **22.0** | Heading cap at the lateral gate (deg): the cap ramps from `--heading-cap` (centred) to this value as \|lateral\| reaches 0.22 m; beyond that the heading is unclamped |
 | `--acquire-conf C` | **0.35** | Min row-detection confidence (0–1) to leave ACQUIRE |
 | `--dual-row` | off | Soybean / centre-residue mode: lateral offset = midpoint of left+right flanking crop peaks |
 | `--obstacle-height H` | **0.50** | Min ground-relative height m to count as obstacle in FORWARD zone (soybean default; onion: 0.75) |

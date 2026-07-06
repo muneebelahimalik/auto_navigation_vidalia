@@ -413,6 +413,8 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
         row_spacing=args.row_spacing,
         midpoint_prior_weight=args.strip_lock,
         ground_detrend=not args.no_ground_detrend,
+        heading_cap_deg=args.heading_cap,
+        heading_gate_deg=args.heading_gate,
     )
     tire_h = args.tire_height if args.tire_height is not None else args.obstacle_height
     safety = SafetyMonitor(
@@ -712,6 +714,20 @@ def main() -> None:
                              "current row instead); 0 disables the prior (spacing-only pairing). "
                              "Raise it if you still see the robot jump to the next row on a "
                              "large correction.")
+    parser.add_argument("--heading-cap", type=float, default=7.0, metavar="DEG",
+                        help="Near-centre heading-consistency cap (deg, default: 7.0). When the "
+                             "robot is on-strip (small lateral offset) the detected row heading "
+                             "is clamped to this magnitude — a LARGE heading with a SMALL offset "
+                             "is a PCA/terrain artifact, not real, and pure-pursuit chasing it "
+                             "walks the robot across rows on sloped/tall-crop fields. LOWER it "
+                             "(e.g. 4-5) if the robot still drifts sideways and crosses rows on a "
+                             "slope; the cap relaxes proportionally to --heading-gate as the "
+                             "offset grows, so genuine corrections are unaffected.")
+    parser.add_argument("--heading-gate", type=float, default=22.0, metavar="DEG",
+                        help="Lateral-gate heading cap (deg, default: 22.0). The heading cap "
+                             "ramps from --heading-cap (centred) up to this value as |lateral| "
+                             "reaches heading_consistency_lat (0.22 m); beyond that the heading "
+                             "is left unclamped so real off-strip recoveries steer fully.")
     parser.add_argument("--turn-dir", choices=["right", "left"], default="right",
                         help="Direction of the FIRST headland U-turn (default: right). "
                              "Subsequent turns alternate for serpentine coverage.")
