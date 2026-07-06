@@ -787,3 +787,48 @@ def test_dense_canopy_can_be_disabled():
                       crop_h_min=0.03, crop_h_max=1.0, dense_canopy=False)
     converge(det, make_dense_canopy_scene(0.0))
     assert det.last_dense is False
+
+
+def test_dense_canopy_unbiased_by_density_asymmetry():
+    """One canopy side thicker (more returns) than the other, robot centred:
+    the height-weighted fit keys off canopy HEIGHT not point density, so it
+    stays centred where a density fit drifts toward the thicker side
+    (PDF failure mode: 'lateral offset becomes biased if one side is thicker')."""
+    rng = np.random.default_rng(1)
+    def row(xc, n, seed):
+        r = np.random.default_rng(seed)
+        y = r.uniform(1.6, 6.6, n); x = xc + r.normal(0, 0.09, n); h = r.uniform(0.45, 0.78, n)
+        return np.column_stack((x, y, h - LIDAR_MOUNT_HEIGHT))
+    pts = np.vstack([
+        row(-HALF, 200, 1),                                   # left row: sparse
+        row(+HALF, 500, 2),                                   # right row: 2.5x denser
+        row(0.0, 180, 3) - np.array([0, 0, 0.55]),            # low residue strip
+    ])
+    det = RowDetector(dual_row=True, row_spacing=ROW_SPACING,
+                      crop_h_min=0.03, crop_h_max=1.0, dense_canopy=True)
+    est = converge(det, pts)
+    assert det.last_dense is True
+    assert abs(est.lateral_offset) < 0.04            # not dragged toward the thicker row
+
+
+def test_dense_canopy_recovers_heading_where_plain_collapses():
+    """A truly tilted (+6°) dense canopy with low leaf clutter: the plain PCA
+    heading goes blob-like and collapses toward 0 (PDF failure mode 'heading
+    estimate becomes noisier'); the canopy-height-weighted fit recovers it."""
+    th = math.radians(6.0)
+    def row(xc, n, seed):
+        r = np.random.default_rng(seed)
+        y = r.uniform(1.6, 6.6, n); x = xc + r.normal(0, 0.08, n) + y * math.tan(th)
+        h = r.uniform(0.45, 0.78, n)
+        return np.column_stack((x, y, h - LIDAR_MOUNT_HEIGHT))
+    rng = np.random.default_rng(9)
+    clutter = np.column_stack((rng.uniform(-0.78, 0.78, 400), rng.uniform(1.6, 6.6, 400),
+                               rng.uniform(0.08, 0.30, 400) - LIDAR_MOUNT_HEIGHT))
+    pts = np.vstack([row(-HALF, 340, 4), row(+HALF, 340, 5),
+                     row(0.0, 200, 6) - np.array([0, 0, 0.55]), clutter])
+    dense = converge(RowDetector(dual_row=True, row_spacing=ROW_SPACING, crop_h_min=0.03,
+                                 crop_h_max=1.0, dense_canopy=True), pts)
+    plain = converge(RowDetector(dual_row=True, row_spacing=ROW_SPACING, crop_h_min=0.03,
+                                 crop_h_max=1.0, dense_canopy=False), pts)
+    assert math.degrees(dense.heading_error) > 3.0                       # right sign, substantial
+    assert abs(math.degrees(dense.heading_error) - 6.0) < abs(math.degrees(plain.heading_error) - 6.0)
