@@ -278,6 +278,9 @@ class RowDetector:
         row_end_side_density: float = 45.0,
         row_end_side_window: float = 0.20,
         ema_alpha: float = 0.35,
+        temporal_trust: bool = True,
+        temporal_ref_conf: float = 0.60,
+        temporal_min_gain: float = 0.45,
         dual_row: bool = False,
         row_spacing: float = 0.76,
         midpoint_prior_weight: float = 2.5,
@@ -321,6 +324,18 @@ class RowDetector:
         self.row_end_side_density = row_end_side_density
         self.row_end_side_window = row_end_side_window
         self.ema_alpha = ema_alpha
+        # Confidence-weighted temporal filter: scale the per-scan EMA gain by how
+        # much to trust THIS scan (its confidence relative to a healthy lock), so
+        # a noisy low-confidence scan moves the tracked row less and the estimate
+        # leans on recent history — one bad scan can't jump the steering
+        # (row ends, VLP-16 dropouts, transient occlusion).  Floored at
+        # temporal_min_gain so a genuine sustained change still comes through.
+        # NOTE: this addresses LOW-confidence jitter; the dense-canopy weave was a
+        # HIGH-confidence bias, fixed at the source by the prominence weighting.
+        self.temporal_trust = temporal_trust
+        self.temporal_ref_conf = temporal_ref_conf
+        self.temporal_min_gain = temporal_min_gain
+        self.last_gain = ema_alpha            # diagnostic: EMA gain used this scan
         self.dual_row = dual_row
         # ``row_spacing`` is only a SEED for the self-calibrating estimate below
         # — not a fixed geometry the operator must measure.  It is the prior the
@@ -406,6 +421,20 @@ class RowDetector:
         self.strip_floor_pct = strip_floor_pct        # percentile of ROI height = residue-strip canopy floor
         self.last_dense = False                       # diagnostic: dense regime this scan?
         self.last_tall_frac = 0.0                     # diagnostic: fraction of ROI pts above canopy_tall_h
+        # --- Self-consistency arbiter (growth-stage mixture-of-experts) -------
+        # In the dense regime the detector no longer BLINDLY forces the
+        # canopy-height fit.  It computes BOTH perception "experts" — the
+        # ground/furrow density fit and the canopy-height-prominence fit — and
+        # keeps whichever produces the more SELF-CONSISTENT row geometry this
+        # scan (clean PCA linearity × good spacing-prior pairing × agreement with
+        # the tracked strip).  This makes the growth-stage handling emergent
+        # instead of a brittle single threshold, and is the extensible slot for a
+        # LEARNED gate (train the weights on --record telemetry later).  The
+        # winning score is exposed as ``last_reliability`` (a calibrated 0–1
+        # trust signal the controller can slow on).
+        self.arbiter_agree_scale = 0.5                # m; lateral disagreement that halves the agreement term
+        self.last_reliability = 0.0                   # diagnostic: winning hypothesis self-consistency
+        self.last_mode = "density"                    # diagnostic: which expert won ("density"/"canopy")
         # Point-level fusion of camera ground points (aux_xy in update()):
         # aux_y_min lets near-field camera points (LiDAR self-filter blind
         # zone) into the fit; aux_mass_ratio caps the camera's total
@@ -572,72 +601,49 @@ class RowDetector:
         if total_mass < self.min_points:
             return self._decay(row_end_conf=row_end_conf)
 
-        # --- pooled point set + per-point weights ---
-        # Base LiDAR weight: canopy-height prominence in the dense regime
-        # (emphasises the taller row ridges so the residue strip re-appears as a
-        # gap), else uniform (original behaviour).
-        lidar_w = h_weight if dense else np.ones(n)
+        # --- pooled point set + per-expert weight vectors ---
+        # DENSITY expert: uniform LiDAR weight (the original ground/furrow fit),
+        # camera points down-weighted.  CANOPY expert (dense regime only):
+        # canopy-height prominence, emphasising the taller row ridges so the
+        # residue strip re-appears as a gap.
         P = np.column_stack((cx, cy))
         if A is not None:
-            w = np.concatenate([lidar_w, np.full(len(A), cam_mass / len(A))])
+            cam_w = np.full(len(A), cam_mass / len(A))
+            w_density = np.concatenate([np.ones(n), cam_w])
+            w_canopy = np.concatenate([h_weight, cam_w]) if dense else None
             P = np.vstack([P, A]) if n else np.asarray(A, dtype=float)
-        elif dense:
-            w = lidar_w   # tall-canopy weighting even with no camera
         else:
-            w = None   # pure-LiDAR early-growth path: identical to the original unweighted fit
-
-        # --- PCA: dominant axis = row direction (rows are parallel) ---
-        # Heading seed for mixed-sensor fits comes from the LiDAR points
-        # alone when the LiDAR is healthy: its symmetric two-stripe view
-        # gives an unbiased axis, whereas pooling a (possibly mis-calibrated)
-        # camera before the stripes are clustered can tilt the axis enough
-        # to smear the cross-row histogram and merge adjacent peaks.
-        if w is not None and n >= self.min_points:
-            direction, linearity = _weighted_pca_dir(P[:n])
-        else:
-            direction, linearity = _weighted_pca_dir(P, w)
-        perp = np.array([direction[1], -direction[0]])   # unit, +X-ish
-        cross = P @ perp
+            w_density = None            # pure-LiDAR early-growth path stays unweighted
+            w_canopy = h_weight if dense else None
 
         if self.dual_row:
-            # Two-pass peak-cluster-centred PCA: assign every point to its
-            # nearest cross-row histogram peak, centre each peak cluster on
-            # its own centroid, and re-fit the pooled centred points — the
-            # between-stripe covariance is removed, leaving only the
-            # within-row direction.
-            #
-            # This matters even for pure-LiDAR fits: the VLP-16 routinely
-            # drops whole azimuth sectors (UDP packet loss), so one row's
-            # stripe is often truncated in y relative to the other.  A
-            # whole-cloud PCA over two stripes with unequal extents tilts
-            # the axis toward the line joining the stripe centroids,
-            # biasing the heading several degrees per scan — in the field
-            # this accumulated into a steady +12° heading error and a
-            # rightward drift off the residue strip.  Mixed-sensor fits
-            # (camera aux points) additionally need it because LiDAR and
-            # camera cover different y ranges.
-            # Iterated twice: when the seed axis is badly tilted the first
-            # pass assigns far-forward points of the longer stripe to the
-            # wrong peak; the second pass re-clusters with the corrected
-            # axis and converges on the unbiased within-row direction.
-            w_eff = w if w is not None else np.ones(len(P))
-            for _ in range(2):
-                peaks = histogram_peaks(cross, self.roi_x_half,
-                                        self.bin_width, weights=w)
-                direction, linearity = _cluster_centred_pca(
-                    P, w_eff, cross, peaks, fallback=(direction, linearity))
-                perp = np.array([direction[1], -direction[0]])
-                cross = P @ perp
-            # Soybean / centre-residue mode: find the midpoint between the
-            # nearest left and right crop-row peaks.  The midpoint is the
-            # centre of the residue strip, which is the tracking target.
-            # Refine the spacing estimate from this scan's geometry first, then
-            # pair peaks with the live (self-calibrated) spacing.
-            self._refine_spacing(cross, weights=w)
-            lateral, self._spacing_factor = find_row_midpoint(
-                cross, self.roi_x_half, self.bin_width, self._spacing_est,
-                weights=w, prior_lateral=float(self._est.lateral_offset),
-                prior_weight=self.midpoint_prior_weight)
+            # --- Self-consistency arbiter over the perception experts ---------
+            # Fit BOTH representations and keep whichever gives the cleaner,
+            # more consistent row geometry this scan (linearity × spacing
+            # pairing × agreement with the tracked strip).  In early growth only
+            # the density expert exists → byte-identical to before.  In dense
+            # canopy the arbiter normally picks the canopy expert, but falls back
+            # to density if the height fit is momentarily worse — no brittle
+            # single threshold decides it.  The two-pass cluster-centred PCA that
+            # each fit runs removes the between-stripe covariance that would
+            # otherwise bias the heading (VLP-16 azimuth dropouts / unequal
+            # stripe extents / mixed-sensor y-coverage).
+            experts = [("density", w_density)]
+            if w_canopy is not None:
+                experts.append(("canopy", w_canopy))
+            best = None
+            for name, wc in experts:
+                lat_c, dir_c, lin_c, sf_c, cross_c, sp_c = self._dual_fit(P, wc, n)
+                linf = max(0.0, min(1.0, (lin_c - 0.20) / 0.55))
+                agree = 1.0 - min(1.0, abs(lat_c - float(self._est.lateral_offset))
+                                  / self.arbiter_agree_scale)
+                score = linf * sf_c * (0.5 + 0.5 * agree)   # self-consistency reliability
+                if best is None or score > best[0]:
+                    best = (score, name, lat_c, dir_c, lin_c, sf_c, cross_c, sp_c, wc)
+            (self.last_reliability, self.last_mode, lateral, direction, linearity,
+             self._spacing_factor, cross, self._spacing_est, w) = best
+            # last_dense already reflects the REGIME (canopy expert spawned);
+            # last_mode reports which expert the arbiter actually kept.
             # Row-end on the LONGER line: count crop mass near each flanking row
             # (at lateral ± half-spacing) and key row-end off the STRONGER side,
             # so a row is only "ended" once BOTH flanking lines are gone — the
@@ -655,8 +661,17 @@ class RowDetector:
                 row_strength = 0.0
             row_end_conf = 1.0 - min(1.0, row_strength / self.row_end_side_density)
         else:
-            # Single-row mode: histogram peak nearest the robot centreline,
-            # then refine with a tight window so adjacent rows are not merged.
+            # Single-row mode (onion): one crop row under the robot; no arbiter.
+            # Seed the row axis by PCA (canopy-height-weighted in the dense
+            # regime, else uniform) then take the histogram peak nearest the
+            # centreline, refined with a tight window so adjacent rows do not
+            # merge.
+            w = w_canopy if (dense and w_density is None) else w_density
+            if w_density is not None and n >= self.min_points:
+                direction, linearity = _weighted_pca_dir(P[:n])
+            else:
+                direction, linearity = _weighted_pca_dir(P, w)
+            cross = P @ np.array([direction[1], -direction[0]])
             peak = self._nearest_peak(cross, weights=w)
             near = np.abs(cross - peak) <= self.refine_window
             if int(near.sum()) >= 8:
@@ -774,9 +789,40 @@ class RowDetector:
         return lateral
 
     # ------------------------------------------------------------------
-    def _refine_spacing(self, cross: np.ndarray,
-                        weights: "Optional[np.ndarray]" = None) -> None:
-        """Self-calibrate the row-spacing estimate from the observed peaks.
+    def _dual_fit(self, P: np.ndarray, w: "Optional[np.ndarray]", n: int):
+        """One dual-row geometric fit for a given per-point weight vector.
+
+        Runs the two-pass cluster-centred PCA and the spacing-prior midpoint for
+        the supplied weights (``w=None`` = uniform), WITHOUT mutating any state,
+        so several perception hypotheses (experts) can be compared per scan.
+        Returns ``(lateral, direction, linearity, spacing_factor, cross,
+        spacing_refined)``.
+        """
+        if w is not None and n >= self.min_points:
+            direction, linearity = _weighted_pca_dir(P[:n])
+        else:
+            direction, linearity = _weighted_pca_dir(P, w)
+        perp = np.array([direction[1], -direction[0]])
+        cross = P @ perp
+        w_eff = w if w is not None else np.ones(len(P))
+        for _ in range(2):
+            peaks = histogram_peaks(cross, self.roi_x_half, self.bin_width, weights=w)
+            direction, linearity = _cluster_centred_pca(
+                P, w_eff, cross, peaks, fallback=(direction, linearity))
+            perp = np.array([direction[1], -direction[0]])
+            cross = P @ perp
+        sp = self._refined_spacing(cross, weights=w)
+        lateral, spacing_factor = find_row_midpoint(
+            cross, self.roi_x_half, self.bin_width, sp,
+            weights=w, prior_lateral=float(self._est.lateral_offset),
+            prior_weight=self.midpoint_prior_weight)
+        return lateral, direction, linearity, spacing_factor, cross, sp
+
+    def _refined_spacing(self, cross: np.ndarray,
+                         weights: "Optional[np.ndarray]" = None) -> float:
+        """Pure: the row-spacing estimate refined by this scan's peaks (does NOT
+        mutate ``self._spacing_est``) so several perception hypotheses can be
+        evaluated per scan before one is committed.
 
         When a clear left AND right peak are present, their separation is a
         direct measurement of the field's row spacing.  A slow EMA folds it in,
@@ -785,12 +831,12 @@ class RowDetector:
         (``--row-spacing``) only matters until the first good two-row view.
         """
         if not self.auto_spacing:
-            return
+            return self._spacing_est
         peaks = histogram_peaks(cross, self.roi_x_half, self.bin_width, weights)
         left = [p for p in peaks if p < -0.05]
         right = [p for p in peaks if p > 0.05]
         if not (left and right):
-            return
+            return self._spacing_est
         # Pick the pair whose separation is closest to the current estimate.
         pl, pr = min(((l, r) for l in left for r in right),
                      key=lambda lr: abs((lr[1] - lr[0]) - self._spacing_est))
@@ -804,8 +850,13 @@ class RowDetector:
         # with a slow EMA.
         lo, hi = 0.75 * self.row_spacing, 1.25 * self.row_spacing
         if lo <= sep <= hi and abs(sep - self._spacing_est) <= 0.40 * self._spacing_est:
-            self._spacing_est = float(np.clip(
-                0.08 * sep + 0.92 * self._spacing_est, lo, hi))
+            return float(np.clip(0.08 * sep + 0.92 * self._spacing_est, lo, hi))
+        return self._spacing_est
+
+    def _refine_spacing(self, cross: np.ndarray,
+                        weights: "Optional[np.ndarray]" = None) -> None:
+        """Commit the refined spacing (mutating wrapper for the single-row path)."""
+        self._spacing_est = self._refined_spacing(cross, weights)
 
     @property
     def spacing_estimate(self) -> float:
@@ -815,7 +866,15 @@ class RowDetector:
     # ------------------------------------------------------------------
     def _smooth(self, fresh: RowEstimate) -> RowEstimate:
         """Exponentially blend a fresh estimate into the running state."""
+        # Confidence-weighted gain: trust a fresh scan in proportion to its
+        # confidence (relative to a healthy lock), floored so a sustained real
+        # change still gets through.  A low-confidence scan therefore nudges the
+        # tracked lateral/heading less and the estimate holds its recent trend.
         a = self.ema_alpha
+        if self.temporal_trust:
+            g = fresh.confidence / self.temporal_ref_conf if self.temporal_ref_conf else 1.0
+            a = self.ema_alpha * max(self.temporal_min_gain, min(1.0, g))
+        self.last_gain = a
         prev = self._est
 
         # Heading outlier gate: if the fresh PCA heading jumps more than 30°
@@ -871,7 +930,9 @@ class RowDetector:
         self._est = RowEstimate(
             heading_error=sm_hdg,
             lateral_offset=sm_lat,
-            confidence=a * fresh.confidence + (1 - a) * prev.confidence,
+            # Confidence tracks at the BASE rate (not trust-weighted) so a real
+            # quality drop still lowers it and the state machine / speed law react.
+            confidence=self.ema_alpha * fresh.confidence + (1 - self.ema_alpha) * prev.confidence,
             row_end_confidence=fresh.row_end_confidence,
             n_points=fresh.n_points,
             valid=True,

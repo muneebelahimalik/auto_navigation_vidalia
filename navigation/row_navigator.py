@@ -1163,6 +1163,8 @@ class RowNavigator:
             "drop_m":         round(float(getattr(self.detector, "last_ground_shift", 0.0) or 0.0), 3),
             "dense":          bool(getattr(self.detector, "last_dense", False)),
             "tall_frac":      round(float(getattr(self.detector, "last_tall_frac", 0.0) or 0.0), 3),
+            "mode":           str(getattr(self.detector, "last_mode", "density")),
+            "reliability":    round(float(getattr(self.detector, "last_reliability", 0.0) or 0.0), 3),
             "lin_cmd":        round(float(linear), 4),
             "ang_cmd":        round(float(angular), 4),
             "fwd_blocked":    bool(safety.forward_blocked),
@@ -1222,9 +1224,12 @@ class RowNavigator:
         _sh = getattr(self.detector, "last_ground_shift", 0.0)
         if _sh:
             grade_str += f" drop={_sh:+.2f}m"
-        # Dense/tall-canopy regime: canopy-height-weighted row fit is engaged.
+        # Dense/tall-canopy regime: the canopy-height expert is in play; show the
+        # arbiter's winning expert (density/canopy) so the operator sees the
+        # growth-stage adaptation live.
         if getattr(self.detector, "last_dense", False):
-            grade_str += f" DENSE({getattr(self.detector, 'last_tall_frac', 0.0):.0%})"
+            grade_str += (f" DENSE({getattr(self.detector, 'last_tall_frac', 0.0):.0%})"
+                          f"→{getattr(self.detector, 'last_mode', 'density')}")
         # Live self-calibrated row spacing (dual-row) so the operator can see it
         # converge to the field's actual spacing — no need to measure/pass it.
         if getattr(self.detector, "dual_row", False):

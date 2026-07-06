@@ -832,3 +832,54 @@ def test_dense_canopy_recovers_heading_where_plain_collapses():
                                  crop_h_max=1.0, dense_canopy=False), pts)
     assert math.degrees(dense.heading_error) > 3.0                       # right sign, substantial
     assert abs(math.degrees(dense.heading_error) - 6.0) < abs(math.degrees(plain.heading_error) - 6.0)
+
+
+# ---------------------------------------------------------------------------
+# Confidence-weighted temporal filter — a low-confidence scan moves the tracked
+# row less (leans on recent history), so one noisy scan can't jump the steering.
+# ---------------------------------------------------------------------------
+
+from navigation.row_perception import RowEstimate as _RE
+
+
+def _one_step(fresh_conf, trust=True):
+    det = RowDetector(dual_row=True, temporal_trust=trust)
+    det._est = _RE(lateral_offset=0.0, heading_error=0.0, confidence=0.8, valid=True)
+    det._smooth(_RE(lateral_offset=0.10, heading_error=0.0,
+                    confidence=fresh_conf, n_points=300, valid=True))
+    return det._est.lateral_offset
+
+
+def test_temporal_filter_trusts_low_confidence_less():
+    hi = _one_step(0.90)
+    lo = _one_step(0.25)
+    assert 0.0 < lo < hi                      # low-conf scan nudges the state less
+    assert hi == pytest.approx(0.35 * 0.10, abs=1e-9)   # high conf → full base gain
+
+
+def test_temporal_trust_off_restores_fixed_gain():
+    assert _one_step(0.25, trust=False) == pytest.approx(0.35 * 0.10, abs=1e-9)
+
+
+# ---------------------------------------------------------------------------
+# Self-consistency arbiter (growth-stage mixture-of-experts)
+# ---------------------------------------------------------------------------
+
+def test_arbiter_picks_canopy_expert_to_lock_dense_offset():
+    """On the FIRST scan of a dense offset scene (no prior lock) the arbiter
+    keeps the canopy-height expert — the one that recovers the true strip — and
+    reports a self-consistency reliability score."""
+    det = RowDetector(dual_row=True, row_spacing=ROW_SPACING,
+                      crop_h_min=0.03, crop_h_max=1.0)
+    det.update(make_dense_canopy_scene(0.20))         # single scan, empty prior
+    assert det.last_mode == "canopy"                  # canopy expert wins on merit
+    assert 0.0 < det.last_reliability <= 1.0
+
+
+def test_arbiter_stays_density_in_early_growth():
+    """Short seedlings: no canopy expert is even spawned, so the arbiter reports
+    the density expert and never engages the dense path."""
+    det = RowDetector(dual_row=True, row_spacing=ROW_SPACING)
+    converge(det, np.vstack([make_row(-HALF), make_row(+HALF)]))
+    assert det.last_mode == "density"
+    assert det.last_dense is False
