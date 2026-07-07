@@ -842,7 +842,7 @@ class RowNavigator:
         if (est is not None and self._headland_turn.phase == "EXIT"
                 and headland_exit_row_continues(
                     est.valid, est.confidence, est.heading_error, est.lateral_offset,
-                    acquire_conf=self.acquire_conf,
+                    conf_thresh=self.reacquire_conf,
                     align_thresh=self.reacquire_align,
                     offset_thresh=self.reacquire_offset)):
             self._headland_abort_count += 1

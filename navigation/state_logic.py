@@ -130,7 +130,7 @@ def headland_exit_row_continues(
     heading_error: float,
     lateral_offset: float,
     *,
-    acquire_conf: float,
+    conf_thresh: float,
     align_thresh: float,
     offset_thresh: float,
 ) -> bool:
@@ -138,19 +138,28 @@ def headland_exit_row_continues(
     SAME row genuinely continuing — i.e. the row-end was a LiDAR blind-spot gap,
     not a real end, so the turn should abort back to FOLLOW.
 
-    It must be a real ALIGNED, CENTRED row (small heading, small offset), not
-    merely "some crop at conf ≥ acquire_conf".  At a REAL row end a dense field
-    still returns crop (headland margin, adjacent rows, the just-ended row seen
-    at an angle), but MISALIGNED (field log: conf 0.5 at hdg +34–55°,
-    lat −0.40).  Keying the abort only off confidence made the turn bail every
-    time on that clutter and the robot never turned — it drove diagonally across
-    the headland.  Requiring alignment (same thresholds as ``turn_reacquired``)
-    means only a row that truly runs straight ahead — where the robot was
-    already pointing, the real blind-spot case — aborts the turn.
+    It must be a real, STRONG, ALIGNED, CENTRED row: high confidence
+    (``conf_thresh`` — the same strong bar used to end the U-turn, ``reacquire_conf``),
+    small heading, small offset.  Two field failures shaped this:
+
+      * Keying only off confidence (any crop) aborted on MISALIGNED headland
+        clutter (conf 0.5 at hdg +34–55°, lat −0.40) — the robot never turned,
+        it drove diagonally across the headland.  → require alignment.
+      * Keying alignment off a LOW confidence bar (acquire_conf 0.35) aborted on
+        the sparse ALIGNED clutter present at a real row end (conf 0.37, n≈68) —
+        the turn started then bailed every time and thrashed
+        ACQUIRE↔ROW_END↔HEADLAND↔FOLLOW, never completing.  → require a STRONG
+        lock.
+
+    So the EXIT leg (a ~1 m forward creep) only aborts back to FOLLOW when a
+    genuinely dense row (conf ≥ ``conf_thresh``, n on the order of a full scan)
+    reappears straight ahead — the true blind-spot gap where the same row the
+    robot was tracking comes back.  Sparse crop or clutter no longer aborts, so
+    the turn commits and rotates.
     """
     return (
         valid
-        and confidence >= acquire_conf
+        and confidence >= conf_thresh
         and abs(heading_error) <= align_thresh
         and abs(lateral_offset) <= offset_thresh
     )

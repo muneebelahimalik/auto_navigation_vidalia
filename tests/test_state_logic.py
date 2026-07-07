@@ -301,13 +301,13 @@ import math as _m
 
 ALIGN = _m.radians(11.5)
 OFFSET = 0.40
-ACQ = 0.35
+REACQ = 0.72          # strong-lock threshold (reacquire_conf), not acquire_conf
 
 
 def _continues(conf, hdg_deg, lat):
     return headland_exit_row_continues(
         True, conf, _m.radians(hdg_deg), lat,
-        acquire_conf=ACQ, align_thresh=ALIGN, offset_thresh=OFFSET)
+        conf_thresh=REACQ, align_thresh=ALIGN, offset_thresh=OFFSET)
 
 
 def test_headland_no_abort_on_misaligned_clutter():
@@ -318,14 +318,23 @@ def test_headland_no_abort_on_misaligned_clutter():
     assert _continues(0.68, 29.0, -0.38) is False
 
 
-def test_headland_aborts_on_genuine_aligned_row():
-    """A true blind-spot gap: the same row reappears straight ahead and centred
-    → abort the turn and resume FOLLOW."""
-    assert _continues(0.60, 2.0, 0.05) is True
-    assert _continues(0.80, -5.0, -0.10) is True
+def test_headland_no_abort_on_sparse_aligned_clutter():
+    """The thrash bug: at a real row end sparse crop reappears ALIGNED and
+    centred but weak (conf 0.37, n≈68).  With only acquire_conf it aborted every
+    turn and thrashed; a strong-lock threshold means it does NOT abort."""
+    assert _continues(0.37, -0.7, -0.18) is False
+    assert _continues(0.51, -2.2, 0.06) is False
+    assert _continues(0.43, 5.4, -0.25) is False
+
+
+def test_headland_aborts_on_strong_aligned_row():
+    """A true blind-spot gap: the SAME dense row reappears straight ahead and
+    centred at high confidence → abort the turn and resume FOLLOW."""
+    assert _continues(0.80, 2.0, 0.05) is True
+    assert _continues(0.90, -5.0, -0.10) is True
 
 
 def test_headland_abort_needs_all_three():
-    assert _continues(0.20, 1.0, 0.02) is False        # low confidence
-    assert _continues(0.90, 20.0, 0.02) is False        # aligned offset but angled
-    assert _continues(0.90, 1.0, 0.55) is False         # aligned heading but off-strip
+    assert _continues(0.50, 1.0, 0.02) is False        # aligned but not a strong lock
+    assert _continues(0.90, 20.0, 0.02) is False        # strong+centred but angled
+    assert _continues(0.90, 1.0, 0.55) is False         # strong+aligned but off-strip
