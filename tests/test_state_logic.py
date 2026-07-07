@@ -338,3 +338,35 @@ def test_headland_abort_needs_all_three():
     assert _continues(0.50, 1.0, 0.02) is False        # aligned but not a strong lock
     assert _continues(0.90, 20.0, 0.02) is False        # strong+centred but angled
     assert _continues(0.90, 1.0, 0.55) is False         # strong+aligned but off-strip
+
+
+# ---------------------------------------------------------------------------
+# search_creep_reached_end — creep-through-gap row-end decision
+# ---------------------------------------------------------------------------
+
+from navigation.state_logic import search_creep_reached_end
+
+SEARCH = 2.0
+
+
+def _end(came, dist):
+    return search_creep_reached_end(came, dist, row_end_search_dist=SEARCH)
+
+
+def test_creep_declares_row_end_after_full_search():
+    """Crept the whole search distance without re-locking → the row has ended."""
+    assert _end(True, SEARCH) is True
+    assert _end(True, SEARCH + 0.5) is True
+
+
+def test_creep_keeps_searching_within_distance():
+    """Still within the search distance → keep creeping (a thin patch may still
+    re-appear); do NOT turn yet."""
+    assert _end(True, 0.0) is False
+    assert _end(True, 1.9) is False
+
+
+def test_creep_only_from_follow():
+    """A startup / post-obstacle ACQUIRE never creeps to a row end — there was no
+    row behind it to have ended."""
+    assert _end(False, 5.0) is False

@@ -495,6 +495,7 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
         approach_speed=args.approach_speed,
         approach_max_dist=args.approach_max_dist,
         post_turn_max_dist=args.post_turn_max_dist,
+        row_end_search_dist=args.row_end_search,
         heading_source=filter_heading,
         align_heading=args.align_heading,
         align_rate=args.align_speed,
@@ -761,6 +762,15 @@ def main() -> None:
     parser.add_argument("--approach-max-dist", type=float, default=3.0, metavar="M",
                         help="Max distance (m) the APPROACH leg drives searching for the next "
                              "row before stopping (field edge / overshoot guard; default: 3.0).")
+    parser.add_argument("--row-end-search", type=float, default=2.0, metavar="M",
+                        help="Creep-through-gap distance (m, default: 2.0). When FOLLOW loses "
+                             "the row, the robot creeps slowly FORWARD up to this distance "
+                             "searching for the row continuing past a thin spot / small gap "
+                             "before declaring a row end. A thinning patch re-locks within this "
+                             "distance and FOLLOW resumes; a true row end stays empty for the "
+                             "whole distance and triggers the headland turn. Raise it if the crop "
+                             "has long sparse patches mid-row (avoids premature turns); lower it "
+                             "to turn sooner at a definite end.")
     parser.add_argument("--post-turn-max-dist", type=float, default=5.0, metavar="M",
                         help="Cumulative distance (m) the robot may travel after a U-turn "
                              "(APPROACH creep + any short FOLLOW segments) without establishing "

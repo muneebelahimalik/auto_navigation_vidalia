@@ -40,7 +40,7 @@ from navigation.headland import HeadlandTurn
 from navigation.state_logic import (
     follow_loss_is_row_end, follow_loss_action, approach_action,
     acquire_rowend_escape, rowend_count_update, post_turn_loss_action,
-    turn_reacquired, headland_exit_row_continues)
+    turn_reacquired, headland_exit_row_continues, search_creep_reached_end)
 from navigation.row_controller import PurePursuitController
 from navigation.row_perception import RowDetector, RowEstimate
 from navigation.row_safety import SafetyMonitor
@@ -136,6 +136,7 @@ class RowNavigator:
         approach_max_dist: float = 3.0,
         approach_acquire_frames: int = 3,
         post_turn_max_dist: float = 5.0,
+        row_end_search_dist: float = 2.0,
         heading_source=None,
         align_heading: bool = False,
         align_thresh: float = 0.14,
@@ -223,7 +224,9 @@ class RowNavigator:
         self.approach_max_dist = approach_max_dist
         self.approach_acquire_frames = approach_acquire_frames
         self.post_turn_max_dist = post_turn_max_dist
+        self.row_end_search_dist = row_end_search_dist
         self._approach_dist = 0.0
+        self._search_dist = 0.0
         self.first_turn_sign = 1.0 if first_turn_sign >= 0 else -1.0
         self.headland_speed = headland_speed
         self.headland_turn_rate = headland_turn_rate
@@ -548,6 +551,10 @@ class RowNavigator:
                 self._row_dist += step
             elif self.state == _S.APPROACH:
                 self._approach_dist += step
+            elif self.state == _S.ACQUIRE:
+                # Creep-through-gap: distance searched forward since losing the
+                # row (0 on a stationary startup ACQUIRE, which never creeps).
+                self._search_dist += step
             # Cumulative travel since the U-turn until a stable down-row FOLLOW
             # is established — counts BOTH the APPROACH creep and any short,
             # un-settled FOLLOW segments.  Bounds how far the robot may search
@@ -578,10 +585,14 @@ class RowNavigator:
         st = self.state
 
         # --- Safety override — only interrupt active motion states ---
-        # ACQUIRE: robot is always stationary (cmd=0 always); entering OBSTACLE_WAIT
-        # while stationary gains nothing and creates spurious halt cycles from
-        # intermittent depth noise or near-field camera returns.
+        # ACQUIRE: usually stationary; entering OBSTACLE_WAIT while stationary
+        # gains nothing and creates spurious halt cycles from intermittent depth
+        # noise.  EXCEPTION: a came-from-FOLLOW ACQUIRE creeps forward
+        # (creep-through-gap), so it must pause in place if something blocks the
+        # path — but stay in ACQUIRE (don't burn the OBSTACLE_WAIT machinery).
         # HEADLAND states: pause-in-place rather than abandon the manoeuvre.
+        if st == _S.ACQUIRE and self._came_from_follow and safety.blocked:
+            return 0.0, 0.0
         if st in (_S.FOLLOW,) or st in _HEADLAND_STATES:
             if safety.blocked:
                 if st in _HEADLAND_STATES:
@@ -623,35 +634,21 @@ class RowNavigator:
 
     # ------------------------------------------------------------------
     def _step_acquire(self, est) -> tuple[float, float]:
-        # Row-end escape: if we dropped to ACQUIRE from FOLLOW (we were on a
-        # row) and the crop band ahead is now genuinely empty for a sustained
-        # period, the row has ENDED — go to ROW_END (→ headland) instead of
-        # hunting forever for a row that isn't there.  Without this, a row end
-        # with residual sparse clutter (which keeps the FOLLOW-exit row-end
-        # check from tripping) leaves the robot stuck in ACQUIRE at the field
-        # edge.  Uses the same continuous-absence requirement as a real row end.
-        if self._came_from_follow:
-            # Count scans toward a row-end escape.  The counter must survive the
-            # FLICKER in row_end_confidence caused by residual sparse clutter at
-            # the row end (a few dozen weed/residue returns land near a flanking
-            # peak and momentarily read as "row still here", dropping
-            # row_end_confidence below threshold).  The old logic reset the count
-            # to 0 on every such dip, so it never reached row_end_frames and the
-            # robot hung in ACQUIRE at the field edge (observed: stuck at
-            # row_dist≈8 m for 16 s, conf pinned 0.28–0.34, end= flickering
-            # 0.16↔0.91).  The ONLY signal that the row has NOT ended is a
-            # genuinely confident re-acquire — a real row right in front of a
-            # stationary sensor gives conf ≥ acquire_conf.  So reset only on
-            # that; a low-confidence sparse scan HOLDS the count (it is not
-            # evidence of a row), and a sparse-ahead scan increments it.
-            self._acq_rowend_count = rowend_count_update(
-                self._acq_rowend_count, est.confidence, est.row_end_confidence,
-                acquire_conf=self.acquire_conf, row_end_conf=self.row_end_conf)
-            if acquire_rowend_escape(self._came_from_follow,
-                                     self._acq_rowend_count,
-                                     row_end_frames=self.row_end_frames):
-                self._enter(_S.ROW_END)
-                return 0.0, 0.0
+        # Creep-through-gap row-end decision: if we dropped to ACQUIRE from
+        # FOLLOW (we were on a row) and can't immediately re-lock, DON'T sit
+        # still guessing "thinning patch vs row end" — a stationary sensor on a
+        # sparse spot can't tell them apart and hangs/thrashes (field: bounced
+        # ACQUIRE↔ROW_END↔HEADLAND at every thin spot).  Instead the robot creeps
+        # slowly FORWARD (below) while it searches.  A real crop row that merely
+        # THINNED re-appears within a couple of metres → the acquire counter
+        # below re-locks it → FOLLOW.  A true ROW END stays empty for the whole
+        # search distance → the row has really ended → ROW_END → headland.
+        # Distance-based, so it is robust to the row_end_confidence flicker that
+        # a scan-counter could never survive.
+        if search_creep_reached_end(self._came_from_follow, self._search_dist,
+                                    row_end_search_dist=self.row_end_search_dist):
+            self._enter(_S.ROW_END)
+            return 0.0, 0.0
 
         if self.ekf is not None:
             # EKF-aware: once the filter absorbs ≥2 real measurements its
@@ -702,6 +699,16 @@ class RowNavigator:
             # transient obstacle pause, so a field with grown crop tripping the
             # forward zone never accumulated row distance.
             self._row_end_count = 0
+            self._search_dist = 0.0
+            return 0.0, 0.0
+        # Not re-locked yet.  A came-from-FOLLOW ACQUIRE CREEPS forward to search
+        # for the row continuing past a thin spot / small gap (bounded above by
+        # row_end_search_dist → ROW_END).  A startup / post-obstacle ACQUIRE stays
+        # stationary (it has not been following a row, so there is nothing to
+        # creep toward).  Straight creep only — the sparse estimate is too
+        # unreliable to steer on; FOLLOW corrects the offset once it re-locks.
+        if self._came_from_follow:
+            return self.approach_speed, 0.0
         return 0.0, 0.0
 
     def _step_follow(self, est, dt: float) -> tuple[float, float]:
@@ -990,6 +997,7 @@ class RowNavigator:
                 # escape to ROW_END on a sustained empty crop band.
                 self._came_from_follow = (prev_state == _S.FOLLOW)
                 self._acq_rowend_count = 0
+                self._search_dist = 0.0        # creep-through-gap distance meter
             if state == _S.ACQUIRE and self.ekf is not None:
                 # Don't reset EKF when resuming from OBSTACLE_WAIT — the robot
                 # was stationary, so the EKF state (heading, lateral) is still
@@ -1254,6 +1262,10 @@ class RowNavigator:
             if align_frames > 0:
                 acq_str = (f" ALIGN {align_frames}/{self.max_align_frames}"
                            f"({math.degrees(est.heading_error):+.1f}°)")
+            elif self._came_from_follow:
+                # creep-through-gap: searching forward for the row past a thin spot
+                acq_str = (f" SEARCH {self._search_dist:.1f}/{self.row_end_search_dist:.1f}m"
+                           f" acq={self._acq_count}/{self.acquire_frames}")
             else:
                 acq_str = f" acq={self._acq_count}/{self.acquire_frames}"
         elif self.state == _S.HEADLAND and self._headland_turn is not None:

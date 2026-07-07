@@ -232,6 +232,28 @@ def rowend_count_update(
     return prev_count + 1
 
 
+def search_creep_reached_end(
+    came_from_follow: bool,
+    search_dist: float,
+    *,
+    row_end_search_dist: float,
+) -> bool:
+    """True when a came-from-FOLLOW ACQUIRE has crept the full search distance
+    forward without re-locking the row — so the row has really ENDED and the
+    robot should go to ROW_END → headland.
+
+    This is the creep-through-gap row-end test.  Rather than a stationary sensor
+    guessing "thinning patch vs row end" from a single sparse scan (which hangs
+    or thrashes — a thin spot and a true end both read as sparse clutter), the
+    robot creeps slowly FORWARD after losing the row.  A crop row that merely
+    thinned re-appears within a couple of metres and FOLLOW resumes (this
+    predicate stays False, the acquire counter re-locks instead); only a genuine
+    row end stays empty for the whole ``row_end_search_dist`` of creep, which is
+    the unambiguous signal that there is no more row to follow.
+    """
+    return came_from_follow and search_dist >= row_end_search_dist
+
+
 def acquire_rowend_escape(
     came_from_follow: bool,
     rowend_count: int,
