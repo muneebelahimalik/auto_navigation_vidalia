@@ -44,6 +44,7 @@ from navigation.state_logic import (
 from navigation.row_controller import PurePursuitController
 from navigation.row_perception import RowDetector, RowEstimate
 from navigation.row_safety import SafetyMonitor
+from navigation.scan_accumulator import ScanAccumulator
 
 # Optional enhanced modules — imported lazily to keep baseline import-clean.
 try:
@@ -137,6 +138,7 @@ class RowNavigator:
         approach_acquire_frames: int = 3,
         post_turn_max_dist: float = 5.0,
         row_end_search_dist: float = 2.0,
+        accumulate_scans: int = 1,
         heading_source=None,
         align_heading: bool = False,
         align_thresh: float = 0.14,
@@ -165,6 +167,12 @@ class RowNavigator:
     ) -> None:
         self.canbus = canbus
         self.detector = detector
+        # Motion-compensated multi-scan accumulation for the ROW FIT only (dense
+        # canopy signal restoration).  n=1 → pass-through (no change).  Fed the
+        # corrected robot-frame cloud; the raw single scan still drives the
+        # safety monitor / bridge / capture (see the loop).
+        self.accumulator = ScanAccumulator(accumulate_scans)
+        self.accumulate_scans = accumulate_scans
         self.safety = safety
         self.controller = controller
         self.auto = auto
@@ -424,7 +432,17 @@ class RowNavigator:
             aux_xy = None
             if self.cam_fusion == "point" and self.vis_detector is not None:
                 aux_xy = getattr(self.vis_detector, "last_ground_points", None)
-            est = self.detector.update(pts, aux_xy=aux_xy)
+            # Multi-scan accumulation (dense-canopy densification) for the ROW
+            # FIT only: register the last n corrected scans into the current
+            # frame using the PREVIOUS command as the motion since the last scan
+            # (small, ~1.5 cm/scan; commanded ≈ actual over 0.1 s).  n=1 →
+            # pts_fit is pts (pass-through).  The raw single `pts` still feeds the
+            # safety monitor, bridge, capture and recorder below — obstacles must
+            # not be smeared across scans.
+            prev_lin, prev_ang = self.cmd
+            pts_fit = self.accumulator.update(
+                pts, d_fwd=max(0.0, prev_lin * dt), d_theta=prev_ang * dt)
+            est = self.detector.update(pts_fit, aux_xy=aux_xy)
             if self.capture_perception:
                 self._capture_perception(pts, est)
             if self.scan_recorder is not None:
@@ -1014,6 +1032,9 @@ class RowNavigator:
                     self.ekf.reset()
                 if hasattr(self.detector, "reset"):
                     self.detector.reset()
+                # Drop scans buffered while the ROI swept across the headland so
+                # the next row is not densified with the previous row's geometry.
+                self.accumulator.reset()
                 if self.vis_detector is not None and hasattr(self.vis_detector, "reset"):
                     self.vis_detector.reset()
                 # Clear stateful controller memory (MPC plan/observers, RL drift

@@ -502,6 +502,7 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
         approach_max_dist=args.approach_max_dist,
         post_turn_max_dist=args.post_turn_max_dist,
         row_end_search_dist=args.row_end_search,
+        accumulate_scans=args.accumulate,
         heading_source=filter_heading,
         align_heading=args.align_heading,
         align_rate=args.align_speed,
@@ -782,6 +783,14 @@ def main() -> None:
     parser.add_argument("--approach-max-dist", type=float, default=3.0, metavar="M",
                         help="Max distance (m) the APPROACH leg drives searching for the next "
                              "row before stopping (field edge / overshoot guard; default: 3.0).")
+    parser.add_argument("--accumulate", type=int, default=1, metavar="N",
+                        help="Motion-compensated multi-scan accumulation for the ROW FIT "
+                             "(dense-canopy signal restoration; default: 1 = off). Registers the "
+                             "last N corrected scans into the current frame using odometry, so the "
+                             "closed-canopy residue-strip valley is fit on ~N× the point density "
+                             "and the per-scan plateau noise (the weave/heading runaway source) "
+                             "averages out. Try 5–8 in dense crop. The raw single scan still drives "
+                             "the safety monitor — obstacles are never smeared across scans.")
     parser.add_argument("--row-end-search", type=float, default=2.0, metavar="M",
                         help="Creep-through-gap distance (m, default: 2.0). When FOLLOW loses "
                              "the row, the robot creeps slowly FORWARD up to this distance "
