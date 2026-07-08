@@ -17,6 +17,7 @@ from lidar.lidar_driver import (
     VLP16_VERTICAL_ANGLES_STD,
     VELODYNE_BLOCK_FLAG,
     _parse_packet,
+    _parse_scan_np,
 )
 
 
@@ -61,6 +62,24 @@ def test_parser_applies_hires_elevation():
     # azimuth 0 → straight forward: x≈0, y≈d·cos(10°)
     assert abs(p.x) < 1e-6
     assert abs(p.y - d * math.cos(math.radians(-10.0))) < 1e-6
+
+
+def test_parse_scan_np_intensity_column():
+    """with_intensity=True adds the per-return intensity (0–255) as column 3
+    without changing the xyz geometry; default stays Nx3 (byte-identical)."""
+    pkt = _one_return_packet(channel=0, dist_m=10.0, azimuth_deg=0.0)  # intensity=100
+    xyz = _parse_scan_np([pkt])                       # default
+    xyzi = _parse_scan_np([pkt], with_intensity=True)
+    assert xyz.shape[1] == 3
+    assert xyzi.shape[1] == 4
+    assert xyzi.shape[0] == xyz.shape[0]
+    assert np.allclose(xyzi[:, :3], xyz)              # geometry unchanged
+    assert np.all(xyzi[:, 3] == 100)                  # the packed intensity
+
+
+def test_parse_scan_np_empty_respects_intensity_width():
+    assert _parse_scan_np([]).shape == (0, 3)
+    assert _parse_scan_np([], with_intensity=True).shape == (0, 4)
 
 
 def test_flat_ground_reconstructs_true_pitch_and_height():

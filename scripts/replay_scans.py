@@ -79,24 +79,48 @@ def make_detector(args) -> RowDetector:
         row_end_veto_density=args.row_end_veto)
 
 
+def _intensity_contrast(P, lateral, spacing, args):
+    """Mean row-intensity minus mean strip-intensity for one Nx4 scan.
+
+    In the 903 nm band green canopy is expected BRIGHTER than the dry residue
+    strip, so a positive, consistent contrast means intensity separates the strip
+    from the rows even when the height signal is a plateau (the ② discriminator
+    test).  Returns None for Nx3 scans (no intensity captured)."""
+    if P.shape[1] < 4:
+        return None
+    x, y, inten = P[:, 0], P[:, 1], P[:, 3]
+    roi = (y >= args.crop_min_y) & (y <= args.roi_y_max) & (np.abs(x) <= args.roi_x)
+    hs = 0.5 * spacing
+    strip = roi & (np.abs(x - lateral) <= args.strip_half)
+    rows = roi & ((np.abs(x - (lateral - hs)) <= args.strip_half)
+                  | (np.abs(x - (lateral + hs)) <= args.strip_half))
+    if strip.sum() < 5 or rows.sum() < 5:
+        return None
+    return float(inten[rows].mean() - inten[strip].mean())
+
+
 def replay(files, args, n_accum: int):
     det = make_detector(args)
     acc = ScanAccumulator(n_accum)
-    H, L, C, E, N, R, DENSE, MODE = ([] for _ in range(8))
-    prev_v = 0.0
+    H, L, C, E, N, R, DENSE, MODE, ICON = ([] for _ in range(9))
     for f in files:
         P = np.load(f).astype(np.float64)
         # Approx inter-scan motion: saved scans may be subsampled, so use the
         # nominal field speed × the save interval only when accumulating.
         d_fwd = args.speed * args.scan_dt if n_accum > 1 else 0.0
-        Pfit = acc.update(P, d_fwd=d_fwd, d_theta=0.0)
+        # Accumulation is geometry-only (drops intensity); fit on xyz.
+        Pfit = acc.update(P[:, :3], d_fwd=d_fwd, d_theta=0.0)
         e = det.update(Pfit)
         H.append(math.degrees(e.heading_error)); L.append(e.lateral_offset)
         C.append(e.confidence); E.append(e.row_end_confidence); N.append(e.n_points)
         R.append(det.last_reliability); DENSE.append(det.last_dense)
         MODE.append(det.last_mode)
+        # Intensity discriminator diagnostic on the RAW scan (Nx4 only).
+        ic = _intensity_contrast(P, e.lateral_offset, det._spacing_est, args)
+        ICON.append(ic if ic is not None else np.nan)
     return dict(H=np.array(H), L=np.array(L), C=np.array(C), E=np.array(E),
-                N=np.array(N), R=np.array(R), DENSE=np.array(DENSE), MODE=MODE)
+                N=np.array(N), R=np.array(R), DENSE=np.array(DENSE), MODE=MODE,
+                ICON=np.array(ICON))
 
 
 def summarize(name, m, full_n):
@@ -111,6 +135,14 @@ def summarize(name, m, full_n):
     print(f"    FALSE row-ends        {false_end:4d}   (row_end_conf>=0.70 with n>={full_n} crop pts)")
     print(f"    dense-regime scans    {int(dense.sum()):4d}/{len(H)}   low-reliability {lowrel*100:.0f}%")
     print(f"    mode  density/canopy  {len(H)-ncan}/{ncan}")
+    icon = m.get("ICON")
+    if icon is not None and np.isfinite(icon).any():
+        v = icon[np.isfinite(icon)]
+        same_sign = max(np.mean(v > 0), np.mean(v < 0))     # sign consistency
+        usable = abs(v.mean()) > 5.0 and same_sign > 0.70   # strong AND consistent
+        print(f"    intensity contrast    {v.mean():+6.1f} (row−strip, 0–255)   "
+              f"sign-consistent {100*same_sign:.0f}% of {len(v)} scans   "
+              f"→ {'USABLE strip discriminator' if usable else 'weak / inconclusive'}")
     return dict(false_end=false_end, hstd=H.std(), lstd=L.std())
 
 
@@ -135,6 +167,11 @@ def main() -> None:
     ap.add_argument("--row-spacing", type=float, default=0.76)
     ap.add_argument("--reliability-floor", type=float, default=0.35)
     ap.add_argument("--row-end-veto", type=float, default=200.0)
+    # intensity-discriminator diagnostic (Nx4 scans only)
+    ap.add_argument("--roi-y-max", type=float, default=7.0)
+    ap.add_argument("--crop-min-y", type=float, default=1.5)
+    ap.add_argument("--strip-half", type=float, default=0.15,
+                    help="cross-row half-width (m) sampled at the strip centre and each flanking row")
     ap.add_argument("--plot", default="", help="write a heading/row-end A/B figure here")
     args = ap.parse_args()
 

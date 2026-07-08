@@ -503,6 +503,7 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
         post_turn_max_dist=args.post_turn_max_dist,
         row_end_search_dist=args.row_end_search,
         accumulate_scans=args.accumulate,
+        capture_intensity=args.lidar_intensity,
         heading_source=filter_heading,
         align_heading=args.align_heading,
         align_rate=args.align_speed,
@@ -783,6 +784,14 @@ def main() -> None:
     parser.add_argument("--approach-max-dist", type=float, default=3.0, metavar="M",
                         help="Max distance (m) the APPROACH leg drives searching for the next "
                              "row before stopping (field edge / overshoot guard; default: 3.0).")
+    parser.add_argument("--lidar-intensity", action="store_true",
+                        help="Capture per-return LiDAR intensity (0–255) into the recorded scan "
+                             "stream (Nx4) alongside --save-scans, for offline residue-strip "
+                             "reflectance analysis. In the 903 nm NIR band green canopy and dry "
+                             "residue/soil reflect differently, so intensity is a candidate strip "
+                             "discriminator when the closed canopy flattens the height signal. The "
+                             "LIVE detection path is unchanged (Nx3) — this only enriches the saved "
+                             "scans; pair with --record --save-scans on a dense run.")
     parser.add_argument("--accumulate", type=int, default=1, metavar="N",
                         help="Motion-compensated multi-scan accumulation for the ROW FIT "
                              "(dense-canopy signal restoration; default: 1 = off). Registers the "

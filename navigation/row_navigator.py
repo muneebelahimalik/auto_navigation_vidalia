@@ -139,6 +139,7 @@ class RowNavigator:
         post_turn_max_dist: float = 5.0,
         row_end_search_dist: float = 2.0,
         accumulate_scans: int = 1,
+        capture_intensity: bool = False,
         heading_source=None,
         align_heading: bool = False,
         align_thresh: float = 0.14,
@@ -173,6 +174,12 @@ class RowNavigator:
         # safety monitor / bridge / capture (see the loop).
         self.accumulator = ScanAccumulator(accumulate_scans)
         self.accumulate_scans = accumulate_scans
+        # Capture per-return intensity (Nx4 from the driver) — split off as a
+        # PARALLEL column and saved with the recorded scans; the live geometry
+        # arrays (detector / safety / bridge / accumulator) stay Nx3, so this is
+        # a zero-risk addition to the hot path.  For offline residue-strip
+        # discriminator development on real intensity data (see replay_scans.py).
+        self.capture_intensity = capture_intensity
         self.safety = safety
         self.controller = controller
         self.auto = auto
@@ -340,7 +347,7 @@ class RowNavigator:
         silently blocking with the last non-zero twist still in effect.
         """
         self._t_prev = time.monotonic()
-        stream = lidar.scan_stream_np()
+        stream = lidar.scan_stream_np(with_intensity=self.capture_intensity)
         next_scan = None       # pending __anext__ task (survives watchdog timeouts)
         stall_warned = False
         while not self._stop:
@@ -368,13 +375,24 @@ class RowNavigator:
             dt = min(max(now - self._t_prev, 1e-3), 0.5)
             self._t_prev = now
 
+            # Split off intensity (column 3) as a PARALLEL array so the live
+            # geometry pipeline stays exactly Nx3; intensity rides through the
+            # same self-filter mask and is re-attached only for the recorder.
+            intensity = None
+            if self.capture_intensity and pts.ndim == 2 and pts.shape[1] >= 4:
+                intensity = pts[:, 3]
+                pts = pts[:, :3]
+
             # Drop the robot's own frame/crossbar: the centre-mounted LiDAR
             # sees its mounting structure as a dense return at ~0.5 m.
             # Without this it permanently trips the safety zones and the
             # robot never leaves OBSTACLE_WAIT.
             if len(pts):
                 rng = np.hypot(pts[:, 0], pts[:, 1])
-                pts = pts[rng >= self.self_radius]
+                keep = rng >= self.self_radius
+                pts = pts[keep]
+                if intensity is not None:
+                    intensity = intensity[keep]
                 # Optional SLAM mapping (added functionality, mapping-only):
                 # hand the self-filtered, still-UNCORRECTED cloud to the SLAM
                 # runner, which applies its own yaw/tilt and maps in a separate
@@ -446,7 +464,13 @@ class RowNavigator:
             if self.capture_perception:
                 self._capture_perception(pts, est)
             if self.scan_recorder is not None:
-                self.scan_recorder.submit(pts, {
+                # Save the corrected geometry, re-attaching intensity as column 3
+                # when captured (Nx4) so the recorded scans carry reflectance for
+                # offline residue-strip discriminator work; live path stays Nx3.
+                rec_pts = pts
+                if intensity is not None and len(intensity) == len(pts):
+                    rec_pts = np.column_stack((pts, intensity))
+                self.scan_recorder.submit(rec_pts, {
                     "state": self.state,
                     "lateral": float(est.lateral_offset),
                     "heading_deg": math.degrees(est.heading_error),

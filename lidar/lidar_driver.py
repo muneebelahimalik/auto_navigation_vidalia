@@ -154,7 +154,7 @@ def _parse_packet(raw: bytes) -> List[VelodynePoint]:
     return points
 
 
-def _parse_scan_np(packets: List[bytes]) -> np.ndarray:
+def _parse_scan_np(packets: List[bytes], with_intensity: bool = False) -> np.ndarray:
     """
     Vectorised parse of a list of raw VLP-16 packets into an Nx3 float64
     array of (x, y, z) sensor-frame coordinates.
@@ -164,9 +164,18 @@ def _parse_scan_np(packets: List[bytes]) -> np.ndarray:
     per-point Python loop.  scan_stream_np() relies on this to sustain the
     full 10 Hz scan rate the real-time perception pipeline needs — the
     per-point parser cannot keep up and causes dropped UDP packets.
+
+    ``with_intensity=True`` returns Nx4 with the per-return intensity (0–255,
+    the third byte of each channel record — already parsed here as
+    ``data[:, :, 2]``, previously discarded) as column 3.  In the 903 nm NIR
+    band green canopy and dry residue/soil reflect differently, so intensity is
+    a candidate discriminator for the residue strip once the canopy has closed
+    and the height signal is a plateau.  Default (Nx3) is byte-identical to
+    before, so the live geometry path is unaffected.
     """
+    ncols = 4 if with_intensity else 3
     if not packets:
-        return np.zeros((0, 3), dtype=np.float64)
+        return np.zeros((0, ncols), dtype=np.float64)
 
     body = VELODYNE_BLOCK_COUNT * VELODYNE_BLOCK_SIZE
     raw = b"".join(p[:body] for p in packets)
@@ -187,6 +196,9 @@ def _parse_scan_np(packets: List[bytes]) -> np.ndarray:
     z = dist * _VLP16_SIN_VERT_32[None, :]
 
     good = (dist_raw != 0) & (flag[:, None] == VELODYNE_BLOCK_FLAG)
+    if with_intensity:
+        intensity = data[:, :, 2].astype(np.float64)
+        return np.stack((x[good], y[good], z[good], intensity[good]), axis=1)
     return np.stack((x[good], y[good], z[good]), axis=1)
 
 
@@ -268,7 +280,7 @@ class LidarDriver:
             last_azimuth = first_az
             accumulated.extend(_parse_packet(raw))
 
-    async def scan_stream_np(self) -> "AsyncIterator[np.ndarray]":
+    async def scan_stream_np(self, with_intensity: bool = False) -> "AsyncIterator[np.ndarray]":
         """
         Yield one full 360° scan per iteration as an Nx3 float64 array of
         (x, y, z) sensor-frame coordinates.
@@ -277,6 +289,10 @@ class LidarDriver:
         perception: it sustains the full 10 Hz scan rate, whereas the
         per-point scan_stream() falls behind and drops UDP packets, which
         fragments scans (missing azimuth sectors, varying point counts).
+
+        ``with_intensity=True`` yields Nx4 (x, y, z, intensity) — used only to
+        CAPTURE intensity into the recorded scan stream; the live geometry path
+        keeps the default Nx3.
         """
         packets: List[bytes] = []
         last_azimuth = 0.0
@@ -289,7 +305,7 @@ class LidarDriver:
             first_az = struct.unpack_from("<H", raw, 2)[0] * VELODYNE_ROTATION_UNIT
 
             if first_az < last_azimuth and packets:
-                yield _parse_scan_np(packets)
+                yield _parse_scan_np(packets, with_intensity=with_intensity)
                 packets = []
 
             last_azimuth = first_az
