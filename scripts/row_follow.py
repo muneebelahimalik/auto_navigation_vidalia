@@ -418,6 +418,8 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
         dense_canopy=not args.no_dense_canopy,
         canopy_tall_h=args.canopy_tall_h,
         dense_canopy_frac=args.dense_frac,
+        row_end_veto_density=args.row_end_veto,
+        reliability_floor=args.reliability_floor,
     )
     tire_h = args.tire_height if args.tire_height is not None else args.obstacle_height
     safety = SafetyMonitor(
@@ -752,6 +754,20 @@ def main() -> None:
                              "for the dense-canopy weighted fit to engage (default: 0.35). Lower "
                              "it (e.g. 0.25) to engage the robust fit earlier as the crop fills in; "
                              "raise it to keep the plain density fit until the canopy is fully closed.")
+    parser.add_argument("--row-end-veto", type=float, default=200.0, metavar="N",
+                        help="Row-end density veto (default: 200). A row END means the crop band "
+                             "ahead is EMPTY, so if the ROI still holds >= N LiDAR crop points the "
+                             "row-end confidence is forced to 0 — a full ROI can never be a row end. "
+                             "Prevents a degenerate dense-canopy fit (runaway heading mislocating the "
+                             "flanking-row windows) from firing a HEADLAND turn mid-row. Field logs: "
+                             "false mid-row ends had n>=647, real row ends n<=78. Set 0 to disable.")
+    parser.add_argument("--reliability-floor", type=float, default=0.35, metavar="R",
+                        help="Dense-canopy runaway/weave guard (default: 0.35). In the dense regime, "
+                             "when the arbiter's self-consistency (reliability) drops below this the "
+                             "closed-canopy fit is degenerate — HOLD the previous heading/lateral "
+                             "instead of chasing it (stops the +8-to-+60-deg heading runaway and the "
+                             "left/right weave). Good tracking stays >=0.7 so the hold is inert there. "
+                             "Set 0 to disable.")
     parser.add_argument("--turn-dir", choices=["right", "left"], default="right",
                         help="Direction of the FIRST headland U-turn (default: right). "
                              "Subsequent turns alternate for serpentine coverage.")

@@ -299,6 +299,8 @@ class RowDetector:
         canopy_tall_h: float = 0.45,
         dense_canopy_frac: float = 0.35,
         strip_floor_pct: float = 25.0,
+        row_end_veto_density: float = 200.0,
+        reliability_floor: float = 0.35,
     ) -> None:
         self.roi_y_min = roi_y_min
         self.roi_y_max = roi_y_max
@@ -435,6 +437,33 @@ class RowDetector:
         self.arbiter_agree_scale = 0.5                # m; lateral disagreement that halves the agreement term
         self.last_reliability = 0.0                   # diagnostic: winning hypothesis self-consistency
         self.last_mode = "density"                    # diagnostic: which expert won ("density"/"canopy")
+        # Reliability-gated HOLD (dense-canopy runaway / weave guard).  When the
+        # canopy has closed over the ground, the density expert's cross-row
+        # histogram is a plateau and its PCA heading is ill-conditioned; the
+        # arbiter is meant to prefer the canopy expert, but in field logs BOTH
+        # experts' self-consistency (`last_reliability`) collapsed to ~0.1 on the
+        # degenerate scans while the fit's heading spiralled monotonically
+        # 8°→60° over ~1.5 m and the lateral drifted 0.1→0.43 m — with crop
+        # clearly still present (n≈800).  Chasing that garbage fit produced the
+        # left/right dense-canopy weave AND (via the mislocated flanking-row
+        # windows) a spurious row-end that fired a HEADLAND turn mid-row.  Good
+        # tracking keeps reliability ≥ 0.7 (p10 0.73 on a clean 142 m run), so a
+        # floor cleanly separates the two: when reliability < reliability_floor in
+        # the dense regime, the fit is untrustworthy — HOLD the previous smoothed
+        # geometry (don't chase it) while still reporting the low confidence so the
+        # state machine knows tracking degraded.  Non-dense / high-reliability
+        # scans are unaffected (byte-identical).  0 disables the hold.
+        self.reliability_floor = reliability_floor
+        # Row-end density veto.  A row END means the crop band ahead is EMPTY.
+        # If the ROI still holds a near-full crop mass the "row ended" reading is
+        # a mislocated-window artifact of a degenerate dense-canopy fit, never a
+        # real end.  Field logs separate cleanly: FALSE mid-row row-ends all had
+        # n ≥ 647 (with runaway heading); REAL row ends all had n ≤ 78.  So when
+        # the total LiDAR crop count n ≥ row_end_veto_density the row-end
+        # confidence is forced to 0 — a full ROI can never be a row end.  Set 0 to
+        # disable.  (The reliability hold above usually prevents the runaway in the
+        # first place; this is the independent safety net on the turn decision.)
+        self.row_end_veto_density = row_end_veto_density
         # Point-level fusion of camera ground points (aux_xy in update()):
         # aux_y_min lets near-field camera points (LiDAR self-filter blind
         # zone) into the fit; aux_mass_ratio caps the camera's total
@@ -660,6 +689,12 @@ class RowDetector:
             else:
                 row_strength = 0.0
             row_end_conf = 1.0 - min(1.0, row_strength / self.row_end_side_density)
+            # Veto: a full ROI can never be a row end.  When the runaway heading
+            # mislocates the flanking windows, row_strength reads low and this
+            # would spuriously fire — but n (total crop) is still high, so clamp
+            # row-end confidence to 0.  Real row ends have n≪veto (crop gone).
+            if self.row_end_veto_density and n >= self.row_end_veto_density:
+                row_end_conf = 0.0
         else:
             # Single-row mode (onion): one crop row under the robot; no arbiter.
             # Seed the row axis by PCA (canopy-height-weighted in the dense
@@ -686,6 +721,19 @@ class RowDetector:
         confidence = density * linear_factor
         if self.dual_row:
             confidence *= self._spacing_factor
+
+        # Reliability-gated HOLD: in the dense regime, if the winning expert's
+        # self-consistency collapsed (degenerate plateau fit — the dense-canopy
+        # runaway/weave signature), do NOT chase this scan's geometry.  Hold the
+        # previous smoothed lateral/heading so the estimate leans on history; keep
+        # the (low) confidence so the state machine still sees the degraded lock.
+        # Good tracking keeps reliability well above the floor, so this is inert
+        # there.  Never engages until a prior estimate exists (self._est.valid).
+        if (self.dual_row and dense and self._est.valid
+                and self.reliability_floor
+                and self.last_reliability < self.reliability_floor):
+            lateral = float(self._est.lateral_offset)
+            heading = float(self._est.heading_error)
 
         return self._smooth(RowEstimate(
             heading_error=heading,

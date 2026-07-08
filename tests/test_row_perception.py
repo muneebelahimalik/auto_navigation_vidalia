@@ -883,3 +883,75 @@ def test_arbiter_stays_density_in_early_growth():
     converge(det, np.vstack([make_row(-HALF), make_row(+HALF)]))
     assert det.last_mode == "density"
     assert det.last_dense is False
+
+
+# ---------------------------------------------------------------------------
+# Dense-canopy false-row-end / runaway guards (field failure: MPC/RL/pursuit
+# took a HEADLAND mid-row).  Root cause: a degenerate closed-canopy fit whose
+# heading spiralled to ±60° while crop was clearly still present (n≈800),
+# mislocating the flanking-row windows so row_end_confidence spuriously read
+# 1.0.  Two independent guards below.
+# ---------------------------------------------------------------------------
+
+def _dense_blob(n=500, cy=3.5, r=0.6, h_lo=0.35, h_hi=0.55, seed=3):
+    """An isotropic dense clump of tall-canopy returns — no clean two-row
+    structure, so the arbiter's self-consistency (linearity) collapses.  Stands
+    in for the field's degenerate closed-canopy scan."""
+    rng = np.random.default_rng(seed)
+    ang = rng.uniform(0.0, 2 * np.pi, n)
+    rad = rng.uniform(0.0, r, n)
+    x = rad * np.cos(ang)
+    y = cy + rad * np.sin(ang)
+    h = rng.uniform(h_lo, h_hi, n)
+    return np.column_stack((x, y, h - LIDAR_MOUNT_HEIGHT))
+
+
+def test_row_end_vetoed_when_roi_full_of_crop():
+    """A full ROI can never be a row end.  A dense clump whose mass misses the
+    flanking-row windows (n high, row_strength low) reads row_end_confidence≈1
+    WITHOUT the veto (the false mid-row headland), and 0 WITH it."""
+    pts = _dense_blob(n=400)
+    off = RowDetector(dual_row=True, crop_h_min=0.10, crop_h_max=0.70,
+                      canopy_tall_h=0.30, dense_canopy_frac=0.30,
+                      row_end_veto_density=0.0, reliability_floor=0.0)
+    on = RowDetector(dual_row=True, crop_h_min=0.10, crop_h_max=0.70,
+                     canopy_tall_h=0.30, dense_canopy_frac=0.30,
+                     row_end_veto_density=200.0, reliability_floor=0.0)
+    for _ in range(3):
+        e_off = off.update(pts)
+        e_on = on.update(pts)
+    assert e_off.n_points >= 200 and e_on.n_points >= 200          # ROI is full
+    assert e_off.row_end_confidence > 0.7                          # would false-trigger
+    assert e_on.row_end_confidence == 0.0                          # vetoed
+
+
+def test_reliability_hold_freezes_geometry_on_degenerate_scan():
+    """After a clean dense lock, a degenerate scan (reliability collapses) must
+    NOT move the tracked heading — held to the prior value — instead of chasing
+    the garbage fit (the source of the +8°→+60° dense-canopy runaway)."""
+    good = make_dense_canopy_scene(0.0)
+    blob = _dense_blob(n=500)
+
+    held = RowDetector(dual_row=True, row_spacing=ROW_SPACING,
+                       crop_h_min=0.03, crop_h_max=1.0, reliability_floor=0.35)
+    free = RowDetector(dual_row=True, row_spacing=ROW_SPACING,
+                       crop_h_min=0.03, crop_h_max=1.0, reliability_floor=0.0)
+    converge(held, good)
+    converge(free, good)
+    prior = held._est.heading_error
+    e_held = held.update(blob)
+    e_free = free.update(blob)
+    assert held.last_reliability < 0.35                            # degenerate scan
+    # held: heading pinned to the prior; free: it moves off
+    assert e_held.heading_error == pytest.approx(prior, abs=1e-9)
+    assert abs(e_free.heading_error - prior) > math.radians(1.0)
+
+
+def test_reliability_hold_inert_on_good_tracking():
+    """A clean dense two-row scan keeps reliability well above the floor, so the
+    hold never engages and the estimate tracks the real offset normally."""
+    det = RowDetector(dual_row=True, row_spacing=ROW_SPACING,
+                      crop_h_min=0.03, crop_h_max=1.0, reliability_floor=0.35)
+    e = converge(det, make_dense_canopy_scene(0.20))
+    assert det.last_reliability >= 0.35
+    assert e.lateral_offset == pytest.approx(-0.20, abs=0.06)
