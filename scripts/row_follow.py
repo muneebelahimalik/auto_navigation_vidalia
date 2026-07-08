@@ -450,7 +450,11 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
         controller = RLController(
             policy=pol, max_linear=args.speed,
             lookahead=args.lookahead, max_angular=args.max_angular,
-            residual=args.rl_residual, residual_scale=args.residual_scale)
+            residual=args.rl_residual, residual_scale=args.residual_scale,
+            max_angular_slew=args.rl_slew)
+        if args.rl_slew > 0:
+            print(f" [row_follow] RL angular slew limit: {args.rl_slew} rad/s per step "
+                  f"(caps left/right thrash)")
         if args.rl_residual:
             print(f" [row_follow] RESIDUAL RL: steer = pursuit(+integral) + "
                   f"{args.residual_scale}·policy_delta")
@@ -1052,6 +1056,14 @@ def main() -> None:
     parser.add_argument("--residual-scale", type=float, default=0.5, metavar="S",
                         help="Authority of the residual delta as a fraction of --max-angular "
                              "(default: 0.5). Must match the value the policy was trained with.")
+    parser.add_argument("--rl-slew", type=float, default=0.0, metavar="R",
+                        help="RL angular SLEW-RATE limit — max change in the steering command "
+                             "per control step (rad/s per ~0.1 s scan; 0 = off, default). A hard "
+                             "field-safety bound on how fast the wheels can swing, independent of "
+                             "the policy and its input: even a noisy heading or an aggressive policy "
+                             "cannot produce the violent left/right over-correction seen in the "
+                             "field (RL reacts fastest, so it amplified the dense-canopy heading "
+                             "runaway). Try 0.10–0.15 for the field. Only affects --controller rl.")
     parser.add_argument("--lookahead", type=float, default=2.0, metavar="M",
                         help="Pure-pursuit lookahead distance in metres (default: 2.0). "
                              "Smaller = more aggressive lateral correction but risks oscillation. "

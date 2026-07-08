@@ -126,6 +126,49 @@ def test_policy_steering_is_clamped():
     assert -0.40 <= w <= 0.40
 
 
+def test_angular_slew_limits_thrash():
+    """A worst-case policy that slams full opposite steering each scan is capped
+    to ``max_angular_slew`` per step, so it physically cannot produce the violent
+    left/right over-correction seen in the field.  Off by default (slew=0)."""
+    class Thrash:
+        obs_dim = 5
+
+        def __init__(self):
+            self.k = 0
+
+        def act(self, obs):
+            self.k += 1
+            return 1.0 if self.k % 2 else -1.0
+
+    est = RowEstimate(heading_error=0.0, lateral_offset=0.0, confidence=0.9,
+                      n_points=800, valid=True)
+    # No limit: full ±max_angular swings every step.
+    free = RLController(policy=Thrash(), max_angular=0.40, max_angular_slew=0.0)
+    wf = [free.compute(est)[1] for _ in range(6)]
+    assert max(abs(a - b) for a, b in zip(wf, wf[1:])) > 0.5      # thrashes
+
+    # With a 0.10 rad/s-per-step limit: no jump exceeds the slew.
+    lim = RLController(policy=Thrash(), max_angular=0.40, max_angular_slew=0.10)
+    wl = [lim.compute(est)[1] for _ in range(6)]
+    assert all(abs(a - b) <= 0.10 + 1e-9 for a, b in zip(wl, wl[1:]))
+
+
+def test_angular_slew_off_by_default_is_unbounded():
+    """Default (no slew arg) preserves the original behaviour — a large command
+    change passes through unclamped."""
+    class Step:
+        obs_dim = 5
+
+        def act(self, obs):
+            return 1.0
+
+    c = RLController(policy=Step(), max_angular=0.40)          # slew defaults to 0
+    est = RowEstimate(heading_error=0.0, lateral_offset=0.0, confidence=0.9,
+                      n_points=800, valid=True)
+    _v, w = c.compute(est)
+    assert w == pytest.approx(0.40)                            # full command, no slew damping
+
+
 # ---------------------------------------------------------------------------
 # Residual composition: policy adds a bounded delta on top of the baseline
 # ---------------------------------------------------------------------------

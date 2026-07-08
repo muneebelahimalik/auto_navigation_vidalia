@@ -326,6 +326,23 @@ safety architecture: `RLController` falls back to pure-pursuit below
 opt in. Numpy-only (no torch/gym), so the policy deploys on the Jetson with zero
 new dependencies.
 
+**Field over-correction & the slew-rate bound (`--rl-slew`).** A field RL run
+thrashed left/right at the row start until it stalled in ACQUIRE (heading std
+20.8° vs MPC 2.7°; 7.6× pursuit's steering effort). Replaying the run showed the
+cause was NOT the policy — in sim the deployed `follow_jerk8.0.npz` is already
+smooth (jerk 0.051 ≈ MPC, xtrack 8.6 cm) — but the **dense-canopy heading
+runaway feeding it ±60–70° garbage**, which RL (reacting fastest) amplified. The
+primary fix is at the perception source (the reliability hold / row-end veto,
+validated on the real `run_pursuit_20260707_000410` scans). As an *independent*
+hard field-safety bound, `--rl-slew R` caps the change in the steering command
+per control step (rad/s per ~0.1 s scan), so no policy and no noisy input can
+swing the wheels faster than R — try 0.10–0.15 in the field. Off by default
+(preserves existing behaviour). Retraining the policy as a bounded residual with
+a stronger jerk penalty did NOT beat the existing direct policy on held-out
+episodes (the eval harness reported the truth), so the deployed default is
+unchanged — the RL field fix is the perception stabilisation plus the optional
+slew clamp, not a new policy.
+
 **Drift integrator (field-motivated).** The policy observes
 `[lateral, heading, conf, prev_action, drift_integral]`. A field RL run drifted
 downhill and off the row on cross-slopes; a memoryless reactive policy

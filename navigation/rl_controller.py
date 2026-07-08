@@ -38,6 +38,7 @@ class RLController:
         min_confidence: float = 0.35,
         residual: bool = False,
         residual_scale: float = 0.5,
+        max_angular_slew: float = 0.0,
     ) -> None:
         # Reused for forward speed + as the low-confidence / no-policy fallback,
         # AND (in residual mode) as the base steering the policy corrects on top of.
@@ -52,6 +53,18 @@ class RLController:
         # baseline steering (bounded, strictly safer), instead of replacing it.
         self.residual = residual
         self.residual_scale = residual_scale
+        # Angular SLEW-RATE limit (rad/s of change per control step, ~0.1 s).
+        # Caps how fast the steering command can move between scans, so the
+        # policy physically CANNOT produce the violent left-right thrash seen in
+        # the field (a learned policy reacts fastest, so it amplified the
+        # dense-canopy heading runaway into an over-correction that stalled the
+        # robot).  This is a hard field-safety bound independent of the policy
+        # and its input — even a bad policy or a noisy heading can only turn the
+        # wheels so fast.  0 = disabled (default; preserves existing behaviour).
+        # Applied to the FINAL output on every path (fallback included) so the
+        # pursuit→policy handoff is also smooth.
+        self.max_angular_slew = max_angular_slew
+        self._prev_w = 0.0
         self._prev_a = 0.0
         self._eint = 0.0
         # Whether the loaded policy takes the 5th (drift-integrator) input.
@@ -61,8 +74,18 @@ class RLController:
     def reset(self) -> None:
         """Clear per-row controller state (call on a new row / after a U-turn)."""
         self._prev_a = 0.0
+        self._prev_w = 0.0
         self._eint = 0.0
         self.pursuit.reset()          # clear the baseline's integral too
+
+    # ------------------------------------------------------------------
+    def _slew(self, w: float) -> float:
+        """Clamp the per-step change in the angular command (field-safety bound)."""
+        if self.max_angular_slew > 0.0:
+            lo, hi = self._prev_w - self.max_angular_slew, self._prev_w + self.max_angular_slew
+            w = max(lo, min(hi, w))
+        self._prev_w = w
+        return w
 
     # ------------------------------------------------------------------
     def compute(self, est: RowEstimate) -> tuple[float, float]:
@@ -75,7 +98,7 @@ class RLController:
         # the learned policy never acts on a low-confidence observation.
         if self.policy is None or est.confidence < self.min_confidence or not est.valid:
             self._prev_a = (w_pp / self.max_angular) if self.max_angular else 0.0
-            return v, w_pp
+            return v, self._slew(w_pp)
 
         obs = [est.lateral_offset, est.heading_error, est.confidence, self._prev_a]
         if self._use_eint:
@@ -89,4 +112,4 @@ class RLController:
             a = delta                                  # policy replaces the steering
         self._prev_a = a
         w = max(-self.max_angular, min(self.max_angular, a * self.max_angular))
-        return v, w
+        return v, self._slew(w)
