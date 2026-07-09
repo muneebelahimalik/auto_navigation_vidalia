@@ -435,10 +435,17 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
         # row fix is weak or no policy is loaded — never replaces safety/state.
         from navigation.rl_controller import RLController
         from navigation.rl_policy import MLPPolicy
-        # Default to the smoothest sweep policy (as smooth as MPC, tighter
-        # tracking) when no --policy is given, so `--controller rl` works
-        # out of the box.
-        policy_path = args.policy or "policies/follow_jerk8.0.npz"
+        # Default field policy: trained with a real control-EFFORT penalty
+        # (c_u 0.8) on top of the jerk penalty.  The earlier follow_jerk8.0
+        # minimised jerk (smooth CHANGES) but had a near-zero effort penalty, so
+        # it held large steady steering — on a real cross-slope field its steering
+        # effort was 6.7x pursuit / 1.5x MPC (|w| 0.147), which looked like
+        # "weird" over-turning even though tracking was fine.  follow_field keeps
+        # RL's tracking edge (sim xtrack 10.3 cm — still best, beats MPC 14.2 and
+        # pursuit 17.9) while cutting field steering effort to MPC's level
+        # (|w| 0.090 on the real run_rl scans, vs MPC 0.095).  Measured with
+        # scripts/replay_scans.py on real field estimates.
+        policy_path = args.policy or "policies/follow_field.npz"
         pol = None
         if policy_path and Path(policy_path).exists():
             pol = MLPPolicy.load(policy_path)

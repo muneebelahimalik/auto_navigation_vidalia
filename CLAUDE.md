@@ -337,11 +337,30 @@ validated on the real `run_pursuit_20260707_000410` scans). As an *independent*
 hard field-safety bound, `--rl-slew R` caps the change in the steering command
 per control step (rad/s per ~0.1 s scan), so no policy and no noisy input can
 swing the wheels faster than R — try 0.10–0.15 in the field. Off by default
-(preserves existing behaviour). Retraining the policy as a bounded residual with
-a stronger jerk penalty did NOT beat the existing direct policy on held-out
-episodes (the eval harness reported the truth), so the deployed default is
-unchanged — the RL field fix is the perception stabilisation plus the optional
-slew clamp, not a new policy.
+(preserves existing behaviour).
+
+**Control-effort penalty → the deployed field policy (`follow_field.npz`, DEFAULT
+for `--controller rl`).** After the safety fixes stopped the ~90° whip, a field
+RL run still steered "weirdly" — aggressive, over-turning — even though it
+tracked (13 cm) and was low-jerk.  Replaying the real `run_rl_20260709_010533`
+scans through ALL THREE controllers on the *identical* perception estimates
+isolated the cause: RL's steering effort was **|ω| 0.147 — 6.7× pursuit and 1.5×
+MPC** for the same input, and smoothing the input did NOT reduce it, so it was
+the POLICY, not perception noise.  Root cause: `follow_jerk8.0` was trained with
+a strong *jerk* penalty (smooth CHANGES) but a near-zero *effort* penalty
+(`c_u=0.05`), so it holds large steady steering cheaply (low jerk, high
+magnitude).  Retraining with a real effort penalty (`--c-u 0.8 --c-du 8.0`)
+gives `follow_field.npz`: it **keeps RL's tracking edge** (sim held-out xtrack
+**10.3 cm — still best**, beats MPC 14.2 and pursuit 17.9) while cutting the
+real-field steering effort to **|ω| 0.090 — MPC's level** (0.095), with a lower
+peak too.  So RL is now best-tracking AND as smooth as MPC — the intended
+result.  This IS a new deployed default (the earlier residual retrain was a
+negative result; this effort-penalty retrain is the win).  Measure any candidate
+the same honest way with `scripts/replay_scans.py` on real field scans.  The
+`--c-u` sweep (0.05 → 0.4 → 0.8) is the accuracy/smoothness knee for the paper's
+controller Pareto.  Pair RL with **`--accumulate 3`** in dense canopy: on the
+real scans it cut the heading *peaks* 18°→13° (the spikes that trigger lunges)
+with negligible lateral cost.
 
 **Drift integrator (field-motivated).** The policy observes
 `[lateral, heading, conf, prev_action, drift_integral]`. A field RL run drifted
