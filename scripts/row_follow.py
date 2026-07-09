@@ -415,6 +415,7 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
         ground_detrend=not args.no_ground_detrend,
         heading_cap_deg=args.heading_cap,
         heading_gate_deg=args.heading_gate,
+        heading_abs_max_deg=args.heading_max,
         dense_canopy=not args.no_dense_canopy,
         canopy_tall_h=args.canopy_tall_h,
         dense_canopy_frac=args.dense_frac,
@@ -738,8 +739,18 @@ def main() -> None:
     parser.add_argument("--heading-gate", type=float, default=22.0, metavar="DEG",
                         help="Lateral-gate heading cap (deg, default: 22.0). The heading cap "
                              "ramps from --heading-cap (centred) up to this value as |lateral| "
-                             "reaches heading_consistency_lat (0.22 m); beyond that the heading "
-                             "is left unclamped so real off-strip recoveries steer fully.")
+                             "reaches heading_consistency_lat (0.22 m); beyond that the "
+                             "proportional cap relaxes (see --heading-max for the hard ceiling).")
+    parser.add_argument("--heading-max", type=float, default=35.0, metavar="DEG",
+                        help="ABSOLUTE heading ceiling (deg, default: 35.0) applied regardless of "
+                             "lateral offset. A row-following heading beyond this is non-physical "
+                             "(you never approach a crop row at 60–86°) — it is a bad fit in a "
+                             "sparse/gappy patch. A field RL run whipped ~90° into the crop when a "
+                             "self-consistent-but-wrong fit reported heading +86° AND lateral −0.42 m "
+                             "together (defeating the proportional cap and the reliability hold); "
+                             "this ceiling stops any controller — especially the reactive RL — from "
+                             "turning violently on such an estimate. Lower to ~25–30 for extra "
+                             "safety on gappy fields; normal following (±5°) is far below it.")
     parser.add_argument("--no-dense-canopy", action="store_true",
                         help="Disable the tall/dense-canopy adaptive row fit. By default, "
                              "when the canopy has closed over and the ground/furrow is no "

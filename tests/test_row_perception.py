@@ -697,10 +697,24 @@ def test_cap_scales_with_lateral_offset():
     assert abs(partway.heading_error) <= det.heading_cap_gate + 1e-9
 
 
-def test_large_heading_large_lateral_is_not_clamped():
-    # genuinely off the strip AND angled -> real, must NOT be clamped
-    est, det = _smoothed(math.radians(-40), -0.5, math.radians(-45), -0.5)
+def test_large_heading_large_lateral_not_proportionally_clamped():
+    # genuinely off the strip AND angled within the physical ceiling -> the
+    # PROPORTIONAL cap must not clamp it (it stays above the lateral gate); only
+    # the absolute ceiling (tested below) bounds it.
+    est, det = _smoothed(math.radians(-28), -0.5, math.radians(-30), -0.5)
     assert abs(est.heading_error) > det.heading_cap_gate
+    assert abs(est.heading_error) <= det.heading_abs_max + 1e-9
+
+
+def test_absolute_heading_ceiling_clamps_nonphysical_fit():
+    """The field RL failure: in a sparse patch the detector produced a
+    self-consistent but WRONG fit reporting heading ~−72° AND lateral −0.42 m
+    together (defeating the proportional cap, which relaxes off-strip).  The
+    absolute ceiling clamps it so a reactive controller cannot whip the robot
+    ~90° into the crop."""
+    est, det = _smoothed(math.radians(-70), -0.42, math.radians(-72), -0.42)
+    assert det.heading_abs_max == pytest.approx(math.radians(35.0))
+    assert abs(est.heading_error) == pytest.approx(det.heading_abs_max, abs=1e-9)
 
 
 def test_normal_small_heading_unchanged_by_clamp():

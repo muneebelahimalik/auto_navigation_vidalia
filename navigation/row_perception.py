@@ -295,6 +295,7 @@ class RowDetector:
         ground_roll_x_half: float = 2.0,
         heading_cap_deg: float = 7.0,
         heading_gate_deg: float = 22.0,
+        heading_abs_max_deg: float = 35.0,
         dense_canopy: bool = True,
         canopy_tall_h: float = 0.45,
         dense_canopy_frac: float = 0.35,
@@ -384,6 +385,11 @@ class RowDetector:
         # walking the robot across rows); exposed as --heading-cap.
         self.heading_cap_centred = math.radians(heading_cap_deg)   # rad; cap when perfectly centred
         self.heading_cap_gate = math.radians(heading_gate_deg)     # rad; cap at the lateral gate
+        # Absolute heading ceiling (applies even far off-strip, where the
+        # proportional cap relaxes).  A row-following heading beyond this is
+        # non-physical (bad fit in a sparse/gappy patch); clamping it stops a
+        # reactive controller turning ~90° into the crop.  Exposed as --heading-max.
+        self.heading_abs_max = math.radians(heading_abs_max_deg)
         # Continuity ("strip-lock") prior for dual-row pairing: bias the midpoint
         # toward the strip currently tracked so a correction that overshoots does
         # not alias onto the adjacent strip and hop rows.  0 disables it.
@@ -975,6 +981,23 @@ class RowDetector:
                 self.heading_cap_gate - self.heading_cap_centred) * frac
             if abs(sm_hdg) > cap:
                 sm_hdg = math.copysign(cap, sm_hdg)
+        # ABSOLUTE heading ceiling — applies REGARDLESS of lateral offset.
+        # The proportional cap above relaxes to unlimited once |lateral| passes
+        # its gate (0.22 m), on the theory that a genuinely off-strip robot may
+        # need a large steering angle to return.  A field RL run proved that
+        # assumption exploitable: in a sparse/gappy patch the detector produced a
+        # SELF-CONSISTENT but wrong fit reporting heading +68°→+86° AND lateral
+        # −0.42 m together (rel ≈ 0.5, so the reliability hold did not fire), and
+        # the reactive RL controller whipped the robot ~90° into the crop wall
+        # (repeated OBSTACLE_WAIT; the operator had to take over).  A row-following
+        # heading beyond ~35° is non-physical — you never approach a crop row at
+        # 60–86° — so it is a bad fit, not a real angled approach.  Clamp it
+        # unconditionally so no controller (especially RL, which reacts fastest)
+        # can be driven to turn violently on a garbage estimate.  Normal following
+        # (±5°) and genuine off-strip recovery (≲ atan(offset/lookahead), ~10–20°)
+        # are well under the ceiling, so this is inert there.  --heading-max.
+        if abs(sm_hdg) > self.heading_abs_max:
+            sm_hdg = math.copysign(self.heading_abs_max, sm_hdg)
         self._est = RowEstimate(
             heading_error=sm_hdg,
             lateral_offset=sm_lat,
