@@ -125,17 +125,47 @@ python3 scripts/row_follow.py --auto --dual-row --camera
 python3 scripts/row_follow.py --debug
 ```
 
-### LiDAR Row Follow — Onion Field (single raised crop row)
+### LiDAR Row Follow — Onion Field (Vidalia raised bed, 4 rows/bed)
+
+Vidalia layout: the robot straddles a 72 in (1.83 m) raised bed carrying **4
+onion rows at 11 in (0.279 m)**, plants 4 in apart; wheels in the furrows.
+`--preset onion` = `--bed-rows 4 --row-spacing 0.2794 --headland-radius 0.915`
++ crop band [0.05, 0.60] m **above the bed top** + obstacle 0.75 / tire 0.85 m.
+
+**Bed mode (`--bed-rows N`, `RowDetector(bed_rows=N)`, `find_bed_centre`).** The
+old onion mode (single-row nearest peak) is only right for ONE row per bed; on
+a 4-row bed it locks onto an inner onion row ~14 cm off the bed centre, and the
+soybean 2-peak pairing aliases once the robot is ~9 cm off-centre (an inner row
+falls in the ±5 cm pairing dead-band).  Bed mode instead:
+- fits the whole **N-row comb** — each (peak, slot) proposes a bed centre,
+  scored `0.5·misses + 1.0·extras + residual + strip-lock prior + soil-edge
+  term`; extras (observed rows nothing explains) outweigh misses (planter
+  skips), so capture is ~±0.35 m and a skipped row never hops the lock;
+- measures the crop band from the **bed-top soil** (`last_bed_floor`, P20 of
+  height over |x| ≤ 0.5 m) — otherwise the 0.15 m bed soil sits inside the band
+  and a bare bed reads as a confident row (row end never detected);
+- uses the bed's **soil edges** as an independent centre (`last_soil_centre`)
+  to break the one real ambiguity (a whole row missing at a start offset);
+- **aligns the ROI box with the row direction** (`last_roi_rot`, memoryless
+  histogram-sharpness search ±20°) — at 0.28 m spacing a 5° yaw drifts the rows
+  two spacings across the 7 m ROI, which biased the fixed box −8…−15 cm.
+Camera row tracking is disabled in bed mode (the camera tracker is 2-row only);
+telemetry gains `bed_floor_m`, `soil_centre`, `roi_rot_deg`; status shows
+`bed=0.15m`.  Sim (`tests/test_onion_bed.py`): bias ≤ 1 cm from 0 to ±35 cm start
+offset, sparse/young rows, skips, flat or 0.25 m beds, yaw up to ~15°.
 
 ```bash
-# Perception-only — robot stays still, verify detection first:
-python3 scripts/row_follow.py --crop-max 0.60 --obstacle-height 0.75 --tire-height 0.85
+# Perception-only — robot stays still; check off≈0, bed≈0.10–0.20m, sp≈0.28:
+python3 scripts/row_follow.py --preset onion --record
 
-# Autonomous (robot WILL move):
-python3 scripts/row_follow.py --auto --crop-max 0.60 --obstacle-height 0.75 --tire-height 0.85
+# Autonomous single bed (robot WILL move):
+python3 scripts/row_follow.py --auto --preset onion --controller pursuit --record
 
-# Autonomous with OAK-D cameras:
-python3 scripts/row_follow.py --auto --crop-max 0.60 --obstacle-height 0.75 --tire-height 0.85 --camera
+# Multi-bed serpentine (headland U-turn not yet field-validated in onion):
+python3 scripts/row_follow.py --auto --preset onion --rows 3 --headland --record
+
+# Other layouts: 2 rows/bed at 0.34 m → --preset onion --bed-rows 2 --row-spacing 0.34
+#                1 centre row         → --preset onion --bed-rows 1
 
 # Autonomous with ROS 2 visualization bridge output:
 python3 scripts/row_follow.py --auto --dual-row --ros2-bridge
@@ -1000,6 +1030,8 @@ to the noiseless convergence.  Regression-locked in `tests/test_row_controller.p
 | `--lidar-intensity` | off | Capture per-return LiDAR intensity (0–255) into the recorded scan stream (Nx4) alongside `--save-scans`. In the 903 nm NIR band green canopy and dry residue/soil reflect differently, so intensity is a candidate residue-strip discriminator when the closed canopy flattens the height signal. **Live detection path is unchanged (Nx3)** — intensity rides as a parallel column into the save path only; analyse the saved Nx4 scans with `scripts/replay_scans.py` (reports row−strip intensity contrast + sign consistency) before wiring it into the live fit. Pair with `--record --save-scans` on a dense run |
 | `--acquire-conf C` | **0.35** | Min row-detection confidence (0–1) to leave ACQUIRE |
 | `--dual-row` | off | Soybean / centre-residue mode: lateral offset = midpoint of left+right flanking crop peaks |
+| `--bed-rows N` | off | Raised-bed (onion) mode: steer to the centre of a bed carrying N rows at `--row-spacing` (in-bed spacing). N≥2 → comb fit + bed-top crop band + soil-edge tie-break + row-aligned ROI (implies `--dual-row`); 1 → single centre row. Vidalia: `--preset onion` (= 4 @ 0.279 m) |
+| `--preset onion` | — | Vidalia raised bed: `--bed-rows 4 --row-spacing 0.2794 --headland-radius 0.915`, crop band [0.05, 0.60] m above bed top, obstacle 0.75 m, tire 0.85 m |
 | `--obstacle-height H` | **0.50** | Min ground-relative height m to count as obstacle in FORWARD zone (soybean default; onion: 0.75) |
 | `--tire-height H` | **0.65** | Min height for TIRE-ZONE obstacles (soybean default; 0.35–0.50 causes false L-TIRE stops on dried residue stalks; onion: 0.85) |
 | `--camera` | off | Enable OAK-D stereo cameras |

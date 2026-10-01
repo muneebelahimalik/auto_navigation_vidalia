@@ -1247,6 +1247,13 @@ class RowNavigator:
             "sp":             round(float(getattr(self.detector, "spacing_estimate",
                                                   getattr(self.detector, "row_spacing", 0.0))), 3),
         }
+        if getattr(self.detector, "bed_rows", 0) >= 2:
+            # Raised-bed (onion) mode diagnostics: bed-surface floor under the
+            # crop band, the soil-edge bed centre, and the ROI box rotation.
+            sc = getattr(self.detector, "last_soil_centre", None)
+            rec["bed_floor_m"] = round(float(getattr(self.detector, "last_bed_floor", 0.0) or 0.0), 3)
+            rec["soil_centre"] = None if sc is None else round(float(sc), 3)
+            rec["roi_rot_deg"] = round(math.degrees(getattr(self.detector, "last_roi_rot", 0.0) or 0.0), 1)
         if self.state in _HEADLAND_STATES:
             rec["approach_dist"] = round(float(self._approach_dist), 3)
             rec["post_turn"] = bool(self._post_turn)
@@ -1302,6 +1309,8 @@ class RowNavigator:
         # converge to the field's actual spacing — no need to measure/pass it.
         if getattr(self.detector, "dual_row", False):
             grade_str += f" sp={getattr(self.detector, 'spacing_estimate', 0.0):.2f}m"
+        if getattr(self.detector, "bed_rows", 0) >= 2:
+            grade_str += f" bed={getattr(self.detector, 'last_bed_floor', 0.0):.2f}m"
         if self.state == _S.ACQUIRE:
             align_frames = self._acq_count - self.acquire_frames
             if align_frames > 0:

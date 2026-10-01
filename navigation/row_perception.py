@@ -140,6 +140,107 @@ def find_row_midpoint(
     return min(peaks, key=lambda p: abs(p - prior_lateral)), 0.5
 
 
+def find_bed_centre(
+    cross: np.ndarray,
+    roi_x_half: float,
+    bin_width: float,
+    row_spacing: float,
+    bed_rows: int,
+    weights: "Optional[np.ndarray]" = None,
+    prior_lateral: float = 0.0,
+    prior_weight: float = 0.0,
+    edge_margin: float = 0.10,
+    soil_centre: "Optional[float]" = None,
+    soil_weight: float = 0.6,
+    miss_cost: float = 0.5,
+    extra_cost: float = 1.0,
+) -> "tuple[float, float]":
+    """Locate the centre of a multi-row raised bed (onion) on the cross-row axis.
+
+    The robot straddles a bed carrying ``bed_rows`` crop rows at a uniform
+    ``row_spacing`` (Vidalia onion: 4 rows at 11 in = 0.279 m), so the rows sit
+    at ``c + (k − (N−1)/2)·row_spacing`` for k = 0..N−1 around the bed centre c.
+
+    ``find_row_midpoint`` pairs ONE left and ONE right peak and ignores peaks
+    inside a ±0.05 m dead-band (correct for a soybean residue strip, which has no
+    row on the centreline).  On a 4-row bed that is ambiguous — three adjacent
+    pairs all match the spacing — and once the robot is ~0.09 m off-centre an
+    inner row enters the dead-band and the WRONG pair wins (sim: +17 cm, then
+    +34 cm, i.e. a wheel driven onto the bed).  Instead fit the whole row COMB:
+    every (peak, slot) assignment proposes a bed centre; each proposal is scored
+    by how well the predicted comb explains the observed peaks:
+
+        cost = 0.5·misses + 1.0·extras + mean_residual/spacing
+               + prior_weight·|c − prior| + soil_weight·|c − soil_centre|/spacing
+
+    where *misses* are predicted rows well inside the ROI with no peak near them
+    and *extras* are observed peaks no predicted row explains.  A centre shifted
+    by one spacing leaves a real row unexplained (an extra) once all the bed's
+    rows are in view, so the comb is unambiguous until the NEXT bed's rows enter
+    the ROI — capture widens from ~±0.09 m to roughly ±0.35 m.  Extras weigh
+    more than misses because a row can be genuinely ABSENT (planter skip, gap)
+    but an observed row cannot be imagined; with that asymmetry the tracking
+    prior (one spacing ≈ 0.7 at weight 2.5) out-votes a single missing row, so
+    a planter skip in an outer row does not hop the comb mid-row.
+
+    ``soil_centre`` (optional) is an independent bed-centre estimate from the
+    raised-bed soil edges; it breaks the remaining ambiguity when a whole row is
+    missing at start-up (three visible rows fit two comb positions equally).
+
+    The winning centre is refined to sub-bin accuracy from the points near each
+    matched row.  Returns ``(lateral, spacing_factor)`` with the same meaning as
+    ``find_row_midpoint`` (spacing_factor falls with the fraction of predicted
+    rows actually seen).
+    """
+    n_rows = max(1, int(bed_rows))
+    peaks = histogram_peaks(cross, roi_x_half, bin_width, weights)
+    offsets = (np.arange(n_rows) - 0.5 * (n_rows - 1)) * row_spacing
+    tol = 0.35 * row_spacing
+    inner = roi_x_half - edge_margin
+    pk = np.asarray(peaks, dtype=float)
+
+    best = None
+    for p in peaks:
+        for off in offsets:
+            c = p - off
+            exp = c + offsets
+            # residual of each predicted row to its nearest observed peak
+            d = np.abs(exp[:, None] - pk[None, :])
+            near = d.min(axis=1)
+            matched = near <= tol
+            visible = np.abs(exp) <= inner
+            misses = int(np.sum(visible & ~matched))
+            # observed peaks explained by no predicted row
+            extras = int(np.sum(d.min(axis=0) > tol))
+            resid = float(near[matched].mean()) if matched.any() else tol
+            cost = (miss_cost * misses + extra_cost * extras + resid / row_spacing
+                    + prior_weight * abs(c - prior_lateral))
+            if soil_centre is not None:
+                cost += soil_weight * abs(c - soil_centre) / row_spacing
+            if best is None or cost < best[0]:
+                best = (cost, c, matched, visible)
+
+    _, c, matched, visible = best
+    # Sub-bin refinement: average (point − slot offset) over points near each
+    # matched predicted row.
+    exp = c + offsets
+    num = den = 0.0
+    w_all = np.ones(len(cross)) if weights is None else weights
+    for k in range(n_rows):
+        if not matched[k]:
+            continue
+        sel = np.abs(cross - exp[k]) <= 0.5 * row_spacing * 0.8
+        ws = float(w_all[sel].sum())
+        if ws > 0:
+            num += float((w_all[sel] * (cross[sel] - offsets[k])).sum())
+            den += ws
+    if den > 0:
+        c = num / den
+    n_vis = max(1, int(np.sum(visible | matched)))
+    spacing_factor = max(0.5, min(1.0, float(np.sum(matched)) / n_vis))
+    return float(c), spacing_factor
+
+
 def histogram_peaks(
     cross: np.ndarray,
     roi_x_half: float,
@@ -302,6 +403,7 @@ class RowDetector:
         strip_floor_pct: float = 25.0,
         row_end_veto_density: float = 200.0,
         reliability_floor: float = 0.35,
+        bed_rows: int = 0,
     ) -> None:
         self.roi_y_min = roi_y_min
         self.roi_y_max = roi_y_max
@@ -345,6 +447,25 @@ class RowDetector:
         # peak-pairing uses to tell the two flanking crop rows apart from weed
         # clutter, and the inward offset for the single-side fallback.
         self.row_spacing = row_spacing
+        # Multi-row raised-bed mode (onion): bed_rows ≥ 2 replaces the two-peak
+        # midpoint with a whole-bed comb fit (``find_bed_centre``) — the lateral
+        # target is the BED centre and row_spacing is the in-bed row spacing.
+        # 0 = off (soybean residue-strip pairing, unchanged).
+        self.bed_rows = int(bed_rows)
+        # Bed-surface floor for the crop band (bed mode): percentile of ROI
+        # height over |x| ≤ bed_floor_x_half, clamped to [0, bed_floor_max].
+        self.bed_floor_x_half = 0.50
+        self.bed_floor_pct = 20.0
+        self.bed_floor_max = 0.35
+        self.last_bed_floor = 0.0              # diagnostic: floor applied last scan
+        self.bed_roi_rot_max = math.radians(20.0)   # cap on the heading-aligned ROI rotation
+        self.last_roi_rot = 0.0                # diagnostic: ROI box rotation last scan (rad)
+        self.bed_dir_x_half = 2.0              # m; swath for the row-direction search
+        self.bed_soil_min_raise = 0.06         # m; bed must be this raised to use its soil edges
+        self.bed_soil_tol = 0.04               # m; |h − floor| band counted as bed-top soil
+        self.bed_soil_edge_pct = 3.0           # percentile of soil cross-coord = bed edge
+        self._bed_soil_xy = None
+        self.last_soil_centre = None           # diagnostic: soil-edge bed centre last scan
         # Self-calibrating spacing: whenever both rows are clearly seen, the
         # measured peak separation refines this estimate (slow EMA, outlier-
         # gated), so the detector converges to the field's ACTUAL row spacing
@@ -539,9 +660,33 @@ class RowDetector:
         estimate is decayed (confidence reduced, row-end confidence raised)
         so the state machine can react instead of acting on a stale fix.
         """
+        # Bed mode: align the ROI box with the TRACKED bed heading.  The fixed
+        # robot-frame box cuts narrow-spaced rows diagonally when the robot is
+        # angled to the bed (at 5° and 0.28 m spacing the rows drift over two
+        # row-spacings across the 7 m ROI depth, so the far ROI pulls in the
+        # neighbouring bed and biases lateral/heading — sim: −8 cm at 5°,
+        # −15 cm at 8°).  Rotating the points by the tracked heading keeps the
+        # box along the rows; the heading is added back below.  Lateral (the
+        # perpendicular sensor-to-bed-centre distance) is rotation-invariant.
+        # The box angle comes from a memoryless row-direction search
+        # (``_bed_box_heading``) so a biased first fit at a large start angle
+        # cannot lock in; the tracked heading is only the fallback.
+        roi_rot = 0.0
+        if self.bed_rows >= 2:
+            lim = self.bed_roi_rot_max
+            ang = self._bed_box_heading(pts) if pts is not None and len(pts) else None
+            if ang is None and self._est.valid:
+                ang = float(self._est.heading_error)
+            if ang is not None:
+                roi_rot = max(-lim, min(lim, ang))
+        self.last_roi_rot = roi_rot
+        cr, sr = math.cos(roi_rot), math.sin(roi_rot)
+
         # --- LiDAR crop-band points ---
         if pts is not None and len(pts) > 0:
             x, y, z = pts[:, 0], pts[:, 1], pts[:, 2]
+            if roi_rot:
+                x, y = x * cr - y * sr, x * sr + y * cr
             h = z + LIDAR_MOUNT_HEIGHT
             in_xy = (
                 (y >= self.roi_y_min) & (y <= self.roi_y_max)
@@ -580,12 +725,36 @@ class RowDetector:
                     spread = float(np.percentile(hr, 95) - np.percentile(hr, 5))
                     if spread > self.ground_level_spread:
                         shift = min(0.0, float(np.percentile(hr, 50)))
+            # Raised-bed floor (bed mode only): the bed-top soil sits ~0.10–0.25 m
+            # above the furrow the wheels (and h=0) ride in, i.e. INSIDE the crop
+            # band — a bare bed then reads as a perfect, confident "row" and a
+            # row end is never detected.  Measure the crop band from the local
+            # bed surface instead: the low percentile of height over the central
+            # swath (bed top dominates it), clamped to a plausible bed height.
+            bed_floor = 0.0
+            if self.bed_rows >= 2:
+                cen = in_xy & (np.abs(x) <= self.bed_floor_x_half)
+                if int(cen.sum()) >= self.ground_min_pts:
+                    bed_floor = float(np.clip(
+                        np.percentile(h_eff[cen] - shift, self.bed_floor_pct),
+                        0.0, self.bed_floor_max))
+            self.last_bed_floor = bed_floor
+            # Bed-top soil returns (only when the bed is genuinely raised): the
+            # soil plateau's two edges give an independent bed-centre estimate.
+            self._bed_soil_xy = None
+            if self.bed_rows >= 2 and bed_floor >= self.bed_soil_min_raise:
+                soil = in_xy & (np.abs(h_eff - shift - bed_floor) <= self.bed_soil_tol)
+                if int(soil.sum()) >= self.ground_min_pts:
+                    self._bed_soil_xy = np.column_stack((x[soil], y[soil]))
             self.last_ground_slope = a
             self.last_ground_shift = shift
-            roi = (in_xy & (h_eff >= self.crop_h_min + shift)
-                   & (h_eff <= self.crop_h_max + shift))
+            lo_h = self.crop_h_min + shift + bed_floor
+            roi = (in_xy & (h_eff >= lo_h)
+                   & (h_eff <= self.crop_h_max + shift + bed_floor))
             cx, cy = x[roi], y[roi]
-            ch = h_eff[roi]                    # ground-relative height of each ROI point
+            # ground-relative height of each ROI point (bed-top-relative in bed
+            # mode; bed_floor = 0 otherwise → unchanged)
+            ch = h_eff[roi] - bed_floor
             n = int(cx.shape[0])
         else:
             cx = cy = ch = np.empty(0)
@@ -619,6 +788,9 @@ class RowDetector:
         # --- auxiliary camera ground points (same robot frame) ---
         A = None
         if aux_xy is not None and len(aux_xy):
+            if roi_rot:
+                aux_xy = np.column_stack((aux_xy[:, 0] * cr - aux_xy[:, 1] * sr,
+                                          aux_xy[:, 0] * sr + aux_xy[:, 1] * cr))
             ax, ay = aux_xy[:, 0], aux_xy[:, 1]
             keep = (
                 (ay >= self.aux_y_min) & (ay <= self.roi_y_max)
@@ -688,7 +860,15 @@ class RowDetector:
             # a genuinely sparse LiDAR crop band and hide a real row end.
             hs = 0.5 * self._spacing_est
             cross_lidar = cross[:n]
-            if len(cross_lidar):
+            if len(cross_lidar) and self.bed_rows >= 2:
+                # Bed mode: strongest of the N predicted bed rows (a row end
+                # only when EVERY onion row in the bed has ended).  Window is
+                # capped below half the spacing so adjacent rows don't share it.
+                win = min(self.row_end_side_window, 0.45 * self._spacing_est)
+                offs = (np.arange(self.bed_rows) - 0.5 * (self.bed_rows - 1)) * self._spacing_est
+                row_strength = float(max(
+                    int(np.sum(np.abs(cross_lidar - (lateral + o)) <= win)) for o in offs))
+            elif len(cross_lidar):
                 lsel = np.abs(cross_lidar - (lateral - hs)) <= self.row_end_side_window
                 rsel = np.abs(cross_lidar - (lateral + hs)) <= self.row_end_side_window
                 row_strength = float(max(int(lsel.sum()), int(rsel.sum())))
@@ -721,7 +901,7 @@ class RowDetector:
             else:
                 lateral = peak
 
-        heading = math.atan2(direction[0], direction[1])
+        heading = math.atan2(direction[0], direction[1]) + roi_rot
         density = min(1.0, total_mass / self.full_points)
         linear_factor = max(0.0, min(1.0, (linearity - 0.20) / 0.55))
         confidence = density * linear_factor
@@ -866,11 +1046,79 @@ class RowDetector:
             perp = np.array([direction[1], -direction[0]])
             cross = P @ perp
         sp = self._refined_spacing(cross, weights=w)
+        if self.bed_rows >= 2:
+            # No tracked bed yet (start / after a U-turn): the strip-lock prior
+            # would just pull toward x=0, so keep only a faint centre preference
+            # and let the comb + soil edges decide.
+            pw = self.midpoint_prior_weight if self._est.valid else 0.2
+            lateral, spacing_factor = find_bed_centre(
+                cross, self.roi_x_half, self.bin_width, sp, self.bed_rows,
+                weights=w, prior_lateral=float(self._est.lateral_offset),
+                prior_weight=pw, soil_centre=self._soil_centre(perp))
+            return lateral, direction, linearity, spacing_factor, cross, sp
         lateral, spacing_factor = find_row_midpoint(
             cross, self.roi_x_half, self.bin_width, sp,
             weights=w, prior_lateral=float(self._est.lateral_offset),
             prior_weight=self.midpoint_prior_weight)
         return lateral, direction, linearity, spacing_factor, cross, sp
+
+    def _bed_box_heading(self, pts: np.ndarray) -> "Optional[float]":
+        """Row direction by histogram sharpness (bed mode ROI alignment).
+
+        Projects the near-crop-height points onto the cross-row axis for each
+        candidate heading in ±bed_roi_rot_max and returns the heading whose
+        cross-row histogram is sharpest (Σ bin² — parallel rows collapse into
+        narrow peaks only at the true heading).  Memoryless, so it cannot lock
+        onto a wrong angle the way a self-seeded fit can.  None when there are
+        too few points or no clear winner (flat sharpness profile)."""
+        x, y = pts[:, 0], pts[:, 1]
+        h = pts[:, 2] + LIDAR_MOUNT_HEIGHT
+        # ONE fixed point set for every candidate angle (a wide swath that also
+        # holds the neighbouring beds' parallel rows) and a histogram wide
+        # enough that no point ever falls outside it — so the sharpness values
+        # are directly comparable across angles.
+        sel = ((y >= self.roi_y_min) & (y <= self.roi_y_max)
+               & (np.abs(x) <= self.bed_dir_x_half)
+               & (h >= self.crop_h_min) & (h <= self.crop_h_max + self.bed_floor_max))
+        if int(sel.sum()) < self.ground_min_pts:
+            return None
+        xs, ys = x[sel], y[sel]
+        if len(xs) > 3000:                    # Jetson budget: stride-subsample
+            step = int(np.ceil(len(xs) / 3000))
+            xs, ys = xs[::step], ys[::step]
+        angs = np.radians(np.arange(-20.0, 20.01, 1.0))
+        angs = angs[np.abs(angs) <= self.bed_roi_rot_max + 1e-9]
+        # cross-row coordinate of every point for every candidate heading
+        cross = np.cos(angs)[:, None] * xs[None, :] - np.sin(angs)[:, None] * ys[None, :]
+        lo = float(cross.min())
+        nb = int((float(cross.max()) - lo) / self.bin_width) + 2
+        sharp = np.empty(len(angs))
+        for i in range(len(angs)):
+            cnt = np.bincount(((cross[i] - lo) / self.bin_width).astype(int),
+                              minlength=nb).astype(float)
+            sharp[i] = float((cnt * cnt).sum())
+        k = int(np.argmax(sharp))
+        if sharp[k] < 1.15 * float(np.median(sharp)):
+            return None                       # no clear row direction this scan
+        return float(angs[k])
+
+    def _soil_centre(self, perp: np.ndarray) -> "Optional[float]":
+        """Bed centre from the raised-bed soil plateau's two edges, or None.
+
+        Valid only when BOTH edges are seen well inside the ROI and the plateau
+        width is plausible — otherwise (flat ground, robot far off-centre,
+        bed top wider than the ROI) the edges are just the ROI clip."""
+        self.last_soil_centre = None
+        if self._bed_soil_xy is None:
+            return None
+        sc = self._bed_soil_xy @ perp
+        lo = float(np.percentile(sc, self.bed_soil_edge_pct))
+        hi = float(np.percentile(sc, 100.0 - self.bed_soil_edge_pct))
+        lim = self.roi_x_half - 0.08
+        if lo <= -lim or hi >= lim or not (0.40 <= hi - lo <= 1.40):
+            return None
+        self.last_soil_centre = 0.5 * (lo + hi)
+        return self.last_soil_centre
 
     def _refined_spacing(self, cross: np.ndarray,
                          weights: "Optional[np.ndarray]" = None) -> float:

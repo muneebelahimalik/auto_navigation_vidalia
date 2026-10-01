@@ -76,7 +76,8 @@ def make_detector(args) -> RowDetector:
         canopy_tall_h=args.canopy_tall_h, dense_canopy_frac=args.dense_frac,
         row_spacing=args.row_spacing,
         reliability_floor=args.reliability_floor,
-        row_end_veto_density=args.row_end_veto)
+        row_end_veto_density=args.row_end_veto,
+        bed_rows=args.bed_rows)
 
 
 def _intensity_contrast(P, lateral, spacing, args):
@@ -165,6 +166,8 @@ def main() -> None:
     ap.add_argument("--canopy-tall-h", type=float, default=0.30)
     ap.add_argument("--dense-frac", type=float, default=0.30)
     ap.add_argument("--row-spacing", type=float, default=0.76)
+    ap.add_argument("--bed-rows", type=int, default=0,
+                    help="raised-bed comb fit (onion: 4 with --row-spacing 0.279); 0 = soybean pairing")
     ap.add_argument("--reliability-floor", type=float, default=0.35)
     ap.add_argument("--row-end-veto", type=float, default=200.0)
     # intensity-discriminator diagnostic (Nx4 scans only)

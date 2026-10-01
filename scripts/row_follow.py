@@ -316,7 +316,14 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
         left_cam = OakDriver(side="left", device_id=args.cam_left_id)
         right_cam = OakDriver(side="right", device_id=args.cam_right_id)
 
-        if args.dual_row:
+        if (args.bed_rows or 0) >= 2:
+            # The camera ground-projection tracker pairs exactly TWO flanking
+            # rows (soybean); on a multi-row onion bed it would pick an
+            # arbitrary adjacent pair and bias the fused centre.  Row tracking
+            # stays LiDAR-only in bed mode; cameras still serve obstacles.
+            print(" [row_follow] bed mode: camera row-tracking disabled "
+                  "(2-row tracker); cameras used for obstacles only.")
+        elif args.dual_row:
             # Soybean centre-residue mode: both forward-facing cameras see
             # BOTH flanking rows; each projects its green mask onto the
             # ground plane and independently estimates the residue-strip
@@ -421,8 +428,9 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
         dense_canopy_frac=args.dense_frac,
         row_end_veto_density=args.row_end_veto,
         reliability_floor=args.reliability_floor,
+        bed_rows=args.bed_rows if (args.bed_rows or 0) >= 2 else 0,
     )
-    tire_h = args.tire_height if args.tire_height is not None else args.obstacle_height
+    tire_h =args.tire_height if args.tire_height is not None else args.obstacle_height
     safety = SafetyMonitor(
         obstacle_height=args.obstacle_height,
         tire_obstacle_height=tire_h,
@@ -546,7 +554,11 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
 
     print()
     print("=" * 68)
-    det_mode = "dual-row (centre-residue / soybean)" if args.dual_row else "single-row"
+    if (args.bed_rows or 0) >= 2:
+        det_mode = (f"raised bed — {args.bed_rows} rows @ {args.row_spacing:.3f}m "
+                    f"(onion, steer to bed centre)")
+    else:
+        det_mode = "dual-row (centre-residue / soybean)" if args.dual_row else "single-row"
     print(f"  Autonomous crop-row follower  [{det_mode}]")
     print(f"  mode    : {'AUTONOMOUS — robot WILL move' if args.auto else 'perception-only (no motion)'}")
     print(f"  rows    : {args.rows}   headland turns: {'on' if args.headland else 'off'}")
@@ -929,14 +941,23 @@ def main() -> None:
                              "Falls back to nearest-peak if only one side is visible (large offset). "
                              "In single-row mode (default) the nearest peak to the robot centreline "
                              "is used — correct for onion/raised-bed crops directly under the robot.")
+    parser.add_argument("--bed-rows", type=int, default=None, metavar="N",
+                        help="Raised-bed (onion) mode: the robot straddles a bed carrying N "
+                             "crop rows at --row-spacing (the IN-BED spacing). N>=2 fits the "
+                             "whole N-row comb and steers to the BED centre (implies "
+                             "--dual-row); the crop band is measured from the bed-top soil, the "
+                             "ROI box follows the row direction, and the bed's soil edges break "
+                             "ties. Vidalia onions: --bed-rows 4 --row-spacing 0.279 (11 in). "
+                             "1 = single centre row (old onion mode). Default: off.")
     parser.add_argument("--preset", choices=["soybean", "onion"], default=None,
                         help="Apply a predefined parameter set for common crop types. "
-                             "Overrides individual flags with field-tested defaults. "
                              "'soybean': dual-row mode, crop_h=[0.03,0.30]m, "
                              "obstacle_height=0.50m, tire_height=0.65m, row_spacing=0.76m. "
-                             "'onion': single-row mode, crop_h=[0.05,0.60]m, "
-                             "obstacle_height=0.75m, tire_height=0.85m. "
-                             "Any explicit flags after --preset still override the preset.")
+                             "'onion': Vidalia raised bed — 4 rows/bed at 11 in (0.279 m), "
+                             "crop_h=[0.05,0.60]m above the bed top, obstacle_height=0.75m, "
+                             "tire_height=0.85m, headland radius 0.92 m (half the 72 in bed "
+                             "pitch). --bed-rows / --row-spacing / --headland-radius given "
+                             "explicitly still override the onion preset.")
     parser.add_argument("--self-radius", type=float, default=1.5, metavar="M",
                         help="Discard LiDAR returns within this radius — the "
                              "robot's own frame (default: 1.5)")
@@ -1138,14 +1159,32 @@ def main() -> None:
         print(" [preset] soybean — dual-row, crop_h=[0.03,0.30]m, "
               "obstacle=0.50m, tire=0.65m, row_spacing=0.76m")
     elif args.preset == "onion":
-        # Single raised crop-bed / Vidalia onion defaults.
-        args.dual_row = False
+        # Vidalia onion raised bed: 4 rows per bed at 11 in, 72 in bed pitch.
+        # The single-row (nearest-peak) fit is only right for ONE row per bed —
+        # on a 4-row bed it locks onto an inner onion row ~14 cm off the bed
+        # centre (sim), putting a wheel on the bed shoulder.
+        if args.bed_rows is None:
+            args.bed_rows = 4
+        if args.row_spacing == 0.76:              # soybean default → onion in-bed spacing
+            args.row_spacing = 0.2794
+        if args.headland_radius == 0.0:           # land on the adjacent bed (1.83 m pitch)
+            args.headland_radius = 0.915
         args.crop_min = 0.05
         args.crop_max = 0.60
         args.obstacle_height = 0.75
         args.tire_height = 0.85
-        print(" [preset] onion — single-row, crop_h=[0.05,0.60]m, "
-              "obstacle=0.75m, tire=0.85m")
+        print(f" [preset] onion — {args.bed_rows} rows/bed @ {args.row_spacing:.3f}m, "
+              f"crop_h=[0.05,0.60]m above bed top, obstacle=0.75m, tire=0.85m, "
+              f"headland radius={args.headland_radius:.2f}m")
+    if args.bed_rows is not None:
+        if args.bed_rows >= 2:
+            args.dual_row = True
+        elif args.bed_rows == 1:
+            args.dual_row = False                 # one centre row → nearest-peak fit
+        if args.bed_rows >= 2 and args.row_spacing >= 0.6:
+            print(f" [row_follow] WARNING: --bed-rows {args.bed_rows} with "
+                  f"--row-spacing {args.row_spacing:.2f} m — that looks like the soybean "
+                  f"default; pass the IN-BED row spacing (Vidalia onions: 0.279).")
 
     # --record: bundle a complete reproducible experiment folder.  Turns on
     # telemetry + SLAM into one runs/<ts>/ dir and writes a manifest now (so a
