@@ -40,7 +40,8 @@ from lidar.lidar_driver import LidarDriver
 from lidar.obstacle_filter import LIDAR_MOUNT_HEIGHT, tilt_correct_pts, yaw_correct_pts
 
 
-def locate_forward_objects(pts: np.ndarray, applied_yaw_deg: float) -> None:
+def locate_forward_objects(pts: np.ndarray, applied_yaw_deg: float,
+                           max_range: float = 4.0) -> None:
     """Report the centroid + azimuth of elevated forward objects (e.g. buckets
     placed for a yaw check).  An object placed straight ahead should sit at
     azimuth ~0°; its measured azimuth IS the residual yaw error, and the
@@ -50,15 +51,17 @@ def locate_forward_objects(pts: np.ndarray, applied_yaw_deg: float) -> None:
         return
     h = pts[:, 2] + LIDAR_MOUNT_HEIGHT
     rng = np.hypot(pts[:, 0], pts[:, 1])
-    base = pts[(np.abs(pts[:, 0]) < 1.5) & (pts[:, 1] > 1.0) & (pts[:, 1] < 4.0)]
+    # A far target (4–6 m) pins the yaw ~2× tighter than one at 2 m for the
+    # same placement error, so the search range is configurable.
+    base = pts[(np.abs(pts[:, 0]) < 1.5) & (pts[:, 1] > 1.0) & (pts[:, 1] < max_range)]
     if len(base) < 50:
         print("\n  Object locator: too few floor points to estimate level.")
         return
     floor = float(np.percentile(base[:, 2] + LIDAR_MOUNT_HEIGHT, 50))
-    elev = (h > floor + 0.12) & (pts[:, 1] > 0.5) & (rng < 4.0)
+    elev = (h > floor + 0.12) & (pts[:, 1] > 0.5) & (rng < max_range)
     e = pts[elev]
     print(f"\n  Forward object locator (floor≈{floor:+.2f} m, elevation > +0.12 m, "
-          f"range < 4 m):")
+          f"range < {max_range:g} m):")
     if len(e) < 20:
         print("    no elevated forward objects found")
         return
@@ -275,6 +278,9 @@ async def main() -> None:
                          "whether a candidate height (e.g. 1.17) zeroes the ground residual "
                          "without editing obstacle_filter.py. Default: the code constant.")
     ap.add_argument("--self-radius", type=float, default=1.5)
+    ap.add_argument("--locate-range", type=float, default=4.0, metavar="M",
+                    help="Object-locator search range (m) for the yaw check (default 4). "
+                         "Use ~6 with a target placed 5 m ahead.")
     ap.add_argument("--range", type=float, default=6.0,
                     help="Plot radius (m)")
     ap.add_argument("--out", default=str(Path(__file__).resolve().parent.parent / "birdseye.png"))
@@ -363,7 +369,7 @@ async def main() -> None:
                 mark = " <-crop" if 0.03 <= c <= 0.30 else ""
                 print(f"    {c:+.2f} m | {hist[i]:5d} {bar}{mark}")
 
-    locate_forward_objects(pts, args.lidar_yaw)
+    locate_forward_objects(pts, args.lidar_yaw, args.locate_range)
 
     try:
         save_png(pts, args.out, args.range, args.lidar_yaw, args.lidar_tilt)
