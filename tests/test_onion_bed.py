@@ -170,3 +170,48 @@ def test_soybean_default_unaffected():
         e = det.update(np.vstack(pts))
     assert abs(e.lateral_offset) < 0.03
     assert det.last_roi_rot == 0.0 and det.last_bed_floor == 0.0
+
+
+def test_bare_bed_with_residual_slope_is_not_a_row():
+    """Field failure (2026-10-15): on a BARE bed with a residual ~1.5–2° forward
+    slope (near the 2° detrend dead-band), the far bed-top soil ramped into the
+    bed-relative crop band and read as a confident row (n≈400, off=+0.8 m),
+    alternating with n=0 scan-to-scan.  The bed floor is now a line in range."""
+    for deg in (1.5, 2.0, 2.5):
+        rng = np.random.default_rng(10)
+        det = _bed_det()
+        for _ in range(15):
+            P = _scene(rng, 0.0, rows=[], n_gnd=6000)
+            P[:, 2] += math.tan(math.radians(deg)) * P[:, 1]
+            e = det.update(P)
+            assert e.n_points < 40, (deg, e.n_points)
+        assert e.confidence < 0.35, deg
+
+
+def test_planted_bed_with_residual_slope_steady():
+    rng = np.random.default_rng(11)
+    det = _bed_det()
+    ns = []
+    for i in range(20):
+        P = _scene(rng, 0.10, n_gnd=6000)
+        P[:, 2] += math.tan(math.radians(2.0)) * P[:, 1]
+        e = det.update(P)
+        if i >= 8:
+            ns.append(e.n_points)
+    assert abs(e.lateral_offset + 0.10) < 0.03
+    assert max(ns) - min(ns) < 0.2 * np.mean(ns)          # no scan-to-scan flicker
+
+
+def test_bed_offset_beyond_straddle_is_not_followed():
+    """A fit that puts the bed centre beyond ±0.45 m (a wheel would be ON the
+    bed) is a lock on something else — confidence must be 0."""
+    rng = np.random.default_rng(12)
+    det = _bed_det()
+    e = None
+    for _ in range(10):
+        # single dense stripe 0.7 m to the right (e.g. neighbouring bed edge)
+        y = rng.uniform(1.5, 7.0, 600)
+        P = np.column_stack((0.70 + rng.normal(0, 0.03, 600), y,
+                             0.15 + rng.uniform(0.1, 0.3, 600) - LIDAR_MOUNT_HEIGHT))
+        e = det.update(P)
+        assert e.confidence == 0.0 or abs(e.lateral_offset) <= det.bed_max_offset

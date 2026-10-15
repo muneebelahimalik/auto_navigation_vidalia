@@ -455,9 +455,15 @@ class RowDetector:
         # Bed-surface floor for the crop band (bed mode): percentile of ROI
         # height over |x| ≤ bed_floor_x_half, clamped to [0, bed_floor_max].
         self.bed_floor_x_half = 0.50
-        self.bed_floor_pct = 20.0
+        self.bed_floor_pct = 10.0
         self.bed_floor_max = 0.35
-        self.last_bed_floor = 0.0              # diagnostic: floor applied last scan
+        self.last_bed_floor = 0.0              # diagnostic: floor at ROI middle last scan
+        self.last_bed_floor_slope = 0.0        # diagnostic: residual forward slope of the bed top
+        # Straddling a bed, the bed centre can only be so far off the robot
+        # centreline before a wheel is ON the bed — a fit beyond this is a lock
+        # on something else (neighbouring bed, soil edge, clutter): zero its
+        # confidence so the state machine never follows it.
+        self.bed_max_offset = 0.45
         self.bed_roi_rot_max = math.radians(20.0)   # cap on the heading-aligned ROI rotation
         self.last_roi_rot = 0.0                # diagnostic: ROI box rotation last scan (rad)
         self.bed_dir_x_half = 2.0              # m; swath for the row-direction search
@@ -730,31 +736,42 @@ class RowDetector:
             # band — a bare bed then reads as a perfect, confident "row" and a
             # row end is never detected.  Measure the crop band from the local
             # bed surface instead: the low percentile of height over the central
-            # swath (bed top dominates it), clamped to a plausible bed height.
-            bed_floor = 0.0
+            # swath (bed top dominates it).
+            #
+            # The floor is a LINE in the forward direction, floor(y) = c0 + c1·y,
+            # fitted to the per-range-bin low percentile with NO slope dead-band.
+            # A scalar floor (or the 2° dead-banded forward detrend) leaves a
+            # residual 1.5–2° ramp in place, and against the tight bed-relative
+            # band that ramp lifts the far bed-top soil into the "crop" band: on a
+            # BARE bed the far soil read as a confident row (field: n≈400,
+            # off=+0.8 m, alternating with n=0 as the slope crossed the 2°
+            # dead-band every other scan).
+            bed_floor_y = 0.0                         # scalar or per-point array
+            bed_floor = 0.0                           # floor at the ROI middle (diag)
             if self.bed_rows >= 2:
                 cen = in_xy & (np.abs(x) <= self.bed_floor_x_half)
                 if int(cen.sum()) >= self.ground_min_pts:
-                    bed_floor = float(np.clip(
-                        np.percentile(h_eff[cen] - shift, self.bed_floor_pct),
-                        0.0, self.bed_floor_max))
-            self.last_bed_floor = bed_floor
+                    c0, c1 = self._bed_floor_line(y[cen], h_eff[cen] - shift)
+                    bed_floor_y = c0 + c1 * y
+                    bed_floor = c0 + c1 * 0.5 * (self.roi_y_min + self.roi_y_max)
+                    self.last_bed_floor_slope = c1
+            self.last_bed_floor = float(bed_floor)
             # Bed-top soil returns (only when the bed is genuinely raised): the
             # soil plateau's two edges give an independent bed-centre estimate.
             self._bed_soil_xy = None
             if self.bed_rows >= 2 and bed_floor >= self.bed_soil_min_raise:
-                soil = in_xy & (np.abs(h_eff - shift - bed_floor) <= self.bed_soil_tol)
+                soil = in_xy & (np.abs(h_eff - shift - bed_floor_y) <= self.bed_soil_tol)
                 if int(soil.sum()) >= self.ground_min_pts:
                     self._bed_soil_xy = np.column_stack((x[soil], y[soil]))
             self.last_ground_slope = a
             self.last_ground_shift = shift
-            lo_h = self.crop_h_min + shift + bed_floor
-            roi = (in_xy & (h_eff >= lo_h)
-                   & (h_eff <= self.crop_h_max + shift + bed_floor))
+            h_rel = h_eff - bed_floor_y
+            roi = (in_xy & (h_rel >= self.crop_h_min + shift)
+                   & (h_rel <= self.crop_h_max + shift))
             cx, cy = x[roi], y[roi]
             # ground-relative height of each ROI point (bed-top-relative in bed
-            # mode; bed_floor = 0 otherwise → unchanged)
-            ch = h_eff[roi] - bed_floor
+            # mode; bed_floor_y = 0 otherwise → unchanged)
+            ch = h_rel[roi]
             n = int(cx.shape[0])
         else:
             cx = cy = ch = np.empty(0)
@@ -907,6 +924,15 @@ class RowDetector:
         confidence = density * linear_factor
         if self.dual_row:
             confidence *= self._spacing_factor
+        # Bed mode: a bed centre further off than bed_max_offset is physically
+        # impossible while straddling the bed (a wheel would be on it) — it is a
+        # lock on something else.  Zero its confidence and don't let it drag the
+        # tracked geometry.
+        if self.bed_rows >= 2 and abs(lateral) > self.bed_max_offset:
+            confidence = 0.0
+            if self._est.valid:
+                lateral = float(self._est.lateral_offset)
+                heading = float(self._est.heading_error)
 
         # Reliability-gated HOLD: in the dense regime, if the winning expert's
         # self-consistency collapsed (degenerate plateau fit — the dense-canopy
@@ -1061,6 +1087,38 @@ class RowDetector:
             weights=w, prior_lateral=float(self._est.lateral_offset),
             prior_weight=self.midpoint_prior_weight)
         return lateral, direction, linearity, spacing_factor, cross, sp
+
+    def _bed_floor_line(self, y: np.ndarray, hr: np.ndarray) -> "tuple[float, float]":
+        """Bed-top surface as a line in range: (c0, c1) with floor = c0 + c1·y.
+
+        Per 0.5 m range bin, the low percentile of height is the bed-top soil
+        (crop sits above it); a least-squares line through those bin floors
+        tracks any residual forward slope exactly (no dead-band).  Falls back
+        to a flat floor when fewer than three bins are populated.  Level and
+        slope are clamped to plausible ranges so a weird scan cannot run away.
+        """
+        edges = np.arange(self.roi_y_min, self.roi_y_max + 0.5, 0.5)
+        idx = np.digitize(y, edges)
+        yc, fc = [], []
+        for b in range(1, len(edges)):
+            sel = idx == b
+            if int(sel.sum()) < 8:
+                continue
+            yc.append(0.5 * (edges[b - 1] + edges[b]))
+            fc.append(float(np.percentile(hr[sel], self.bed_floor_pct)))
+        lim = self.bed_floor_max
+        if len(yc) >= 3:
+            c1, c0 = (float(v) for v in np.polyfit(np.asarray(yc), np.asarray(fc), 1))
+            c1 = max(-self._gmax, min(self._gmax, c1))
+            # re-anchor the level at the bins' mean range after the slope clamp
+            ym = float(np.mean(yc))
+            c0 = float(np.mean(fc)) - c1 * ym
+            mid = c0 + c1 * ym
+            if abs(mid) > lim:
+                c0 += math.copysign(lim, mid) - mid
+            return c0, c1
+        f = float(np.percentile(hr, self.bed_floor_pct))
+        return max(-lim, min(lim, f)), 0.0
 
     def _bed_box_heading(self, pts: np.ndarray) -> "Optional[float]":
         """Row direction by histogram sharpness (bed mode ROI alignment).
