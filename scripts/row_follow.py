@@ -1178,13 +1178,18 @@ def main() -> None:
             args.row_spacing = 0.2794
         if args.headland_radius == 0.0:           # land on the adjacent bed (1.83 m pitch)
             args.headland_radius = 0.915
+        # The bed-end gate fires while the bed end is still ~3 m ahead of the
+        # LiDAR (it needs the near bed to have gone), so drive clear of the bed
+        # before the arc — otherwise the U-turn starts on the bed.
+        if args.headland_exit == 1.0:
+            args.headland_exit = 3.5
         args.crop_min = 0.05
         args.crop_max = 0.60
         args.obstacle_height = 0.75
         args.tire_height = 0.85
         print(f" [preset] onion — {args.bed_rows} rows/bed @ {args.row_spacing:.3f}m, "
               f"crop_h=[0.05,0.60]m above bed top, obstacle=0.75m, tire=0.85m, "
-              f"headland radius={args.headland_radius:.2f}m")
+              f"headland radius={args.headland_radius:.2f}m exit={args.headland_exit:.1f}m")
     if args.bed_rows is not None:
         if args.bed_rows >= 2:
             args.dual_row = True

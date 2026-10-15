@@ -129,7 +129,7 @@ python3 scripts/row_follow.py --debug
 
 Vidalia layout: the robot straddles a 72 in (1.83 m) raised bed carrying **4
 onion rows at 11 in (0.279 m)**, plants 4 in apart; wheels in the furrows.
-`--preset onion` = `--bed-rows 4 --row-spacing 0.2794 --headland-radius 0.915`
+`--preset onion` = `--bed-rows 4 --row-spacing 0.2794 --headland-radius 0.915 --headland-exit 3.5` (exit: the bed-end gate fires ~3 m before the bed end)
 + crop band [0.05, 0.60] m **above the bed top** + obstacle 0.75 / tire 0.85 m.
 
 **Bed mode (`--bed-rows N`, `RowDetector(bed_rows=N)`, `find_bed_centre`).** The
