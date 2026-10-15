@@ -36,6 +36,15 @@ from pathlib import Path
 
 import numpy as np
 
+
+def _legend(ax, **kw):
+    """Light-text legend that also works on old matplotlib (the brain's
+    version predates the ``labelcolor`` legend kwarg, matplotlib 3.5)."""
+    leg = ax.legend(**kw)
+    for t in leg.get_texts():
+        t.set_color("#e8e8e8")
+    return leg
+
 def _height_cmap():
     """A perceptual height colormap that exists on the brain's matplotlib.
 
@@ -418,8 +427,8 @@ def render_av3d(P, lateral, heading_deg, spacing, out_base, *, title=None):
         Patch(facecolor="#00e5ff", alpha=0.35, label="detection ROI"),
         Patch(facecolor="#ffffff", alpha=0.6, label="ego robot (Amiga)"),
     ]
-    leg = ax.legend(handles=handles, loc="upper left", fontsize=9,
-                    facecolor="#10151d", edgecolor="#2a3340", labelcolor="#e8e8e8")
+    leg = _legend(ax, handles=handles, loc="upper left", fontsize=9,
+                  facecolor="#10151d", edgecolor="#2a3340")
 
     sup = title or ("VLP-16 LiDAR perception — 3-D point cloud + autonomy decisions "
                     "(soybean row-following)")
@@ -508,8 +517,8 @@ def render_av_bev(P, lateral, heading_deg, spacing, out_base, *, title=None):
         Line2D([0], [0], color="#00e5ff", lw=1.4, ls="--", label="detection ROI"),
         Patch(facecolor="#e8e8e8", label="ego robot"),
     ]
-    ax.legend(handles=handles, loc="upper right", fontsize=8.5, facecolor="#10151d",
-              edgecolor="#2a3340", labelcolor="#e8e8e8")
+    _legend(ax, handles=handles, loc="upper right", fontsize=8.5, facecolor="#10151d",
+            edgecolor="#2a3340")
     sup = title or ("LiDAR top-down sensor view — rings + detected path "
                     "(soybean row-following)")
     fig.suptitle(sup, fontsize=13, fontweight="bold", color="#ffffff", y=0.95)
