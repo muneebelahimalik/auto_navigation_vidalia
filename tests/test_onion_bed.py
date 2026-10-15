@@ -32,7 +32,7 @@ def _bed_h(xr, bed_h=0.15, top=1.10, shoulder=0.20):
     return np.where(ramp, bed_h * (1 - (a - top / 2) / shoulder), h)
 
 
-def _scene(rng, d, rows=ROWS4, bed_h=0.15, n_row=170, n_gnd=900, angle_deg=0.0):
+def _scene(rng, d, rows=ROWS4, bed_h=0.15, n_row=170, n_gnd=6000, angle_deg=0.0):
     """Robot d m RIGHT of the bed centre (bed centre at x = −d), optionally yawed."""
     parts = []
     for bc in (-PITCH, 0.0, PITCH):
@@ -243,3 +243,74 @@ def test_bed_offset_beyond_straddle_is_not_followed():
                              0.15 + rng.uniform(0.1, 0.3, 600) - LIDAR_MOUNT_HEIGHT))
         e = det.update(P)
         assert e.confidence == 0.0 or abs(e.lateral_offset) <= det.bed_max_offset
+
+
+# --- Bed end → grassy headland (field 2026-10-15) ---------------------------
+
+def _end_scene(rng, d, y_end, bed_h=0.074):
+    """Bare raised bed (onions invisible) that ENDS at y_end; beyond it flat
+    headland with grass (0–25 cm) — the 2026-10-15 field row end."""
+    P = _scene(rng, d, rows=[], bed_h=bed_h, n_gnd=9000)
+    beyond = P[:, 1] > y_end
+    P[beyond, 2] = -LIDAR_MOUNT_HEIGHT + rng.normal(0, 0.015, int(beyond.sum()))
+    if y_end < 7.4:
+        m = 4000
+        g = np.column_stack((rng.uniform(-2.5, 2.5, m), rng.uniform(max(y_end, 1.5), 7.5, m),
+                             rng.uniform(0.0, 0.25, m) - LIDAR_MOUNT_HEIGHT))
+        P = np.vstack([P, g[g[:, 1] > y_end]])
+    return P
+
+
+def test_bed_end_into_grass_is_a_row_end_and_grass_is_never_followed():
+    """Field failure: at the row end the relief faded, the heading crept to the
+    20° box limit (robot started turning), and then the crop fit FOLLOWED THE
+    GRASS for 6 m.  Now: heading stays bounded on the approach, confidence
+    drops (row end) while the bed end is still ~3 m ahead, and the grass never
+    regains a lock."""
+    for d in (0.0, 0.10, -0.10):
+        rng = np.random.default_rng(21)
+        det = _bed_det()
+        y_end, ended_at, after = 12.0, None, []
+        while y_end > -2.0:
+            e = det.update(_end_scene(rng, d, y_end))
+            if 4.0 < y_end < 9.0:                       # approaching the end
+                assert abs(math.degrees(e.heading_error)) < 4.0, (d, y_end)
+                assert abs(e.lateral_offset + d) < 0.08, (d, y_end, e.lateral_offset)
+            elif 3.2 < y_end <= 4.0 and e.confidence >= 0.35:   # final stretch
+                assert abs(math.degrees(e.heading_error)) < 6.0, (d, y_end)
+                assert abs(e.lateral_offset + d) < 0.15, (d, y_end, e.lateral_offset)
+            if ended_at is None and y_end < 9.0 and e.confidence < 0.35:
+                ended_at = y_end
+            elif ended_at is not None:
+                after.append(e.confidence)
+            y_end -= 0.02
+        assert ended_at is not None and 2.0 < ended_at < 4.5, (d, ended_at)
+        assert max(after) < 0.35, (d, max(after))          # grass never followed
+        assert det.last_mode == "no-bed"
+
+
+def test_bed_presence_gate_on_real_field_contrast_trace():
+    """Replays the bed-relief contrast logged on the 2026-10-15 Vidalia run
+    (158 m; bed body to ~151.4 m, then grassy headland) through the real
+    bed-presence gate: zero false 'no bed' scans over the 150 m body, and the
+    row end confirmed (15 consecutive) by 152 m — the robot followed grass to
+    158 m without it."""
+    import os
+    data = np.load(os.path.join(os.path.dirname(__file__), "data",
+                                "field_20261015_onion_bed_contrast.npz"))
+    c, dist = data["contrast"], data["row_dist"]
+    det = RowDetector(dual_row=True, bed_rows=4, row_spacing=SP)
+    present = []
+    for v in c:
+        det._shape = (0.0, 0.0, float(v)) if v > 0 else None
+        present.append(det._bed_present())
+    present = np.array(present)
+    body = (dist > 1.0) & (dist < 151.0)
+    assert not (~present[body]).any()
+    run, end_dist = 0, None
+    for i in range(len(c)):
+        run = run + 1 if (not present[i] and dist[i] > 1.0) else 0
+        if run >= 15:
+            end_dist = float(dist[i])
+            break
+    assert end_dist is not None and 151.0 < end_dist < 152.5, end_dist

@@ -1319,6 +1319,8 @@ class RowNavigator:
                 grade_str += f" rel={rel * 100:.0f}cm"
             if getattr(self.detector, "last_mode", "") == "shape":
                 grade_str += "[BED-SHAPE]"
+            elif getattr(self.detector, "last_mode", "") == "no-bed":
+                grade_str += "[BED-END]"
         if self.state == _S.ACQUIRE:
             align_frames = self._acq_count - self.acquire_frames
             if align_frames > 0:

@@ -163,6 +163,25 @@ falls in the ±5 cm pairing dead-band).  Bed mode instead:
   residual ~2° ramp can't lift far soil into the crop band (field: bare soil
   read as a row at off=+0.8 m); a bed centre beyond ±0.45 m (wheel on the
   bed) gets confidence 0.
+  **Field result 2026-10-15 (bare bed, seedlings invisible):** 150 m in
+  `[BED-SHAPE]` mode, lateral mean +0.2 cm / std 5.7 cm, heading std 2.0°,
+  relief 7.4 ± 0.7 cm, conf 1.0 throughout.
+- **Bed END / grass headland** (same run: relief faded, heading crept to the
+  20° box cap, then the crop fit FOLLOWED GRASS for 6 m).  Fixes:
+  **bed-presence gate** (`_bed_present`) — once the relief has been tracked
+  (`bed_latch_scans`=30), a smoothed relief below 0.6× its running baseline =
+  bed ended → conf 0 / row end whatever the crop fit says; hysteresis 0.8× to
+  resume (on the real contrast trace: 0 false triggers over 150 m, end
+  confirmed at 151.5 m — `tests/data/field_20261015_onion_bed_contrast.npz`);
+  **relief-based heading** (`_bed_relief_heading`: rotation maximising the
+  soil-profile sharpness, soil = ≤ surface+3 cm so grass/crop never count;
+  ±2°/scan rate limit) replaces "box follows tracked heading" (it ratcheted);
+  far half / near quarters only steer heading when their relief is ≥0.7× the
+  nearer part (the bed end shows up far-first); bed-mode heading cap ±8°;
+  **crop lock** — a crop fit steers only after ~2 s of agreeing with the bed
+  AND ≥60 % of its points on the 4 predicted row lines (grass ≈30 %).  Sim
+  (bed ending into grass): heading ≤ 2–4°, row end ~3 m before the bed end,
+  grass never re-locked.  Status `[BED-END]`.
 Camera row tracking is disabled in bed mode (the camera tracker is 2-row only);
 telemetry gains `bed_floor_m`, `soil_centre`, `roi_rot_deg`; status shows
 `bed=0.15m`.  Sim (`tests/test_onion_bed.py`): bias ≤ 1 cm from 0 to ±35 cm start
