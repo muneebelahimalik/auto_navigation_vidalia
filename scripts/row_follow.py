@@ -429,6 +429,8 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
         row_end_veto_density=args.row_end_veto,
         reliability_floor=args.reliability_floor,
         bed_rows=args.bed_rows if (args.bed_rows or 0) >= 2 else 0,
+        bed_shape=not args.no_bed_shape,
+        bed_pitch=args.bed_pitch,
     )
     tire_h =args.tire_height if args.tire_height is not None else args.obstacle_height
     safety = SafetyMonitor(
@@ -949,6 +951,13 @@ def main() -> None:
                              "ROI box follows the row direction, and the bed's soil edges break "
                              "ties. Vidalia onions: --bed-rows 4 --row-spacing 0.279 (11 in). "
                              "1 = single centre row (old onion mode). Default: off.")
+    parser.add_argument("--bed-pitch", type=float, default=1.83, metavar="M",
+                        help="Bed-centre to bed-centre spacing (m) for bed mode (default 1.83 = "
+                             "72 in). The wheel furrows are expected at ±pitch/2; used by the "
+                             "bare-bed RELIEF tracker that steers by the raised bed itself when "
+                             "the crop is too small for the LiDAR (young onion seedlings).")
+    parser.add_argument("--no-bed-shape", action="store_true",
+                        help="Bed mode: disable the bare-bed relief tracker (crop rows only).")
     parser.add_argument("--preset", choices=["soybean", "onion"], default=None,
                         help="Apply a predefined parameter set for common crop types. "
                              "'soybean': dual-row mode, crop_h=[0.03,0.30]m, "

@@ -91,17 +91,23 @@ def test_two_peak_pairing_aliases_where_comb_does_not():
     assert abs(e_bed.lateral_offset + 0.12) < 0.03
 
 
-def test_bare_raised_bed_is_a_row_end_not_a_row():
+def test_bare_raised_bed_soil_is_not_crop_and_flat_headland_is_row_end():
     """Bed-top soil sits inside the absolute crop band; measured from the bed
-    surface it is excluded, so an empty bed reads as a row end."""
+    surface it is excluded (no soil-as-crop).  A bare RAISED bed is then
+    followed by its relief, and the row end is where the relief disappears
+    (flat headland)."""
     rng = np.random.default_rng(3)
     det = _bed_det()
     e = _settle(det, rng, 0.05)
     assert e.row_end_confidence < 0.2 and e.confidence > 0.8
     assert 0.10 < det.last_bed_floor < 0.20                  # found the 0.15 m bed top
     for _ in range(12):
-        e = det.update(_scene(rng, 0.05, rows=[]))
-    assert e.row_end_confidence > 0.9
+        e = det.update(_scene(rng, 0.05, rows=[], n_gnd=6000))
+    assert e.n_points < 40                                   # soil not counted as crop
+    assert det.last_mode == "shape" and abs(e.lateral_offset + 0.05) < 0.03
+    for _ in range(12):                                      # flat headland: no bed, no crop
+        e = det.update(_scene(rng, 0.05, rows=[], bed_h=0.0, n_gnd=6000))
+    assert e.row_end_confidence > 0.7                        # navigator row-end threshold
     assert e.confidence < 0.35                               # below FOLLOW threshold
 
 
@@ -172,20 +178,42 @@ def test_soybean_default_unaffected():
     assert det.last_roi_rot == 0.0 and det.last_bed_floor == 0.0
 
 
-def test_bare_bed_with_residual_slope_is_not_a_row():
+def test_bare_bed_with_residual_slope_tracked_by_relief_not_soil():
     """Field failure (2026-10-15): on a BARE bed with a residual ~1.5–2° forward
     slope (near the 2° detrend dead-band), the far bed-top soil ramped into the
-    bed-relative crop band and read as a confident row (n≈400, off=+0.8 m),
-    alternating with n=0 scan-to-scan.  The bed floor is now a line in range."""
+    bed-relative crop band and read as a row at off=+0.8 m, alternating with
+    n=0 scan-to-scan.  Now the bed floor is a line in range (no soil-as-crop)
+    and the bare bed is followed by its relief, centred and steady."""
     for deg in (1.5, 2.0, 2.5):
         rng = np.random.default_rng(10)
         det = _bed_det()
-        for _ in range(15):
-            P = _scene(rng, 0.0, rows=[], n_gnd=6000)
+        lats = []
+        for i in range(20):
+            P = _scene(rng, 0.10, rows=[], n_gnd=6000)
             P[:, 2] += math.tan(math.radians(deg)) * P[:, 1]
             e = det.update(P)
-            assert e.n_points < 40, (deg, e.n_points)
-        assert e.confidence < 0.35, deg
+            assert e.n_points < 80, (deg, e.n_points)      # (a few clod returns at most)
+            if i >= 8:
+                lats.append(e.lateral_offset)
+        assert det.last_mode == "shape", deg
+        assert abs(np.mean(lats) + 0.10) < 0.03 and np.std(lats) < 0.03, (deg, np.mean(lats))
+
+
+def test_young_seedlings_invisible_bed_relief_steers():
+    """The Vidalia field (2026-10-15): seedlings a few cm tall are invisible to
+    the LiDAR; only the raised bed between the wheel furrows is.  Bed relief of
+    5–12 cm must give a centred, confident estimate at any start offset."""
+    for bed_h in (0.05, 0.08, 0.12):
+        for d in (0.0, 0.15, -0.20):
+            rng = np.random.default_rng(13)
+            det = _bed_det()
+            lats = []
+            for i in range(25):
+                e = det.update(_scene(rng, d, rows=[], bed_h=bed_h, n_gnd=9000))
+                if i >= 10:
+                    lats.append(e.lateral_offset)
+            assert abs(np.mean(lats) + d) < 0.03, (bed_h, d, np.mean(lats))
+            assert e.confidence > 0.8, (bed_h, d, e.confidence)
 
 
 def test_planted_bed_with_residual_slope_steady():

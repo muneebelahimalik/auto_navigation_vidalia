@@ -1254,6 +1254,7 @@ class RowNavigator:
             rec["bed_floor_m"] = round(float(getattr(self.detector, "last_bed_floor", 0.0) or 0.0), 3)
             rec["soil_centre"] = None if sc is None else round(float(sc), 3)
             rec["roi_rot_deg"] = round(math.degrees(getattr(self.detector, "last_roi_rot", 0.0) or 0.0), 1)
+            rec["bed_contrast_m"] = round(float(getattr(self.detector, "last_bed_contrast", 0.0) or 0.0), 3)
         if self.state in _HEADLAND_STATES:
             rec["approach_dist"] = round(float(self._approach_dist), 3)
             rec["post_turn"] = bool(self._post_turn)
@@ -1311,6 +1312,13 @@ class RowNavigator:
             grade_str += f" sp={getattr(self.detector, 'spacing_estimate', 0.0):.2f}m"
         if getattr(self.detector, "bed_rows", 0) >= 2:
             grade_str += f" bed={getattr(self.detector, 'last_bed_floor', 0.0):.2f}m"
+            # Bare-bed relief tracker: show the bed-above-furrow contrast and
+            # flag when the robot is steering by the bed shape (crop invisible).
+            rel = getattr(self.detector, "last_bed_contrast", 0.0)
+            if rel:
+                grade_str += f" rel={rel * 100:.0f}cm"
+            if getattr(self.detector, "last_mode", "") == "shape":
+                grade_str += "[BED-SHAPE]"
         if self.state == _S.ACQUIRE:
             align_frames = self._acq_count - self.acquire_frames
             if align_frames > 0:

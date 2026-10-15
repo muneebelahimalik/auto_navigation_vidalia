@@ -149,6 +149,20 @@ falls in the ±5 cm pairing dead-band).  Bed mode instead:
 - **aligns the ROI box with the row direction** (`last_roi_rot`, memoryless
   histogram-sharpness search ±20°) — at 0.28 m spacing a 5° yaw drifts the rows
   two spacings across the 7 m ROI, which biased the fixed box −8…−15 cm.
+- **bare-bed RELIEF tracker** (`bed_relief_centre`, `_bed_shape`, on by
+  default; `--no-bed-shape`, `--bed-pitch 1.83`): young seedlings (a few cm,
+  pencil-thin — the 2026-10-15 field) are invisible to the VLP-16, so the robot
+  steers by the raised bed itself — cross-row SOIL-height profile (forward ramp
+  removed per range bin), bed centre = midpoint of the two shoulder edges
+  between the bed top and the wheel furrows at ±pitch/2; heading from the
+  near/far halves.  Used when no crop is seen, or when the crop fit is weak or
+  disagrees (> 0.12 m) with the bed shape.  Confidence = contrast / 5 cm;
+  row end = relief gone (flat headland).  Status `rel=6cm[BED-SHAPE]`,
+  telemetry `bed_contrast_m`, `mode=shape`.  The bed-top floor is the per-range
+  dominant-surface (1 cm histogram mode) LINE — no slope dead-band, so a
+  residual ~2° ramp can't lift far soil into the crop band (field: bare soil
+  read as a row at off=+0.8 m); a bed centre beyond ±0.45 m (wheel on the
+  bed) gets confidence 0.
 Camera row tracking is disabled in bed mode (the camera tracker is 2-row only);
 telemetry gains `bed_floor_m`, `soil_centre`, `roi_rot_deg`; status shows
 `bed=0.15m`.  Sim (`tests/test_onion_bed.py`): bias ≤ 1 cm from 0 to ±35 cm start
