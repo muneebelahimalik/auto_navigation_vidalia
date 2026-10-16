@@ -182,6 +182,35 @@ falls in the ±5 cm pairing dead-band).  Bed mode instead:
   AND ≥60 % of its points on the 4 predicted row lines (grass ≈30 %).  Sim
   (bed ending into grass): heading ≤ 2–4°, row end ~3 m before the bed end,
   grass never re-locked.  Status `[BED-END]`.
+- **Smooth driving (field 2026-10-16, three rows: MPC 194 m, pursuit 128 m,
+  RL 71 m — tracking 4–5 cm lateral std, 1.4–2.1° heading std, all good).**
+  The operator saw sudden slow-downs / brake-like jerks.  Two causes:
+  (1) **false bed-end stops** — mid-row the relief fit returns nothing for 2–4
+  scans (bed-top floor jumping between soil and onion canopy: relief 0.07 →
+  exactly 0 → 0.07); the gate's EMA read those zeros as "bed ended" 22–108
+  times per row → v=0 for ~1 s each.  Fix: a missing fit is NO evidence —
+  `_bed_present` holds and the estimate coasts on the last bed geometry for
+  ≤ `bed_dropout_hold` (8) scans; replayed on all three logged contrast traces
+  → 0 false triggers, real bed end still found (≤0.1 m later on 2026-10-15).
+  (2) **speed ∝ confidence** — relief mode (~0.9) vs crop-fit mode (~0.7)
+  switching ~1×/s surged the speed ±25 %.  Fix: `speed_conf_full`
+  (`--speed-conf-full`, onion preset **0.65**; 1.0 = original law) saturates
+  the confidence term, plus a FOLLOW/APPROACH speed **rate limiter**
+  (`--accel-limit 0.15`, `--decel-limit 0.5` m/s²; stops are never softened).
+  Offline replay of the three runs: stops 382/163/57 → 18/15/1, speed CV
+  0.21–0.26 → 0.07–0.14.  NOTE: the robot now actually cruises near `--speed`
+  (mean 0.15 → ~0.19 at `--speed 0.20`); lower `--speed` for the old pace.
+- **Serpentine side (`--beds-left N --beds-right M`).** The first U-turn fixes
+  which side of the field the sweep covers (left-first keeps moving left).
+  Started on the 2nd bed from the right (rightmost unplanted), the default
+  RIGHT turn went toward the unplanted side and found no bed (APPROACH 3 m →
+  DONE).  The LiDAR cannot tell planted from unplanted beds while the onions
+  are invisible, so the operator states the layout:
+  `navigation/coverage_plan.py::plan_serpentine` turns beds-to-cover on each
+  side (excluding the start bed) into the first-turn side (more beds; explicit
+  `--turn-dir` wins) and `--rows` = 1 + beds on that side (capped — never turns
+  off the field edge), auto-enabling `--headland`.  Tests
+  `tests/test_coverage_plan.py`.
 Camera row tracking is disabled in bed mode (the camera tracker is 2-row only);
 telemetry gains `bed_floor_m`, `soil_centre`, `roi_rot_deg`; status shows
 `bed=0.15m`.  Sim (`tests/test_onion_bed.py`): bias ≤ 1 cm from 0 to ±35 cm start
@@ -194,8 +223,10 @@ python3 scripts/row_follow.py --preset onion --record
 # Autonomous single bed (robot WILL move):
 python3 scripts/row_follow.py --auto --preset onion --controller pursuit --record
 
-# Multi-bed serpentine (headland U-turn not yet field-validated in onion):
-python3 scripts/row_follow.py --auto --preset onion --rows 3 --headland --record
+# Multi-bed serpentine (headland U-turn not yet field-validated in onion).
+# Say how many beds remain on each side of the start bed — it turns toward them:
+python3 scripts/row_follow.py --auto --preset onion --beds-left 4 --beds-right 0 --record
+# (equivalent manual form: --rows 5 --headland --turn-dir left)
 
 # Other layouts: 2 rows/bed at 0.34 m → --preset onion --bed-rows 2 --row-spacing 0.34
 #                1 centre row         → --preset onion --bed-rows 1
@@ -1060,7 +1091,8 @@ to the noiseless convergence.  Regression-locked in `tests/test_row_controller.p
 | `--rows N` | 1 | Stop after N rows completed (serpentine when combined with `--headland`) |
 | `--headland` | off | **Closed-loop** headland U-turns between rows (odometry feedback) |
 | `--row-spacing M` | **0.76** | SEED for the in-strip soybean-row separation (detector PRIOR, not a movement param): peak-pairing prior + single-side fallback offset. **Self-calibrating** — the detector refines it from the observed peak separation each scan (live value shown as `sp=N.NNm`), so the default suffices for most fields. The U-turn does NOT use it (perception-closed) |
-| `--turn-dir D` | **right** | Direction of the first U-turn (`right`/`left`); subsequent turns alternate |
+| `--turn-dir D` | **right** | Direction of the first U-turn (`right`/`left`); subsequent turns alternate, so the sweep moves toward this side. Default = toward the side with more beds when `--beds-left/--beds-right` are given |
+| `--beds-left N` / `--beds-right N` | — | Field layout: beds still to cover on each side of the start bed (excluding it; don't count unplanted beds). Picks the first-turn side (more beds), sets `--rows` = 1 + beds on that side (caps an explicit `--rows`), enables `--headland` |
 | `--headland-exit M` | **1.0** | Straight distance driven past the row end before the arc; doubles as the blind-spot row-end confirmation (turn aborts back to FOLLOW if crop reappears during it) |
 | `--headland-speed M` | **0.15** | Forward speed during the straight headland EXIT phase (m/s) |
 | `--headland-turn-rate R` | **0.30** | Angular rate (rad/s) of the U-turn arc; arc forward speed = radius × this rate |
@@ -1072,6 +1104,8 @@ to the noiseless convergence.  Regression-locked in `tests/test_row_controller.p
 | `--post-turn-max-dist M` | **5.0** | Cumulative distance after a U-turn (APPROACH creep + short un-settled FOLLOW segments) before a stable down-row FOLLOW is required; hard guard against driving off the field |
 | `--slam` | off | Enable SLAM odometry integration (currently no-op) |
 | `--speed M` | 0.30 | Max forward speed m/s |
+| `--speed-conf-full C` | **1.0** (onion **0.65**) | Confidence at/above which speed is not reduced: `v = max × min(1, conf/C) × heading factor`. 1.0 = original speed ∝ confidence |
+| `--accel-limit A` / `--decel-limit A` | **0.15 / 0.5** | Forward-speed rate limits (m/s²) in FOLLOW/APPROACH; 0 = off. Zero-speed stops and obstacle stops pass through immediately |
 | `--lidar-tilt DEG` | **15.0** | Nose-down PITCH correction (degrees), applied AFTER `--lidar-yaw` (2026-07 forward-facing mount). Verify via `diag_birdseye.py --tilt-sweep 12:18:0.25` (ground slope → 0 at ~15°) and `diag_pitch_rings.py` (raw geometry: 14.8°). Old 21.5° was an artifact of the driver's wrong angle table — this is a VLP-16 Puck **Hi-Res** (±10°), fixed in `lidar_driver.py` |
 | `--lidar-yaw DEG` | **0.0** | Sensor mount yaw (CCW positive) relative to robot-forward (0 = forward-facing, 2026-07 re-mount; was 66/71 on the side-yawed mount). Applied FIRST (before tilt). Verify with `diag_birdseye.py` object locator (straight-ahead target → azimuth ~0). Re-verify after any mount change |
 | `--roi-x W` | 0.80 | Row detection ROI half-width m — applies to BOTH the LiDAR detector and the dual-camera tracker (wired in both scripts) |

@@ -314,3 +314,46 @@ def test_bed_presence_gate_on_real_field_contrast_trace():
             end_dist = float(dist[i])
             break
     assert end_dist is not None and 151.0 < end_dist < 152.5, end_dist
+
+
+def test_gate_holds_through_relief_dropouts_on_all_2026_10_16_runs():
+    """2026-10-16 field (MPC / pursuit / RL rows): the relief read ~0.07 m then
+    exactly 0 (no shape fit) for 2–4 scans, then 0.07 again.  The old gate fed
+    those zeros into its EMA and declared the bed ENDED 22–108 times per row
+    (v=0 stops — the 'sudden brakes').  A missing fit is no evidence: the gate
+    must hold through ≤ bed_dropout_hold scans.  Synthetic trace with the
+    field's dropout pattern + a real bed end."""
+    rng = np.random.default_rng(0)
+    c = np.clip(rng.normal(0.072, 0.006, 3000), 0.04, None)
+    # field-like dropouts: 2–7 consecutive zero scans every ~40 scans
+    i = 200
+    while i < 2700:
+        c[i:i + rng.integers(2, 8)] = 0.0
+        i += int(rng.integers(20, 60))
+    c[2800:] = np.where(rng.random(200) < 0.5, 0.0, rng.uniform(0.0, 0.02, 200))  # bed end
+    det = RowDetector(dual_row=True, bed_rows=4, row_spacing=SP)
+    present = []
+    for v in c:
+        det._shape = (0.0, 0.0, float(v)) if v > 0 else None
+        present.append(det._bed_present())
+    present = np.array(present)
+    assert present[:2800].all()
+    first_absent = int(np.argmax(~present[2800:]))
+    assert not present[2800:].all() and first_absent <= 15
+
+
+def test_relief_dropout_coasts_instead_of_decaying():
+    """A brief shape dropout with no crop must not decay confidence (the
+    speed dip / FOLLOW-miss stop); a longer one must."""
+    from navigation.row_perception import RowEstimate
+    det = RowDetector(dual_row=True, bed_rows=4, row_spacing=SP)
+    det._est = RowEstimate(heading_error=0.0, lateral_offset=0.02,
+                           confidence=0.9, valid=True)
+    det._last_shape = (0.02, 0.0, 0.07)          # bed tracked until now
+    det._relief_sm, det._relief_base, det._relief_cnt = 0.07, 0.07, 100
+    e1 = det.update(np.zeros((0, 3)))            # empty scan = shape dropout
+    assert e1.confidence > 0.85 and det.last_mode == "shape"
+    assert abs(e1.lateral_offset - 0.02) < 1e-6
+    for _ in range(det.bed_dropout_hold + 4):
+        e = det.update(np.zeros((0, 3)))
+    assert e.confidence < 0.5

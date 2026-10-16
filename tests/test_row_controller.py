@@ -151,3 +151,41 @@ def test_reset_clears_integral():
     assert abs(ctrl._eint) > 0.0
     ctrl.reset()
     assert ctrl._eint == 0.0
+
+
+def test_speed_conf_full_default_is_the_original_law():
+    from navigation.row_perception import RowEstimate
+    a = PurePursuitController(max_linear=0.3)
+    e = RowEstimate(heading_error=0.0, lateral_offset=0.0, confidence=0.7, valid=True)
+    assert abs(a.compute(e)[0] - 0.3 * 0.7) < 1e-9
+
+
+def test_speed_conf_full_saturates_healthy_locks():
+    """Onion field 2026-10-16: relief mode (~0.9) and crop-fit mode (~0.7)
+    switching ~1×/s surged the speed ±25 %.  Above speed_conf_full both drive
+    at the same speed; a weak lock still slows proportionally."""
+    from navigation.row_perception import RowEstimate
+    c = PurePursuitController(max_linear=0.3, speed_conf_full=0.65)
+    v = [c.compute(RowEstimate(heading_error=0.0, lateral_offset=0.0,
+                               confidence=k, valid=True))[0] for k in (0.95, 0.70, 0.45)]
+    assert abs(v[0] - 0.3) < 1e-9 and abs(v[1] - 0.3) < 1e-9
+    assert abs(v[2] - 0.3 * 0.45 / 0.65) < 1e-9
+
+
+def test_speed_conf_full_reaches_mpc_and_rl():
+    from navigation.rl_controller import RLController
+    from navigation.row_mpc_controller import RowMPCController
+    assert RowMPCController(speed_conf_full=0.65).pursuit.speed_conf_full == 0.65
+    assert RLController(speed_conf_full=0.65).pursuit.speed_conf_full == 0.65
+
+
+def test_rate_limit_linear():
+    from navigation.state_logic import rate_limit_linear
+    # speed-up limited to accel·dt, slow-down to decel·dt
+    assert abs(rate_limit_linear(0.30, 0.10, 0.1, 0.15, 0.5) - 0.115) < 1e-9
+    assert abs(rate_limit_linear(0.10, 0.30, 0.1, 0.15, 0.5) - 0.25) < 1e-9
+    # stops are never softened
+    assert rate_limit_linear(0.0, 0.30, 0.1, 0.15, 0.5) == 0.0
+    # off = pass-through; stalled loop dt is clamped
+    assert rate_limit_linear(0.30, 0.10, 0.1, 0.0, 0.0) == 0.30
+    assert abs(rate_limit_linear(0.30, 0.0, 5.0, 0.15, 0.5) - 0.0375) < 1e-9

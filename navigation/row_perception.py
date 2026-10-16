@@ -609,6 +609,18 @@ class RowDetector:
         self._relief_base = None
         self._relief_cnt = 0
         self._relief_sm = None
+        # Relief DROPOUTS (field 2026-10-16, all three controllers): mid-row the
+        # shape fit sometimes returns nothing for 2–4 scans (the bed-top floor
+        # jumps between soil and onion canopy) — relief ~0.07 m, then exactly 0,
+        # then 0.07 again.  Fed into the EMA those zeros tripped the gate 22–108
+        # times per row → v=0 stops = the "sudden brakes".  A missing fit is NO
+        # EVIDENCE, not evidence of a flat headland: hold the gate (and coast on
+        # the last bed geometry) for up to ``bed_dropout_hold`` scans; a real bed
+        # end keeps reading nothing/low and still trips it (replayed on the
+        # logged contrast: 0 false stops on all runs, bed end found ≤ 0.1 m later).
+        self.bed_dropout_hold = 8
+        self._shape_miss = 0
+        self._last_shape = None
         self.last_bed_present = True           # diagnostic
         self._crop_agree = 0.0                 # EMA of crop-fit ↔ bed agreement
         self.crop_lock_level = 0.8
@@ -795,6 +807,8 @@ class RowDetector:
         """
         self._est = RowEstimate()
         self._spacing_factor = 1.0
+        self._last_shape = None            # never coast across a turn
+        self._shape_miss = 0
 
     # ------------------------------------------------------------------
     def update(self, pts: np.ndarray, aux_xy: Optional[np.ndarray] = None) -> RowEstimate:
@@ -1010,6 +1024,14 @@ class RowDetector:
                 # by the bed relief (young seedlings / bare stretch of bed).
                 self._crop_agree *= 0.9          # no crop seen → crop lock fades
                 return self._shape_estimate(roi_rot, total_mass)
+            if (self.bed_rows >= 2 and self.bed_shape and self._last_shape is not None
+                    and 0 < self._shape_miss <= self.bed_dropout_hold):
+                # Brief relief dropout on a bed we were tracking: coast on the
+                # last bed geometry instead of decaying (decay = speed dip/stop).
+                self._shape = self._last_shape
+                est = self._shape_estimate(roi_rot, total_mass)
+                self._shape = None
+                return est
             if self.bed_rows >= 2:
                 self.last_mode = "none"
             return self._decay(row_end_conf=row_end_conf)
@@ -1310,6 +1332,13 @@ class RowDetector:
         """Bed-presence gate (see __init__): update the smoothed relief and its
         running baseline; False once raised beds are established (latched) and
         the smoothed relief has dropped below bed_present_frac × baseline."""
+        if self._shape is None:
+            self._shape_miss += 1
+            if self._relief_sm is not None and self._shape_miss <= self.bed_dropout_hold:
+                return self.last_bed_present        # dropout: no evidence either way
+        else:
+            self._shape_miss = 0
+            self._last_shape = self._shape
         c = float(self._shape[2]) if self._shape is not None else 0.0
         self._relief_sm = c if self._relief_sm is None else 0.35 * c + 0.65 * self._relief_sm
         latched = self._relief_cnt >= self.bed_latch_scans

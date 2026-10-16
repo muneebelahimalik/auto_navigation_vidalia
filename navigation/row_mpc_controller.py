@@ -60,6 +60,7 @@ class RowMPCController:
         max_angular: float = 0.40,
         lookahead: float = 2.0,
         min_confidence: float = 0.35,
+        speed_conf_full: float = 1.0,     # forwarded to the pursuit speed law
         # MPPI hyper-parameters
         horizon: int = 20,            # H steps of preview
         n_samples: int = 200,         # K sampled control sequences
@@ -80,7 +81,8 @@ class RowMPCController:
         # Reused for forward speed + as the low-confidence / startup fallback.
         self.pursuit = PurePursuitController(
             max_linear=max_linear, min_linear=min_linear, max_angular=max_angular,
-            lookahead=lookahead, min_confidence=min_confidence)
+            lookahead=lookahead, min_confidence=min_confidence,
+            speed_conf_full=speed_conf_full)
         self.max_linear = max_linear
         self.max_angular = max_angular
         self.min_confidence = min_confidence

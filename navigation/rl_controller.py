@@ -36,6 +36,7 @@ class RLController:
         max_angular: float = 0.40,
         lookahead: float = 2.0,
         min_confidence: float = 0.35,
+        speed_conf_full: float = 1.0,     # forwarded to the pursuit speed law
         residual: bool = False,
         residual_scale: float = 0.5,
         max_angular_slew: float = 0.0,
@@ -44,7 +45,8 @@ class RLController:
         # AND (in residual mode) as the base steering the policy corrects on top of.
         self.pursuit = PurePursuitController(
             max_linear=max_linear, min_linear=min_linear, max_angular=max_angular,
-            lookahead=lookahead, min_confidence=min_confidence)
+            lookahead=lookahead, min_confidence=min_confidence,
+            speed_conf_full=speed_conf_full)
         self.policy = policy
         self.max_angular = max_angular
         self.min_confidence = min_confidence

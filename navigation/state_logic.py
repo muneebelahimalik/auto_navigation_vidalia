@@ -276,3 +276,32 @@ def acquire_rowend_escape(
     """
     return came_from_follow and rowend_count >= row_end_frames
 
+
+
+def rate_limit_linear(
+    target: float,
+    prev: float,
+    dt: float,
+    accel: float,
+    decel: float,
+) -> float:
+    """Smooth the forward-speed command while driving down a row.
+
+    Field 2026-10-16 (onion bed): the speed law tracks perception confidence
+    scan by scan, so every confidence wobble became a speed step — the robot
+    surged and braked instead of rolling at a steady speed.  This bounds the
+    change per control step: speed-ups at ``accel`` m/s², slow-downs at
+    ``decel`` m/s² (a few times faster — slowing for a weak lock should still
+    be prompt).  A ZERO target (lost lock, controller hold) passes straight
+    through: stops are never softened.  Obstacle / turn / other states are not
+    limited at all (the caller only applies this in FOLLOW and APPROACH).
+    0 disables the respective limit.
+    """
+    if target <= 0.0:
+        return target
+    dt = min(max(dt, 0.0), 0.25)            # a stalled loop must not unlock a jump
+    if accel > 0.0 and target > prev:
+        target = min(target, prev + accel * dt)
+    elif decel > 0.0 and target < prev:
+        target = max(target, prev - decel * dt)
+    return target

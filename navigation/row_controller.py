@@ -64,8 +64,10 @@ class PurePursuitController:
         i_min_conf: float = 0.45,    # only integrate above this confidence
         i_rate: float = 0.20,        # only integrate when |Δoffset| < i_rate·dt (persistent, not transient)
         dt: float = 0.1,             # control period (s); matches the 10 Hz scan rate
+        speed_conf_full: float = 1.0,  # confidence at/above which speed is not reduced
     ) -> None:
         self.max_linear = max_linear
+        self.speed_conf_full = speed_conf_full
         self.min_linear = min_linear
         self.max_angular = max_angular
         self.lookahead = lookahead
@@ -117,7 +119,13 @@ class PurePursuitController:
         # Divisor 1.0 rad keeps the robot near half-speed at a typical 22° entry
         # angle; the old 0.60 bottomed out at 35% (~0.10 m/s) which cut angular
         # authority so much that lateral correction took 5+ seconds to converge.
-        speed_factor = est.confidence * max(0.25, 1.0 - abs(theta) / 1.0)
+        # ``speed_conf_full`` < 1 saturates the confidence term: a healthy lock
+        # drives at full speed whatever its exact score, so switching between
+        # perception modes of different nominal confidence (onion bed: relief
+        # ~0.9 vs crop fit ~0.7, switching ~1×/s) no longer surges the speed
+        # ±25 %.  Weak locks still slow down proportionally.  1.0 = original law.
+        conf_term = min(1.0, est.confidence / max(self.speed_conf_full, 1e-6))
+        speed_factor = conf_term * max(0.25, 1.0 - abs(theta) / 1.0)
         linear = max(self.min_linear, self.max_linear * speed_factor)
 
         # Pure-pursuit curvature; +target_x (row to the right) -> turn right.

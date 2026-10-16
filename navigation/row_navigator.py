@@ -40,7 +40,9 @@ from navigation.headland import HeadlandTurn
 from navigation.state_logic import (
     follow_loss_is_row_end, follow_loss_action, approach_action,
     acquire_rowend_escape, rowend_count_update, post_turn_loss_action,
-    turn_reacquired, headland_exit_row_continues, search_creep_reached_end)
+    turn_reacquired, headland_exit_row_continues, search_creep_reached_end,
+    rate_limit_linear,
+)
 from navigation.row_controller import PurePursuitController
 from navigation.row_perception import RowDetector, RowEstimate
 from navigation.row_safety import SafetyMonitor
@@ -165,8 +167,14 @@ class RowNavigator:
         cam_stale_secs: float = 1.5,
         cam_fusion: str = "estimate",
         telemetry=None,
+        accel_limit: float = 0.0,
+        decel_limit: float = 0.0,
     ) -> None:
         self.canbus = canbus
+        # Forward-speed rate limits (m/s², 0 = off) while driving down a row
+        # (FOLLOW / APPROACH) — see ``state_logic.rate_limit_linear``.
+        self.accel_limit = accel_limit
+        self.decel_limit = decel_limit
         self.detector = detector
         # Motion-compensated multi-scan accumulation for the ROW FIT only (dense
         # canopy signal restoration).  n=1 → pass-through (no change).  Fed the
@@ -282,6 +290,7 @@ class RowNavigator:
 
         self.state = _S.ACQUIRE
         self.cmd = (0.0, 0.0)
+        self._cmd_state = self.state       # state the last command was issued in
         self._stop = False
         self._acq_count = 0
         self._row_end_count = 0
@@ -577,6 +586,10 @@ class RowNavigator:
                 est = self._fuse_estimates(est, vis_est)
 
             linear, angular = self._step(est, safety, dt)
+            if self.state in (_S.FOLLOW, _S.APPROACH) and self._cmd_state == self.state:
+                linear = rate_limit_linear(linear, self.cmd[0], dt,
+                                           self.accel_limit, self.decel_limit)
+            self._cmd_state = self.state
             self.cmd = (linear, angular)
 
             # Centralised odometry integration: one tick per scan with the

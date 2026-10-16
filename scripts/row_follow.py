@@ -469,7 +469,7 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
             print(f" [row_follow] --controller rl but no policy at '{policy_path}' "
                   f"— running pure-pursuit fallback.")
         controller = RLController(
-            policy=pol, max_linear=args.speed,
+            policy=pol, max_linear=args.speed, speed_conf_full=args.speed_conf_full,
             lookahead=args.lookahead, max_angular=args.max_angular,
             residual=args.rl_residual, residual_scale=args.residual_scale,
             max_angular_slew=args.rl_slew)
@@ -490,11 +490,12 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
         print(" [row_follow] MPC steering: MPPI + online disturbance observer"
               + (f"  {mpc_kw}" if mpc_kw else ""))
         controller = RowMPCController(
-            max_linear=args.speed,
+            max_linear=args.speed, speed_conf_full=args.speed_conf_full,
             lookahead=args.lookahead, max_angular=args.max_angular, **mpc_kw)
     else:
         controller = PurePursuitController(
             max_linear=args.speed,
+            speed_conf_full=args.speed_conf_full,
             lookahead=args.lookahead,
             max_angular=args.max_angular,
         )
@@ -512,6 +513,7 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
         canbus, detector, safety, controller,
         auto=args.auto, rows=args.rows, headland=args.headland, slam=slam,
         telemetry=telemetry,
+        accel_limit=args.accel_limit, decel_limit=args.decel_limit,
         self_radius=args.self_radius,
         acquire_conf=args.acquire_conf,
         row_end_min_dist=args.row_end_min_dist,
@@ -578,7 +580,9 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
               f"(then alternating)  radius={radius_str}  "
               f"exit={args.headland_exit:.2f}m  rate={args.headland_turn_rate:.2f}rad/s  "
               f"reacq-conf={args.reacquire_conf:.2f}  scrub-comp={args.turn_scrub_comp:.2f}")
-    print(f"  speed   : {args.speed:.2f} m/s max   SLAM map: {'on' if args.slam else 'off'}")
+    print(f"  speed   : {args.speed:.2f} m/s max  full-speed conf≥{args.speed_conf_full:.2f}  "
+          f"accel≤{args.accel_limit:.2f} decel≤{args.decel_limit:.2f} m/s²")
+    print(f"  SLAM map: {'on' if args.slam else 'off'}")
     print(f"  crop    : h=[{args.crop_min:.2f},{args.crop_max:.2f}]m  roi_x=±{args.roi_x:.2f}m")
     print(f"  safety  : fwd_h={args.obstacle_height:.2f}m  tire_h={tire_h:.2f}m  "
           f"self_r={args.self_radius:.2f}m  tilt={args.lidar_tilt:.1f}°  "
@@ -732,8 +736,19 @@ def main() -> None:
     )
     parser.add_argument("--auto", action="store_true",
                         help="Enable motion (default: perception-only)")
-    parser.add_argument("--rows", type=int, default=1, metavar="N",
-                        help="Number of rows to cover (default: 1)")
+    parser.add_argument("--rows", type=int, default=None, metavar="N",
+                        help="Number of rows to cover (default: 1, or every bed on the "
+                             "sweep side with --beds-left/--beds-right)")
+    parser.add_argument("--beds-left", type=int, default=None, metavar="N",
+                        help="Field layout for the serpentine: beds still to cover to the "
+                             "LEFT of the start bed (not counting it). With --beds-right, "
+                             "the first U-turn goes toward the side with more beds and "
+                             "--rows defaults to 1 + that many (never turns off the field "
+                             "edge). Implies --headland when more than one bed.")
+    parser.add_argument("--beds-right", type=int, default=None, metavar="N",
+                        help="Beds still to cover to the RIGHT of the start bed "
+                             "(see --beds-left). Count only beds that should be worked "
+                             "(skip an unplanted edge bed).")
     parser.add_argument("--headland", action="store_true",
                         help="Perform closed-loop headland U-turns between rows "
                              "(odometry feedback). Combine with --rows N to cover "
@@ -813,9 +828,24 @@ def main() -> None:
                              "instead of chasing it (stops the +8-to-+60-deg heading runaway and the "
                              "left/right weave). Good tracking stays >=0.7 so the hold is inert there. "
                              "Set 0 to disable.")
-    parser.add_argument("--turn-dir", choices=["right", "left"], default="right",
-                        help="Direction of the FIRST headland U-turn (default: right). "
-                             "Subsequent turns alternate for serpentine coverage.")
+    parser.add_argument("--speed-conf-full", type=float, default=None, metavar="C",
+                        help="Detection confidence at/above which forward speed is NOT reduced "
+                             "(speed = max × min(1, conf/C) × heading factor). 1.0 = the original "
+                             "law (speed ∝ confidence). Onion preset 0.65: the bed-relief (~0.9) "
+                             "and crop-fit (~0.7) modes then drive at the same speed instead of "
+                             "surging ±25%% each time perception switches (field 2026-10-16).")
+    parser.add_argument("--accel-limit", type=float, default=0.15, metavar="A",
+                        help="Max forward ACCELERATION (m/s^2) while following a row "
+                             "(default 0.15; 0 = off). Smooths speed-ups.")
+    parser.add_argument("--decel-limit", type=float, default=0.5, metavar="A",
+                        help="Max forward DECELERATION (m/s^2) while following a row "
+                             "(default 0.5; 0 = off). Stops (lost lock) and obstacle "
+                             "stops are never softened.")
+    parser.add_argument("--turn-dir", choices=["right", "left"], default=None,
+                        help="Direction of the FIRST headland U-turn (default: right, or "
+                             "toward the side with more beds given --beds-left/--beds-right). "
+                             "Subsequent turns alternate, so the sweep moves progressively "
+                             "toward this side.")
     parser.add_argument("--approach-speed", type=float, default=0.12, metavar="M",
                         help="Forward speed (m/s) of the post-turn APPROACH leg that drives "
                              "the robot into the next row until perception re-acquires it "
@@ -1212,6 +1242,8 @@ def main() -> None:
             args.mpc_drift_gain = 0.05
         if args.rl_slew == 0.0:
             args.rl_slew = 0.12
+        if args.speed_conf_full is None:
+            args.speed_conf_full = 0.65
         args.crop_min = 0.05
         args.crop_max = 0.60
         args.obstacle_height = 0.75
@@ -1219,6 +1251,19 @@ def main() -> None:
         print(f" [preset] onion — {args.bed_rows} rows/bed @ {args.row_spacing:.3f}m, "
               f"crop_h=[0.05,0.60]m above bed top, obstacle=0.75m, tire=0.85m, "
               f"headland radius={args.headland_radius:.2f}m exit={args.headland_exit:.1f}m")
+    if args.speed_conf_full is None:
+        args.speed_conf_full = 1.0
+    # Serpentine side + row count from the operator's field layout.
+    from navigation.coverage_plan import plan_serpentine
+    plan = plan_serpentine(args.beds_left, args.beds_right, rows=args.rows,
+                           turn_dir=args.turn_dir, headland=args.headland)
+    args.turn_dir, args.rows, args.headland = plan.turn_dir, plan.rows, plan.headland
+    if args.beds_left is not None or args.beds_right is not None:
+        print(f" [serpentine] beds left={args.beds_left or 0} right={args.beds_right or 0} "
+              f"→ sweep {plan.turn_dir.upper()}: {plan.rows} bed(s), first U-turn "
+              f"{plan.turn_dir.upper()}")
+        for note in plan.notes:
+            print(f" [serpentine] {note}")
     if args.bed_rows is not None:
         if args.bed_rows >= 2:
             args.dual_row = True
