@@ -25,7 +25,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from navigation.rl_policy import MLPPolicy
 from sim.evaluate import (evaluate, mpc_act_fn, per_episode, policy_act_fn,
                           pursuit_act_fn)
-from sim.row_follow_env import EnvConfig
+from sim.row_follow_env import EnvConfig, onion_bed_config
 
 
 def _write_csv(path: str, rows: list) -> None:
@@ -50,6 +50,7 @@ def _row(name, agg):
             f"xtrack {agg['xtrack_rmse_m'][0]*100:5.1f} cm | "
             f"heading {agg['heading_rmse_deg'][0]:4.1f}° | "
             f"jerk {agg['control_jerk'][0]:.3f} | "
+            f"|ω| {agg['control_effort'][0]:.3f} | "
             f"success {agg['success_rate']*100:5.1f}%")
 
 
@@ -58,6 +59,8 @@ def main() -> None:
     ap.add_argument("--policy", default="", help="trained policy .npz (omit = baseline only)")
     ap.add_argument("--mpc", action="store_true", help="also evaluate the MPPI/MPC controller")
     ap.add_argument("--episodes", type=int, default=200)
+    ap.add_argument("--profile", choices=["soybean", "onion"], default="soybean",
+                    help="disturbance model to evaluate in (see train_rl.py --profile)")
     ap.add_argument("--seed-base", type=int, default=50_000)
     ap.add_argument("--csv", default="", metavar="PATH",
                     help="Write per-episode rows (controller, seed, grade_drift, slip, "
@@ -66,14 +69,16 @@ def main() -> None:
 
     seeds = list(range(args.seed_base, args.seed_base + args.episodes))
     pursuit = pursuit_act_fn()
+    cfg = onion_bed_config() if args.profile == "onion" else EnvConfig()
+    print(f"[sim profile: {args.profile}]")
 
     print(f"Held-out evaluation over {len(seeds)} episodes (identical per-seed disturbances)\n")
-    base = evaluate(pursuit, seeds)
+    base = evaluate(pursuit, seeds, cfg)
     print(_row("pure-pursuit", base))
 
     csv_rows = []
     if args.csv:
-        for r in per_episode(pursuit, seeds):
+        for r in per_episode(pursuit, seeds, cfg):
             csv_rows.append({"controller": "pursuit", **r})
 
     # Collect the advanced controllers requested (RL policy and/or MPC).
@@ -87,10 +92,10 @@ def main() -> None:
         contenders.append(("MPC (MPPI)", "mpc", mpc_act_fn()))
 
     for label, tag, act in contenders:
-        agg = evaluate(act, seeds)
+        agg = evaluate(act, seeds, cfg)
         print(_row(label, agg))
         if args.csv:
-            for r in per_episode(act, seeds):
+            for r in per_episode(act, seeds, cfg):
                 csv_rows.append({"controller": tag, **r})
         d = lambda k, sc=1.0: (agg[k][0] - base[k][0]) * sc
         print(f"  delta ({label} - pursuit):  "
@@ -100,6 +105,9 @@ def main() -> None:
               f"success {(agg['success_rate']-base['success_rate'])*100:+.1f}%   "
               f"return {d('return'):+.2f}")
 
+        if args.profile != "soybean":
+            print()
+            continue          # the onion profile is flat — no cross-slope breakdown
         # Robustness by cross-slope severity (where the upgrade should earn its keep).
         print("  by cross-slope drift magnitude:")
         from sim.row_follow_env import RowFollowEnv

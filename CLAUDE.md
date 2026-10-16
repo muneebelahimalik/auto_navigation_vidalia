@@ -468,6 +468,33 @@ return) drops straight into a scatter (xtrack vs drift) or box plots.
 | `scripts/train_rl.py` | Evolution-Strategies trainer (numpy-only, gradient-free); reports baseline throughout |
 | `scripts/eval_controller.py` | Held-out pursuit-vs-RL-vs-MPC table + cross-slope-severity breakdown (`--mpc` to include MPC) |
 
+**Onion field — sim system-ID + retrained policy (`follow_onion.npz`).** The
+onion bed (2026-10-15) is a different disturbance regime from soybean: the
+perception estimate is noisy (lateral std 5.6 cm, scan-to-scan 3 cm, slow
+target wander) on flat ground with no dropouts at 0.20 m/s.  The soybean policy
+(`follow_field`) steered **6.4×** pursuit's effort on the real onion estimates.
+`scripts/calibrate_sim_from_run.py <telemetry.jsonl>` fits the sim's noise
+model (white + AR(1) wandering lateral/heading bias, detector EMA, speed) so
+pure pursuit IN THE SIM reproduces the run's closed-loop stats (within ~10 %);
+the fit is `sim.row_follow_env.onion_bed_config()` (`--profile onion` in
+`train_rl.py` / `eval_controller.py`; default sim unchanged).
+`scripts/replay_controllers.py <telemetry.jsonl> --mpc-onion --policy …` replays
+the REAL logged estimates through every controller (open-loop, identical
+inputs) — the honest sim-to-real check (pursuit replay reproduces its logged
+command: |ω| 0.0076 vs 0.0077).  Trained `--profile onion --c-u 0.8 --c-du 8.0`
+(from scratch; fine-tunes and heavier penalties were tried and steered MORE on
+the real estimates): onion sim xtrack **8.0 cm vs pursuit 9.7**, 100 % success;
+real-estimate replay |ω| **3.1×** pursuit (vs 6.4× follow_field), peak 0.12 vs
+0.21 rad/s, jerk 0.0014 ≈ pursuit; still 97 % on the soybean sim.
+**MPC in the onion field:** default MPPI steered 5.3× pursuit on the real
+estimates; raising its effort/jerk costs made it WORSE (12–19×: the soft-argmin
+flattens toward averaging the sampling noise).  The calm setting is sampling
+noise 0.20, temperature 0.3, observer gain 0.05 (flat field — a fast slope
+observer only chases noise): **3.5×**, same tracking.  `--preset onion` applies
+both: `--controller rl` → `follow_onion.npz` + `--rl-slew 0.12`;
+`--controller mpc` → `--mpc-noise 0.20 --mpc-temp 0.3 --mpc-drift-gain 0.05`.
+Regression-locked in `tests/test_onion_rl.py`.
+
 ### Optional: Model-predictive (MPC/MPPI) steering — experimental, opt-in
 
 A state-of-the-art alternative to pure pursuit for the **FOLLOW steering command

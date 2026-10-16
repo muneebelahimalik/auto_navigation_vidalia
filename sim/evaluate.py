@@ -107,6 +107,7 @@ def rollout(env: RowFollowEnv, act_fn, seed: int) -> dict:
         "xtrack_rmse_m": float(np.sqrt(np.mean(es ** 2))),
         "heading_rmse_deg": float(math.degrees(np.sqrt(np.mean(ths ** 2)))),
         "control_jerk": jerk,
+        "control_effort": float(np.mean(np.abs(acts)) * env.cfg.w_max),   # mean |ω| rad/s
         "success": not bool(info["off_road"]),
         "steps": len(es),
         "grade_drift": float(abs(info["grade"])),   # per-episode cross-slope (m/s)
@@ -124,7 +125,8 @@ def evaluate(act_fn, seeds, config: EnvConfig | None = None) -> dict:
     """Aggregate metrics over a fixed seed set (mean ± std)."""
     env = RowFollowEnv(config)
     rows = [rollout(env, act_fn, int(s)) for s in seeds]
-    keys = ["return", "xtrack_rmse_m", "heading_rmse_deg", "control_jerk", "steps"]
+    keys = ["return", "xtrack_rmse_m", "heading_rmse_deg", "control_jerk",
+            "control_effort", "steps"]
     agg = {k: (float(np.mean([r[k] for r in rows])),
                float(np.std([r[k] for r in rows]))) for k in keys}
     agg["success_rate"] = float(np.mean([r["success"] for r in rows]))

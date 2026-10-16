@@ -30,7 +30,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from navigation.rl_policy import MLPPolicy
 from sim.evaluate import (evaluate, policy_act_fn, pursuit_act_fn,
                           residual_act_fn, rollout)
-from sim.row_follow_env import EnvConfig, RowFollowEnv
+from sim.row_follow_env import EnvConfig, RowFollowEnv, onion_bed_config
 
 
 def fitness(policy: MLPPolicy, flat, env: RowFollowEnv, seeds, make_act) -> float:
@@ -67,14 +67,28 @@ def main() -> None:
                     help="train a RESIDUAL policy: total steer = pursuit baseline "
                          "(+integral) + scale·policy_delta. Starts at the baseline "
                          "and learns only the correction on top.")
+    ap.add_argument("--init", default="", metavar="NPZ",
+                    help="start from an existing policy (fine-tune, e.g. the soybean "
+                         "policies/follow_field.npz on the onion profile) instead of random")
+    ap.add_argument("--profile", choices=["soybean", "onion"], default="soybean",
+                    help="disturbance model: 'soybean' (default sim: cross-slope drift, "
+                         "white noise, dropouts) or 'onion' (system-identified from the "
+                         "2026-10-15 Vidalia bed-relief run: estimate noise + slow target "
+                         "wander, 0.20 m/s, flat)")
     ap.add_argument("--residual-scale", type=float, default=0.5,
                     help="authority of the residual delta (fraction of max_angular)")
     args = ap.parse_args()
 
     rng = np.random.default_rng(args.seed)
-    cfg = EnvConfig(c_du=args.c_du, c_e=args.c_e, c_theta=args.c_theta, c_u=args.c_u)
+    weights = dict(c_du=args.c_du, c_e=args.c_e, c_theta=args.c_theta, c_u=args.c_u)
+    cfg = onion_bed_config(**weights) if args.profile == "onion" else EnvConfig(**weights)
+    print(f"[sim profile: {args.profile}]")
     env = RowFollowEnv(cfg)
-    policy = MLPPolicy(obs_dim=RowFollowEnv.OBS_DIM, hidden=tuple(args.hidden), seed=args.seed)
+    if args.init:
+        policy = MLPPolicy.load(args.init)
+        print(f"[fine-tuning from {args.init}]")
+    else:
+        policy = MLPPolicy(obs_dim=RowFollowEnv.OBS_DIM, hidden=tuple(args.hidden), seed=args.seed)
     theta = policy.get_params()
     n = theta.size
     half = max(1, args.pop // 2)
@@ -90,7 +104,7 @@ def main() -> None:
 
     # Held-out seeds (never used to compute the ES gradient) for honest reporting.
     held = list(range(10_000, 10_000 + args.eval_seeds))
-    base = evaluate(pursuit_act_fn(), held)
+    base = evaluate(pursuit_act_fn(), held, cfg)
     print(f"params={n}  pop={2*half}  sigma={args.sigma}  lr={args.lr}  "
           f"reward[c_e={args.c_e} c_theta={args.c_theta} c_u={args.c_u} c_du(jerk)={args.c_du}]")
     print(f"[baseline pure-pursuit] return={base['return'][0]:+.2f}  "
@@ -116,7 +130,7 @@ def main() -> None:
         theta = theta + args.lr * grad
 
         if it % 10 == 0 or it == 1:
-            cur = evaluate(make_act(policy.set_params(theta)), held)
+            cur = evaluate(make_act(policy.set_params(theta)), held, cfg)
             score = cur["return"][0]
             if score > best_score:
                 best_score, best_theta = score, theta.copy()
@@ -131,7 +145,7 @@ def main() -> None:
     print(f"\nsaved best policy -> {out}  (held-out return {best_score:+.2f} "
           f"vs baseline {base['return'][0]:+.2f})")
     print("compare in detail with:  python3 scripts/eval_controller.py "
-          f"--policy {out}")
+          f"--policy {out} --mpc --profile {args.profile}")
 
 
 if __name__ == "__main__":

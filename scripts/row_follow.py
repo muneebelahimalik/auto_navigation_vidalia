@@ -455,7 +455,10 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
         # pursuit 17.9) while cutting field steering effort to MPC's level
         # (|w| 0.090 on the real run_rl scans, vs MPC 0.095).  Measured with
         # scripts/replay_scans.py on real field estimates.
-        policy_path = args.policy or "policies/follow_field.npz"
+        # Onion beds: the policy trained on the onion-field sim profile
+        # (system-identified from the 2026-10-15 run); soybean: follow_field.
+        policy_path = args.policy or ("policies/follow_onion.npz" if args.preset == "onion"
+                                      else "policies/follow_field.npz")
         pol = None
         if policy_path and Path(policy_path).exists():
             pol = MLPPolicy.load(policy_path)
@@ -481,10 +484,14 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
         # for slope-drift rejection (opt-in). Falls back to pure-pursuit when the
         # row fix is weak — never replaces the safety/state architecture.
         from navigation.row_mpc_controller import RowMPCController
-        print(" [row_follow] MPC steering: MPPI + online disturbance observer")
+        mpc_kw = {k: v for k, v in (("noise_sigma", args.mpc_noise),
+                                    ("temperature", args.mpc_temp),
+                                    ("drift_gain", args.mpc_drift_gain)) if v is not None}
+        print(" [row_follow] MPC steering: MPPI + online disturbance observer"
+              + (f"  {mpc_kw}" if mpc_kw else ""))
         controller = RowMPCController(
             max_linear=args.speed,
-            lookahead=args.lookahead, max_angular=args.max_angular)
+            lookahead=args.lookahead, max_angular=args.max_angular, **mpc_kw)
     else:
         controller = PurePursuitController(
             max_linear=args.speed,
@@ -1110,8 +1117,8 @@ def main() -> None:
                              "headland turn are unchanged. Compare with scripts/eval_controller.py.")
     parser.add_argument("--policy", default="", metavar="PATH",
                         help="Trained steering policy .npz for --controller rl "
-                             "(default: policies/follow_jerk8.0.npz, the smoothest "
-                             "sweep policy; missing/absent → pure-pursuit fallback).")
+                             "(default: policies/follow_field.npz; with --preset onion "
+                             "policies/follow_onion.npz; missing → pure-pursuit fallback).")
     parser.add_argument("--rl-residual", action="store_true",
                         help="RESIDUAL RL (with --controller rl): the policy adds a bounded "
                              "delta ON TOP of the geometric+integral pure-pursuit baseline "
@@ -1122,6 +1129,15 @@ def main() -> None:
     parser.add_argument("--residual-scale", type=float, default=0.5, metavar="S",
                         help="Authority of the residual delta as a fraction of --max-angular "
                              "(default: 0.5). Must match the value the policy was trained with.")
+    parser.add_argument("--mpc-noise", type=float, default=None, metavar="S",
+                        help="MPC (MPPI) sampling-noise std on the normalised action "
+                             "(default 0.35; onion preset 0.20)")
+    parser.add_argument("--mpc-temp", type=float, default=None, metavar="T",
+                        help="MPC (MPPI) temperature (default 0.6; onion preset 0.3)")
+    parser.add_argument("--mpc-drift-gain", type=float, default=None, metavar="G",
+                        help="MPC cross-slope disturbance-observer gain (default 0.20; onion "
+                             "preset 0.05 — the flat bed has no slope drift, so a fast "
+                             "observer only chases estimate noise)")
     parser.add_argument("--rl-slew", type=float, default=0.0, metavar="R",
                         help="RL angular SLEW-RATE limit — max change in the steering command "
                              "per control step (rad/s per ~0.1 s scan; 0 = off, default). A hard "
@@ -1183,6 +1199,19 @@ def main() -> None:
         # before the arc — otherwise the U-turn starts on the bed.
         if args.headland_exit == 1.0:
             args.headland_exit = 3.5
+        # Controllers tuned on the onion-field sim profile + real-estimate replay
+        # (scripts/calibrate_sim_from_run.py, scripts/replay_controllers.py):
+        # MPC — calmer sampling + slow observer (6.6x → 3.5x pursuit's steering
+        # effort on the real estimates, same tracking); RL — follow_onion.npz
+        # (default policy below) with a slew bound.
+        if args.mpc_noise is None:
+            args.mpc_noise = 0.20
+        if args.mpc_temp is None:
+            args.mpc_temp = 0.3
+        if args.mpc_drift_gain is None:
+            args.mpc_drift_gain = 0.05
+        if args.rl_slew == 0.0:
+            args.rl_slew = 0.12
         args.crop_min = 0.05
         args.crop_max = 0.60
         args.obstacle_height = 0.75

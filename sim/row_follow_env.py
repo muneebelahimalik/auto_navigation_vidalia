@@ -48,10 +48,10 @@ _MAX_LINEAR = 0.30
 _MIN_LINEAR = 0.08
 
 
-def speed_from(conf: float, theta_meas: float) -> float:
+def speed_from(conf: float, theta_meas: float, max_linear: float = _MAX_LINEAR) -> float:
     """The pure-pursuit forward-speed law (shared with the real controller)."""
     speed_factor = conf * max(0.25, 1.0 - abs(theta_meas) / 1.0)
-    return max(_MIN_LINEAR, _MAX_LINEAR * speed_factor)
+    return max(_MIN_LINEAR, max_linear * speed_factor)
 
 
 @dataclass
@@ -91,6 +91,49 @@ class EnvConfig:
     c_du: float = 0.30
     k_progress: float = 2.0
     offroad_penalty: float = 5.0
+    # --- Optional field-profile realism (defaults = off → original sim) -----
+    max_linear: float = _MAX_LINEAR  # field --speed (onion runs used 0.20)
+    # Slowly-wandering measurement BIASES (AR(1)): the target the perception
+    # reports wanders relative to the true path (raised-bed shoulder
+    # irregularity / bed meander in the onion field; heading fit drift).
+    e_bias_std: float = 0.0          # m, stationary std of the lateral bias
+    e_bias_rho: float = 0.0          # per-step AR(1) coefficient
+    th_bias_std: float = 0.0         # rad, stationary std of the heading bias
+    th_bias_rho: float = 0.0
+    # Detector smoothing: the controller sees an EMA of the raw measurement
+    # (RowDetector._smooth, alpha≈0.35).  0 = raw (original sim).
+    obs_ema: float = 0.0
+
+
+def onion_bed_config(**overrides) -> "EnvConfig":
+    """Sim profile SYSTEM-IDENTIFIED from the 2026-10-15 Vidalia onion run
+    (bare raised bed, robot steering by the bed relief, pursuit at 0.20 m/s).
+
+    Parameters were fitted so that pure pursuit in this sim reproduces the
+    field closed-loop statistics of the 150 m run (see
+    ``scripts/calibrate_sim_from_run.py``): lateral-estimate std ≈ 5.6 cm,
+    scan-to-scan lateral change ≈ 3 cm, lateral autocorrelation 0.85/0.44/0.19
+    at 1/10/50 scans, heading std ≈ 2.0° with slow drift, no dropouts, a flat
+    field (no cross-slope drift).  The onion bed is a different disturbance
+    regime from the soybean defaults (white noise + cross-slope + 8 % dropout):
+    estimate noise and slow target wander dominate.
+    """
+    base = dict(
+        max_linear=0.20,
+        grade_drift_std=0.004, theta_noise_grade_k=0.0,
+        dropout_p=0.003,
+        e_noise=ONION_FIT["e_noise"], theta_noise=ONION_FIT["theta_noise"],
+        e_bias_std=ONION_FIT["e_bias_std"], e_bias_rho=ONION_FIT["e_bias_rho"],
+        th_bias_std=ONION_FIT["th_bias_std"], th_bias_rho=ONION_FIT["th_bias_rho"],
+        obs_ema=0.35,
+    )
+    base.update(overrides)
+    return EnvConfig(**base)
+
+
+# Fitted by scripts/calibrate_sim_from_run.py on the 2026-10-15 onion run.
+ONION_FIT = dict(e_noise=0.0691, theta_noise=0.0192, e_bias_std=0.0223, e_bias_rho=0.9194,
+                 th_bias_std=0.0022, th_bias_rho=0.9631)
 
 
 class RowFollowEnv:
@@ -113,6 +156,9 @@ class RowFollowEnv:
         self._theta_noise = self.cfg.theta_noise
         self._eint = 0.0
         self._frozen_obs = None
+        self._eb = 0.0
+        self._tb = 0.0
+        self._ema = None
 
     # ------------------------------------------------------------------
     def reset(self, seed: int | None = None) -> np.ndarray:
@@ -129,13 +175,24 @@ class RowFollowEnv:
         self._theta_noise = c.theta_noise + c.theta_noise_grade_k * abs(self._grade)
         self._eint = 0.0
         self._frozen_obs = None
+        self._eb = float(self._rng.normal(0.0, c.e_bias_std)) if c.e_bias_std else 0.0
+        self._tb = float(self._rng.normal(0.0, c.th_bias_std)) if c.th_bias_std else 0.0
+        self._ema = None
         return self._observe(conf=c.conf_hi)
 
     # ------------------------------------------------------------------
     def _observe(self, conf: float) -> np.ndarray:
         c = self.cfg
-        e_m = self._e + self._rng.normal(0.0, c.e_noise)
-        th_m = self._theta + self._rng.normal(0.0, self._theta_noise)
+        e_m = self._e + self._eb + self._rng.normal(0.0, c.e_noise)
+        th_m = self._theta + self._tb + self._rng.normal(0.0, self._theta_noise)
+        if c.obs_ema:
+            if self._ema is None:
+                self._ema = [e_m, th_m]
+            else:
+                a = c.obs_ema
+                self._ema = [a * e_m + (1 - a) * self._ema[0],
+                             a * th_m + (1 - a) * self._ema[1]]
+            e_m, th_m = self._ema
         # 5th input = leaky drift integrator (RL analogue of the MPC observer).
         return np.array([e_m, th_m, conf, self._prev_a, self._eint], dtype=np.float64)
 
@@ -155,7 +212,15 @@ class RowFollowEnv:
             self._frozen_obs = obs_for_speed
         theta_meas = obs_for_speed[1]
 
-        v = speed_from(conf, theta_meas)
+        v = speed_from(conf, theta_meas, c.max_linear)
+
+        # Slow measurement-bias wander (field profile; no-op by default).
+        if c.e_bias_std:
+            self._eb = c.e_bias_rho * self._eb + c.e_bias_std * np.sqrt(
+                1 - c.e_bias_rho ** 2) * self._rng.normal()
+        if c.th_bias_std:
+            self._tb = c.th_bias_rho * self._tb + c.th_bias_std * np.sqrt(
+                1 - c.th_bias_rho ** 2) * self._rng.normal()
 
         # Dynamics (true state).
         w_actual = w_cmd * self._slip + self._rng.normal(0.0, 0.02)
