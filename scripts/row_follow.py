@@ -439,6 +439,7 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
         forward_dist=args.forward_dist,
         forward_half_width=args.forward_half_width,
         tire_track=args.tire_track,
+        canopy_clearance=args.canopy_clearance,
     )
     if args.controller == "rl":
         # Optional learned steering (opt-in). Falls back to pure-pursuit when the
@@ -834,6 +835,12 @@ def main() -> None:
                              "law (speed ∝ confidence). Onion preset 0.65: the bed-relief (~0.9) "
                              "and crop-fit (~0.7) modes then drive at the same speed instead of "
                              "surging ±25%% each time perception switches (field 2026-10-16).")
+    parser.add_argument("--canopy-clearance", type=float, default=None, metavar="M",
+                        help="Canopy-adaptive obstacle height (raised-bed mode): an obstacle must "
+                             "rise M above the measured crop canopy top (capped at 0.95 m forward / "
+                             "1.0 m tires), so tall mature onions (tops 0.55-0.70 m) don't trigger "
+                             "false stops under the fixed 0.75 m threshold. 0 = fixed thresholds. "
+                             "Onion preset 0.15; default 0 otherwise.")
     parser.add_argument("--accel-limit", type=float, default=0.15, metavar="A",
                         help="Max forward ACCELERATION (m/s^2) while following a row "
                              "(default 0.15; 0 = off). Smooths speed-ups.")
@@ -1244,6 +1251,8 @@ def main() -> None:
             args.rl_slew = 0.12
         if args.speed_conf_full is None:
             args.speed_conf_full = 0.65
+        if args.canopy_clearance is None:
+            args.canopy_clearance = 0.15
         args.crop_min = 0.05
         args.crop_max = 0.60
         args.obstacle_height = 0.75
@@ -1253,6 +1262,8 @@ def main() -> None:
               f"headland radius={args.headland_radius:.2f}m exit={args.headland_exit:.1f}m")
     if args.speed_conf_full is None:
         args.speed_conf_full = 1.0
+    if args.canopy_clearance is None:
+        args.canopy_clearance = 0.0
     # Serpentine side + row count from the operator's field layout.
     from navigation.coverage_plan import plan_serpentine
     plan = plan_serpentine(args.beds_left, args.beds_right, rows=args.rows,

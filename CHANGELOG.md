@@ -4,7 +4,39 @@ All notable changes to this project are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/);
 versions are git tags on `main`.
 
-## [Unreleased] — headland U-turn reliability (not yet field-validated)
+## [Unreleased] — onion bed navigation at every growth stage (2026-10-22)
+
+Validated in a new ray-cast VLP-16 Hi-Res simulator (`sim/onion_field.py`) —
+field confirmation pending.  Bed (`--preset onion`) mode only; soybean unchanged.
+
+### Added
+- `sim/onion_field.py`: ray-cast scans of raised beds + porous onion canopy for
+  six stages (bare, seedling, young, mid, mature, lodged), weeds, stand gaps,
+  missing rows, low beds, tilt error, bed end into grass.
+- `scripts/eval_onion_growth.py` (`--bed-end`, `--robust`): the real detector
+  through every stage and field reality; `tests/test_onion_growth_stages.py`.
+- Canopy-adaptive obstacle height (`--canopy-clearance`, onion 0.15).
+- View-quality confidence (canopy at LiDAR height → slow / stop), azimuth
+  sector-dropout guard, navigator `begin_turn()` / `end_turn()` hooks,
+  telemetry `canopy_top_m`, `soil_visible`, `view_q`, `view_n`, `sector_gap`,
+  `comb_ratio`, `crop_locked`, `fwd_obs_h`.
+
+### Changed / fixed
+- Bed profile from ALL returns (50/75/90th-percentile column profiles, median
+  centre; return-less column = shadowed furrow) — worked only while bed-top
+  soil was visible; from mid-season the canopy hides it.
+- Bed axis from a two-pass, three-cue, terrain-relative sharpness search,
+  low-passed and rate-limited against its own state (was: noisy soil-relief
+  search, near/far heading ±8°, an 8° cap, and a re-entry deadlock).
+- Ground model = furrow line + bed relief: soil = lowest substantial surface,
+  ramp-proof, held under the canopy (was: dominant surface → jumped onto the
+  canopy, emptying the crop band / clamping at 0.35 m).
+- Crop comb accepted for leafy rows (on/between-row concentration), lock
+  hysteresis, plausibility gate when there is no bed profile (was: an
+  unchecked fit steered −17…−24° / 34 cm off at confidence 0.85).
+- Bed presence: absolute relief floor (a bare stand gap in a full canopy read
+  as "bed ended"), 8-scan return persistence; bed END from baseline-relative
+  far/quarter relief, cut + held axis + latched end (row end 2–4 m early).
 
 Work toward the row-to-row turn milestone (built on the v0.1.0 baseline).
 

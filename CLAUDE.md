@@ -100,6 +100,10 @@ pip install numpy pytest
 python3 -m pytest tests/ -q
 ```
 
+Onion growth stages (`test_onion_growth_stages.py`, ray-cast sim): every stage
+from bare bed to lodged tops, bed end into grass, U-turn re-entry, weeds / low
+beds / tilt error / sector dropouts, tall-canopy view collapse, canopy-adaptive
+obstacle height (~2–3 min — the slowest file).
 Covers: dual-row midpoint geometry, single-side fallback and row-spacing prior
 (`test_row_perception.py`), EKF motion-model signs and measurement gates
 (`test_ekf_estimator.py`), pure-pursuit sign conventions plus a closed-loop
@@ -211,12 +215,95 @@ falls in the ±5 cm pairing dead-band).  Bed mode instead:
   `--turn-dir` wins) and `--rows` = 1 + beds on that side (capped — never turns
   off the field edge), auto-enabling `--headland`.  Tests
   `tests/test_coverage_plan.py`.
+- **Every growth stage (2026-10-22 rework, `sim/onion_field.py`,
+  `scripts/eval_onion_growth.py`, `tests/test_onion_growth_stages.py`).**
+  A ray-cast VLP-16 Hi-Res simulator (real beam geometry, 12.3° tilt, 0.2°
+  azimuth, porous leaf-element canopy, raised-bed heightfield, grass headland,
+  weeds, stand gaps) showed what the LiDAR sees per stage: **transplants**
+  invisible; **young** rows separate; from **mid** season the canopy hides
+  the bed-top soil (4 % of returns, 0 % mature) and SHADOWS the wheel furrows
+  (columns with 0–6 returns); **mature** rows interleave into one canopy whose
+  furrow dip is only ~10 cm; **lodged** tops are a broad low mound.  The old
+  stack failed from mid-season on (bed floor clamped onto the canopy, soil-only
+  relief blind, crop fit vetoed by a broken relief fit: 15–20 cm biases, ±8°
+  heading, a −17…−24° / 34 cm fit at confidence 0.85 under a tall canopy).
+  What changed (all bed mode; soybean untouched):
+  - **Bed profile = top surface of ALL returns** (`bed_relief_centre(stat=…,
+    fill_gaps=True)`): median of the bed centres on the 50/75/90th-percentile
+    column profiles; a return-less column counts as LOW (a shadowed furrow is
+    a gap, not missing data).  The two wheel furrows are the one feature
+    present at every stage.  Independent of the bed floor.
+  - **Bed axis from a memoryless two-pass sharpness search**
+    (`_bed_box_heading`/`_box_search`): three cues (terrain-relative upper-
+    surface count, absolute crop-band count, height-profile variance) — the
+    clearest peak wins; ±20° at 2° then ±2.5° at 0.25° on a swath re-selected
+    in the first estimate's frame (a robot-frame swath biased 8–10° angles by
+    1–2°).  ≤ 0.5° rms bare→mature, ~1° lodged.  Low-passed (`bed_axis_alpha`
+    0.3) and rate-limited against its OWN state (1°/scan; tied to the output
+    heading it deadlocked at re-entry).  The shape no longer fits a near/far
+    heading (the far furrows are hidden under canopy → ±8° → ±0.3 m).
+    Heading cap in shape mode 8° → 15° (a U-turn hands over up to 11.5°).
+  - **Ground model = furrow line + bed relief** (`_furrow_fit`, `_soil_mode`):
+    the bed-top soil is the LOWEST substantial surface (≥ 15 % of the largest
+    height peak), measured relative to the furrow line in the same range bin
+    — ramp-proof (1.5–2.5° residual tilt; the dead-banded detrend is bypassed
+    in bed mode) — on a swath centred on the bed profile.  The furrow line is
+    tied to the calibrated ground at the wheels (|intercept| ≤ 4 cm), must be
+    smooth when first fitted, and is frozen while the canopy hides the soil;
+    the bed relief is low-passed, a > 5 cm rise needs 15 scans, and the last
+    measured value is HELD under the canopy (`last_soil_visible`).
+  - **Crop comb**: accepted on ≥ 60 % of points on the row lines OR ≥ 45 % with
+    an on-row/between-row concentration ≥ 1.5 (leafy rows: 52–59 %, ratio
+    ≥ 1.5; grass at a bed end: 31–38 %, ≈ 1); lock hysteresis 0.8 / 0.5 (one
+    marginal scan no longer drops to the profile); with NO bed profile a crop
+    fit must still pass the comb test or confidence decays.
+  - **Bed presence**: present if relief ≥ min(0.6 × baseline, 4.5 cm) (a full
+    canopy's baseline made a bare stand gap read as "bed ended"); once ended,
+    8 consecutive present scans to resume.  **Bed end**: the far half / second
+    quarter dropping below ITS OWN relief baseline (not the near half's);
+    the profile and axis search are then cut to the bed that remains, the axis
+    is held once the end is inside the nearest quarter, and a sustained
+    nearest-quarter cut latches "bed ending" (confidence ×0.3 → row end
+    ~2–3 m before the end, as the preset's 3.5 m exit expects).  Navigator
+    hooks `begin_turn()` / `end_turn()` release the latch for the U-turn.
+  - **View quality** (`last_view_quality`, `VIEW=` in status): smoothed count
+    of returns in the 3 m × 5.5 m swath; when tops near the LiDAR height
+    (≳ 0.70 m above the furrow) the view collapses and confidence falls → the
+    robot slows, then stops.  **Sector dropouts**: a hole in the azimuth
+    coverage → no profile this scan (coast), never "furrows".  Profile jumps
+    > 10 cm from a confident track get half the trust.
+  - **Canopy-adaptive obstacle height** (`SafetyMonitor(canopy_clearance=…)`,
+    `--canopy-clearance`, onion preset 0.15): obstacle ≥ canopy top + 0.15 m
+    (top measured beyond the 2.5 m safety zone so an obstacle can't raise its
+    own threshold), capped 0.95 m forward / 1.0 m tires — tall tops no longer
+    false-stop; a person still stops.  Off by default (soybean unchanged).
+  **Sim results** (`eval_onion_growth.py`, 5 start cases per stage, bias /
+  std): bare & seedling ≤ 1.0 / ≤ 0.7 cm; young ≤ 0.4 / ≤ 0.2 cm (crop comb);
+  mid ≤ 1.2 / ≤ 1.1 cm; mature ≤ 6 / ≤ 1.7 cm; lodged ≤ 5 / ≤ 1.9 cm; heading
+  ≤ 1.3°; confidence 1.0, no false row ends; bed end found 2.1–3.8 m early
+  at every stage (what the 3.5 m headland exit expects) and grass never
+  followed (max confidence after 0.32).  Mature/lodged bias is an UNDER-READ ∝ offset (~⅓) —
+  zero when centred, so the controller still converges to the centre.  Robust
+  suite (`--robust`): weeds, 30 % stand gaps, 4 cm beds, 1.5° tilt error,
+  azimuth-sector dropouts, ±3° weaving, re-entry after a U-turn at up to
+  0.35 m / 12° — all ≤ ~5 cm bias.  **Known limits:** a whole outer row
+  missing under a merged (mid+) canopy reads ~13 cm toward the remaining rows
+  (inherent); canopy tops ≳ 0.70 m above the furrow (≈ 7 cm under the 0.80 m
+  LiDAR) collapse the view → the robot stops (raise the LiDAR for taller
+  crops); all of this is simulation — field-confirm with `--record`
+  (telemetry now logs `canopy_top_m`, `soil_visible`, `view_q`, `view_n`,
+  `sector_gap`, `comb_ratio`, `crop_locked`, `fwd_obs_h`).  Detector cost
+  11–17 ms/scan (x86), similar to the previous release.
 Camera row tracking is disabled in bed mode (the camera tracker is 2-row only);
 telemetry gains `bed_floor_m`, `soil_centre`, `roi_rot_deg`; status shows
 `bed=0.15m`.  Sim (`tests/test_onion_bed.py`): bias ≤ 1 cm from 0 to ±35 cm start
 offset, sparse/young rows, skips, flat or 0.25 m beds, yaw up to ~15°.
 
 ```bash
+# Growth-stage simulator check (any machine, no robot): every stage + field realities
+python3 scripts/eval_onion_growth.py --bed-end          # bare → seedling → young → mid → mature → lodged
+python3 scripts/eval_onion_growth.py --robust           # weeds, gaps, low beds, tilt error, dropouts, re-entry
+
 # Perception-only — robot stays still; check off≈0, bed≈0.10–0.20m, sp≈0.28:
 python3 scripts/row_follow.py --preset onion --record
 
@@ -1104,6 +1191,7 @@ to the noiseless convergence.  Regression-locked in `tests/test_row_controller.p
 | `--post-turn-max-dist M` | **5.0** | Cumulative distance after a U-turn (APPROACH creep + short un-settled FOLLOW segments) before a stable down-row FOLLOW is required; hard guard against driving off the field |
 | `--slam` | off | Enable SLAM odometry integration (currently no-op) |
 | `--speed M` | 0.30 | Max forward speed m/s |
+| `--canopy-clearance M` | **0** (onion **0.15**) | Canopy-adaptive obstacle height (bed mode): an obstacle must rise M above the measured crop canopy top (measured beyond the safety zone), capped 0.95 m forward / 1.0 m tires — tall mature onions don't false-stop; a person still stops. 0 = fixed thresholds |
 | `--speed-conf-full C` | **1.0** (onion **0.65**) | Confidence at/above which speed is not reduced: `v = max × min(1, conf/C) × heading factor`. 1.0 = original speed ∝ confidence |
 | `--accel-limit A` / `--decel-limit A` | **0.15 / 0.5** | Forward-speed rate limits (m/s²) in FOLLOW/APPROACH; 0 = off. Zero-speed stops and obstacle stops pass through immediately |
 | `--lidar-tilt DEG` | **15.0** | Nose-down PITCH correction (degrees), applied AFTER `--lidar-yaw` (2026-07 forward-facing mount). Verify via `diag_birdseye.py --tilt-sweep 12:18:0.25` (ground slope → 0 at ~15°) and `diag_pitch_rings.py` (raw geometry: 14.8°). Old 21.5° was an artifact of the driver's wrong angle table — this is a VLP-16 Puck **Hi-Res** (±10°), fixed in `lidar_driver.py` |

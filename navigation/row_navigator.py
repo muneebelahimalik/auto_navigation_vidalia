@@ -537,7 +537,8 @@ class RowNavigator:
             # detector's per-scan ground-slope estimate; 0 on flat ground).
             safety = self.safety.check(
                 safety_pts,
-                ground_slope=getattr(self.detector, "last_ground_slope", 0.0) or 0.0)
+                ground_slope=getattr(self.detector, "last_ground_slope", 0.0) or 0.0,
+                canopy_top=getattr(self.detector, "last_canopy_top", None))
 
             # --- Legacy strip-based camera obstacle detection ---
             # Only runs when old DepthObstacleDetector objects are provided AND
@@ -1061,6 +1062,12 @@ class RowNavigator:
                 # noisy +31° measurement, sending the robot into a spiral).
                 if prev_state != _S.OBSTACLE_WAIT:
                     self.ekf.reset()
+            if state == _S.HEADLAND and prev_state != _S.HEADLAND:
+                if hasattr(self.detector, "begin_turn"):
+                    self.detector.begin_turn()
+            elif prev_state == _S.HEADLAND and state != _S.HEADLAND:
+                if hasattr(self.detector, "end_turn"):
+                    self.detector.end_turn()
             if state == _S.APPROACH and prev_state == _S.HEADLAND:
                 # New row: the smoothed estimates accumulated while the ROI
                 # swept across the headland are garbage; without a reset their
@@ -1268,6 +1275,16 @@ class RowNavigator:
             rec["soil_centre"] = None if sc is None else round(float(sc), 3)
             rec["roi_rot_deg"] = round(math.degrees(getattr(self.detector, "last_roi_rot", 0.0) or 0.0), 1)
             rec["bed_contrast_m"] = round(float(getattr(self.detector, "last_bed_contrast", 0.0) or 0.0), 3)
+            # Growth-stage diagnostics (2026-10 all-stage rework).
+            ct = getattr(self.detector, "last_canopy_top", None)
+            rec["canopy_top_m"] = None if ct is None else round(float(ct), 3)
+            rec["soil_visible"] = bool(getattr(self.detector, "last_soil_visible", False))
+            rec["view_q"] = round(float(getattr(self.detector, "last_view_quality", 1.0)), 2)
+            rec["view_n"] = int(getattr(self.detector, "_view_n", 0) or 0)
+            rec["sector_gap"] = bool(getattr(self.detector, "last_sector_gap", False))
+            rec["comb_ratio"] = round(float(getattr(self.detector, "last_comb_ratio", 0.0)), 2)
+            rec["crop_locked"] = bool(getattr(self.detector, "_crop_locked", False))
+            rec["fwd_obs_h"] = round(float(getattr(self.safety, "last_forward_height", 0.0)), 2)
         if self.state in _HEADLAND_STATES:
             rec["approach_dist"] = round(float(self._approach_dist), 3)
             rec["post_turn"] = bool(self._post_turn)
@@ -1330,6 +1347,12 @@ class RowNavigator:
             rel = getattr(self.detector, "last_bed_contrast", 0.0)
             if rel:
                 grade_str += f" rel={rel * 100:.0f}cm"
+            ct = getattr(self.detector, "last_canopy_top", None)
+            if ct is not None and ct > 0.15:
+                grade_str += f" canopy={ct:.2f}m"
+            vq = getattr(self.detector, "last_view_quality", 1.0)
+            if vq < 1.0:
+                grade_str += f" VIEW={vq:.0%}"
             if getattr(self.detector, "last_mode", "") == "shape":
                 grade_str += "[BED-SHAPE]"
             elif getattr(self.detector, "last_mode", "") == "no-bed":

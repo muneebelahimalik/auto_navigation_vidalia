@@ -73,6 +73,9 @@ class SafetyMonitor:
         near: float = 0.20,
         forward_min_points: int = 4,
         tire_min_points: int = 4,
+        canopy_clearance: float = 0.0,
+        obstacle_height_max: float = 0.95,
+        tire_height_max: float = 1.00,
     ) -> None:
         self.forward_dist = forward_dist
         self.forward_half_width = forward_half_width
@@ -84,9 +87,24 @@ class SafetyMonitor:
         self.near = near
         self.forward_min_points = forward_min_points
         self.tire_min_points = tire_min_points
+        # Canopy-adaptive heights (raised-bed onion mode).  A mature onion
+        # canopy tops out at 0.55–0.70 m above the furrow — right under the
+        # fixed 0.75 m forward threshold, so leaf flutter and range noise give
+        # false stops.  With ``canopy_clearance`` > 0 and the detector's canopy
+        # top (measured beyond this zone), an obstacle must rise
+        # ``canopy_clearance`` above the crop, capped at obstacle_height_max /
+        # tire_height_max so a standing person or post always stops the robot.
+        # Something shorter than the canopy is indistinguishable from crop by
+        # height anyway.  0 = off (fixed thresholds, soybean behaviour).
+        self.canopy_clearance = canopy_clearance
+        self.obstacle_height_max = obstacle_height_max
+        self.tire_height_max = tire_height_max
+        self.last_forward_height = obstacle_height
+        self.last_tire_height = tire_obstacle_height
 
     # ------------------------------------------------------------------
-    def check(self, pts: np.ndarray, ground_slope: float = 0.0) -> SafetyStatus:
+    def check(self, pts: np.ndarray, ground_slope: float = 0.0,
+              canopy_top: "float | None" = None) -> SafetyStatus:
         """Classify obstacles in the three zones from an Nx3 point array.
 
         ``ground_slope`` (dz/dy, radians→slope) removes the forward ground RAMP
@@ -97,7 +115,17 @@ class SafetyMonitor:
         (field-observed).  Subtracting the linear ground ramp (pivot at the
         sensor, y=0) cancels that, while a REAL obstacle — which rises above the
         local ground — still exceeds the height threshold and stops the robot.
-        0.0 (flat / not supplied) → byte-identical to the original check."""
+        0.0 (flat / not supplied) → byte-identical to the original check.
+
+        ``canopy_top`` (bed mode, see ``canopy_clearance``) raises the height
+        thresholds to clear a tall crop canopy."""
+        fwd_h, tire_h = self.obstacle_height, self.tire_obstacle_height
+        if self.canopy_clearance > 0.0 and canopy_top is not None:
+            fwd_h = min(max(fwd_h, canopy_top + self.canopy_clearance),
+                        max(self.obstacle_height, self.obstacle_height_max))
+            tire_h = min(max(tire_h, canopy_top + self.canopy_clearance),
+                         max(self.tire_obstacle_height, self.tire_height_max))
+        self.last_forward_height, self.last_tire_height = fwd_h, tire_h
         if pts is None or len(pts) == 0:
             return SafetyStatus()
 
@@ -110,14 +138,14 @@ class SafetyMonitor:
         fwd = (
             ahead & (y <= self.forward_dist)
             & (np.abs(x) <= self.forward_half_width)
-            & (h >= self.obstacle_height)
+            & (h >= fwd_h)
         )
         fwd_n = int(fwd.sum())
         nearest = math.inf
         if fwd_n:
             nearest = float(np.min(np.hypot(x[fwd], y[fwd])))
 
-        tire = ahead & (y <= self.tire_dist) & (h >= self.tire_obstacle_height)
+        tire = ahead & (y <= self.tire_dist) & (h >= tire_h)
         lo, hi = self.tire_track - self.tire_half_width, self.tire_track + self.tire_half_width
         left_n = int((tire & (x <= -lo) & (x >= -hi)).sum())
         right_n = int((tire & (x >= lo) & (x <= hi)).sum())
