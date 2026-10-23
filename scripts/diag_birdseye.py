@@ -41,7 +41,7 @@ from lidar.obstacle_filter import LIDAR_MOUNT_HEIGHT, tilt_correct_pts, yaw_corr
 
 
 def locate_forward_objects(pts: np.ndarray, applied_yaw_deg: float,
-                           max_range: float = 4.0) -> None:
+                           max_range: float = 4.0, box_height: float = 0.0) -> None:
     """Report the centroid + azimuth of elevated forward objects (e.g. buckets
     placed for a yaw check).  An object placed straight ahead should sit at
     azimuth ~0°; its measured azimuth IS the residual yaw error, and the
@@ -80,8 +80,24 @@ def locate_forward_objects(pts: np.ndarray, applied_yaw_deg: float,
             continue
         cx, cy = float(np.median(c[:, 0])), float(np.median(c[:, 1]))
         caz = math.degrees(math.atan2(cx, cy))
+        # Box top above the floor AT THE BOX's range (same y band, beside it):
+        # a tilt error shifts both equally there, so this checks the vertical
+        # scale of the scene independently of tilt and mount height.
+        near = base[(np.abs(base[:, 1] - cy) < 0.4)
+                    & (np.abs(base[:, 0] - cx) > 0.6)]
+        local = (float(np.median(near[:, 2] + LIDAR_MOUNT_HEIGHT)) if len(near) >= 20
+                 else floor)
+        top = float(np.percentile(c[:, 2] + LIDAR_MOUNT_HEIGHT, 95)) - local
         print(f"    n={len(c):4d}  x={cx:+.2f} y={cy:+.2f}  "
-              f"range={math.hypot(cx, cy):.2f} m  azimuth={caz:+.1f}°")
+              f"range={math.hypot(cx, cy):.2f} m  azimuth={caz:+.1f}°  "
+              f"top {top:.2f} m above local floor")
+        if box_height > 0 and abs(cx) < 0.9 and abs(caz) < 20.0:
+            err = top - box_height
+            print(f"    >>> box top reads {top:.2f} m vs tape {box_height:.2f} m "
+                  f"({100 * err:+.0f} cm) — "
+                  + ("vertical geometry OK." if abs(err) < 0.05 else
+                     "MISMATCH: check the box is fully in view / the sensor model "
+                     "(diag_sensor_model.py)."))
         if abs(cx) < 0.9 and abs(caz) < 20.0:   # the straight-ahead object
             centre_az = caz
     if centre_az is not None:
@@ -281,6 +297,10 @@ async def main() -> None:
     ap.add_argument("--locate-range", type=float, default=4.0, metavar="M",
                     help="Object-locator search range (m) for the yaw check (default 4). "
                          "Use ~6 with a target placed 5 m ahead.")
+    ap.add_argument("--box-height", type=float, default=0.0, metavar="M",
+                    help="Tape-measured height of the straight-ahead calibration box (m). "
+                         "Its measured top above the local floor checks the vertical scale "
+                         "of the scene (default: off).")
     ap.add_argument("--range", type=float, default=6.0,
                     help="Plot radius (m)")
     ap.add_argument("--out", default=str(Path(__file__).resolve().parent.parent / "birdseye.png"))
@@ -320,6 +340,11 @@ async def main() -> None:
             print(f"\n  >>> Flattest ground at --lidar-tilt {best[0]:.1f} "
                   f"(slope {best[1]:+.4f}, ground@3.75m {best[2]:+.3f} m).")
             print("      SLOPE≈0 is the pitch (mount-height-independent) — trust it.")
+            if not math.isnan(best[2]):
+                print(f"      Implied mount height on a FLAT floor: "
+                      f"{LIDAR_MOUNT_HEIGHT - best[2]:.3f} m  (= {LIDAR_MOUNT_HEIGHT:.3f} assumed "
+                      f"− ground@3.75m {best[2]:+.3f}).  Use it as --lidar-height / "
+                      f"LIDAR_MOUNT_HEIGHT if it agrees with diag_pitch_rings.py.")
             print("      Ground level is a SECONDARY check: in a bedded field the "
                   "15th-pct tracks the FURROW bottoms, so a negative level "
                   "(~ -0.3 m = furrow depth) is EXPECTED, not over-rotation. "
@@ -369,7 +394,7 @@ async def main() -> None:
                 mark = " <-crop" if 0.03 <= c <= 0.30 else ""
                 print(f"    {c:+.2f} m | {hist[i]:5d} {bar}{mark}")
 
-    locate_forward_objects(pts, args.lidar_yaw, args.locate_range)
+    locate_forward_objects(pts, args.lidar_yaw, args.locate_range, args.box_height)
 
     try:
         save_png(pts, args.out, args.range, args.lidar_yaw, args.lidar_tilt)

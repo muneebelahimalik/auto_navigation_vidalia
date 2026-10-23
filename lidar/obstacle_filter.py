@@ -18,7 +18,7 @@ A point at sensor-frame z has ground-relative height:
 
 Using ground-relative height instead of a fixed sensor-frame z threshold
 correctly handles objects below the LiDAR centreline (e.g. a 16-inch/0.41 m
-box whose top is at sensor-frame z ≈ −0.39 m with the 0.80 m mount).
+box whose top is at sensor-frame z ≈ −0.58 m with the 0.99 m mount).
 
 Sector convention (azimuth 0°–360°, matches lidar_driver.py VLP-16 output):
     0°   → Y+  forward
@@ -39,8 +39,32 @@ from lidar.lidar_driver import LidarDriver, VelodynePoint
 # ---------------------------------------------------------------------------
 # Mount geometry — must match URDF and tf_static_base_to_velodyne.launch.py
 # ---------------------------------------------------------------------------
-LIDAR_MOUNT_HEIGHT = 0.80    # metres — measured: ground to VLP-16 drum centre
-                             # (2026-07 forward-facing re-mount; was 0.75)
+LIDAR_MOUNT_HEIGHT = 0.99    # metres — measured: ground to VLP-16 drum centre
+                             # (2026-10 raised mount, tape ~0.98–1.00 m; was 0.80
+                             # on the 2026-07 forward-facing mount, 0.75 before).
+                             # Re-derive with diag_pitch_rings.py after any change;
+                             # override per run with row_follow.py --lidar-height.
+
+
+def set_mount_height(height_m: float) -> float:
+    """Override LIDAR_MOUNT_HEIGHT for this process (e.g. ``--lidar-height``).
+
+    Every module that did ``from lidar.obstacle_filter import LIDAR_MOUNT_HEIGHT``
+    holds its own binding, so rebind it in each already-imported module that still
+    carries the old value.  Call before any detector / safety monitor runs.
+    Returns the previous height.
+    """
+    import sys
+    global LIDAR_MOUNT_HEIGHT
+    old = LIDAR_MOUNT_HEIGHT
+    for mod in list(sys.modules.values()):
+        if getattr(mod, "LIDAR_MOUNT_HEIGHT", None) == old and mod is not None:
+            try:
+                setattr(mod, "LIDAR_MOUNT_HEIGHT", float(height_m))
+            except (AttributeError, TypeError):
+                pass
+    LIDAR_MOUNT_HEIGHT = float(height_m)
+    return old
 
 
 def tilt_correct_pts(pts: np.ndarray, tilt_rad: float) -> np.ndarray:
@@ -96,8 +120,8 @@ def yaw_correct_pts(pts: np.ndarray, yaw_rad: float) -> np.ndarray:
 # ---------------------------------------------------------------------------
 # Minimum height above ground to classify a return as an obstacle.
 # In sensor frame this equals z > MIN_OBSTACLE_GROUND_HEIGHT − LIDAR_MOUNT_HEIGHT
-# = 0.15 − 0.80 = −0.65 m, which captures a 16-in (0.41 m) box whose top
-# is at sensor-frame z ≈ −0.39 m.
+# = 0.15 − 0.99 = −0.84 m, which captures a 16-in (0.41 m) box whose top
+# is at sensor-frame z ≈ −0.58 m.
 MIN_OBSTACLE_GROUND_HEIGHT = 0.15   # metres above ground
 
 # Safety corridor geometry

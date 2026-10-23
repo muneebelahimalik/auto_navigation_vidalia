@@ -654,6 +654,7 @@ class RowDetector:
         # measurement is low-passed (the true axis changes slowly: robot yaw
         # rate ≲ 0.5°/scan).
         self.bed_axis_alpha = 0.3
+        self.bed_axis_band_min = 0.30          # crop-band count cue needs this share of the swath
         self.bed_axis_rate_deg = 1.0           # max axis change per scan (robot yaw ≲ 0.5°/scan)
         self._bed_axis = None
         self._shape_far_ok = None              # far half still shows the bed (last scan)
@@ -663,6 +664,7 @@ class RowDetector:
         self._q2_tick = 0
         self._qcut_run = 0
         self.bed_end_cut_scans = 6
+        self.bed_q2_abs = 0.05                 # m; second-quarter relief that is always "bed"
         self._bed_ending = False               # diagnostic + latch: bed seen ending ≲ 3 m ahead
         self._turning = False                  # navigator: headland U-turn in progress
         self._far_back = 0
@@ -716,7 +718,12 @@ class RowDetector:
         # lines), at least this fraction AND a clear on-row vs between-row
         # concentration.  Grass at a bed end: 31–38 %, ratio ≈ 1.
         self.crop_row_frac_min = 0.45
-        self.crop_comb_ratio = 1.5
+        self.crop_comb_ratio = 1.4
+        # Once LOCKED a lower concentration keeps the comb: from the 0.99 m mount
+        # the steeper view sees more of leafy rows' fanned leaves between the
+        # rows (ratio 1.35–1.55 vs 1.55–1.95 at 0.80 m), which flickered the
+        # lock off.  Grass never earns the lock at 1.5 (bed end: median ≈ 1.0).
+        self.crop_comb_ratio_hold = 1.3
         self.bed_roi_rot_max = math.radians(20.0)   # cap on the heading-aligned ROI rotation
         self.last_roi_rot = 0.0                # diagnostic: ROI box rotation last scan (rad)
         self.bed_dir_x_half = 2.0              # m; swath for the row-direction search
@@ -1101,7 +1108,11 @@ class RowDetector:
                 fr = None
                 # (including the first fit: starting in a closed canopy the line
                 # stays on the calibrated flat ground).
-                if int(wide.sum()) >= 200 and (self._furrow is None or self.last_soil_visible):
+                # Once soil has been measured and is now hidden, never START a
+                # line here either (it would be fitted to canopy-wall bottoms).
+                if int(wide.sum()) >= 200 and (
+                        self.last_soil_visible
+                        or (self._furrow is None and self._floor_lvl is None)):
                     fr = self._furrow_fit(y[wide], hb[wide] - shift)
                 if fr is not None:
                     f_lvl = fr[0] + fr[1] * ymid_
@@ -1394,7 +1405,9 @@ class RowDetector:
             comb_ok = confidence >= 0.5 and (
                 row_frac >= self.crop_row_frac
                 or (row_frac >= self.crop_row_frac_min
-                    and self.last_comb_ratio >= self.crop_comb_ratio))
+                    and self.last_comb_ratio >= (self.crop_comb_ratio_hold
+                                                 if self._crop_locked
+                                                 else self.crop_comb_ratio)))
         if self.bed_rows >= 2 and self._shape is not None:
             agrees = (comb_ok and abs(lateral - self._shape[0]) <= 0.12
                       and abs(heading - (self._shape[1] + roi_rot)) <= math.radians(4.0))
@@ -1769,7 +1782,15 @@ class RowDetector:
             q2 = near & ~q1
             f2 = bed_relief_centre(xs[q2], hd[q2], **kw)
             f2c = f2[1] if (f2 is not None and f2[1] >= mc) else 0.0
-            q2_ok = f2c > 0.0 and (self._q2_base is None or f2c >= self.bed_far_ratio * self._q2_base)
+            # …or above an absolute floor, as for bed presence: mid-bed this
+            # quarter's relief is ≥ 8 cm at every stage, at a bed end 0–4 cm
+            # (sim).  A baseline seeded by one wild profile right after a
+            # U-turn (51 cm, mature canopy, 0.99 m mount) is only refreshed on
+            # the rare scans the far half is visible, and alone it latched a
+            # false "bed ending" for the rest of the bed.
+            q2_ok = f2c > 0.0 and (self._q2_base is None
+                                   or f2c >= min(self.bed_far_ratio * self._q2_base,
+                                                 self.bed_q2_abs))
             if q2_ok:
                 self._bed_y_cut = ymid
                 r = self._bed_centre_robust(xs[near], hd[near])
@@ -1890,7 +1911,21 @@ class RowDetector:
             fc.append(v)
         if len(yc) < 3:
             return None
-        c1, c0 = (float(v) for v in np.polyfit(np.asarray(yc), np.asarray(fc), 1))
+        # Trim bins off the line: from the 0.99 m mount some 0.5 m bins catch
+        # too few furrow returns (ring spacing / shadowing) and their "lowest
+        # surface" is the bed top, 9–15 cm up — it failed the smoothness test
+        # below on every scan, so the line was first fitted later, under a
+        # canopy, on canopy-wall bottoms (bed floor read +5 cm).  At most a
+        # third of the bins may be dropped.
+        yc, fc = np.asarray(yc), np.asarray(fc)
+        n0 = len(yc)
+        while True:
+            c1, c0 = (float(v) for v in np.polyfit(yc, fc, 1))
+            res = np.abs(fc - (c0 + c1 * yc))
+            k = int(np.argmax(res))
+            if res[k] <= 0.03 or len(yc) - 1 < max(3, n0 - n0 // 3):
+                break
+            yc, fc = np.delete(yc, k), np.delete(fc, k)
         # The wheels stand IN the furrow, so at the robot (y = 0) the furrow is
         # the calibrated ground: |intercept| ≤ 4 cm whatever the ramp.
         if abs(c1) > math.tan(math.radians(3.5)) or abs(c0) > 0.04:
@@ -1898,7 +1933,7 @@ class RowDetector:
         # Furrow ground is a smooth line; canopy-wall bottoms (closed canopy,
         # furrow shadowed) are ragged — a fresh fit must lie on its bins.
         if self._furrow is None:
-            res = np.asarray(fc) - (c0 + c1 * np.asarray(yc))
+            res = fc - (c0 + c1 * yc)
             if float(np.sqrt(np.mean(res * res))) > 0.02:
                 return None
         return c0, c1
@@ -2014,13 +2049,14 @@ class RowDetector:
 
         Projects the swath's points onto the cross-row axis for each candidate
         heading and returns the heading at which the cross-row structure is
-        sharpest.  Three cues, whichever has the clearest peak this scan
-        (growth-stage ray-cast sim):
+        sharpest.  Three cues — the clearer COUNT cue, the height-variance cue
+        only when no count cue has a clear peak (growth-stage ray-cast sim):
 
           * COUNT of the upper surface (height above each range bin's median ≥
             −2 cm: bed tops / rows / canopy, not furrows) — terrain-relative, so
             a 4 cm bed, a 1.5° tilt residual or weeds don't break it;
-          * COUNT in the absolute crop band — a mature canopy's walls;
+          * COUNT in the absolute crop band — a mature canopy's walls (only
+            when the band holds ≥ bed_axis_band_min of the swath);
           * HEIGHT-profile variance — a lodged canopy: a broad, evenly-hit
             mound with no count stripes, but a clear mound-vs-furrow profile.
 
@@ -2086,7 +2122,8 @@ class RowDetector:
             ok = cnt >= 3
             if int(ok.sum()) >= 8:
                 hvar[i] = float((hs_b[ok] / cnt[ok]).var())
-        best = None
+        self._cue_ratios = [0.0, 0.0, 0.0]
+        cands = []                            # (ratio, angle, cue) of every clear cue
         for ci, score in enumerate((sharp, sharp_b, hvar)):
             if cue is not None and ci != cue:
                 continue
@@ -2094,17 +2131,37 @@ class RowDetector:
                 continue
             k = int(np.argmax(score))
             ratio = score[k] / max(float(np.median(score)), 1e-12)
-            if (ratio >= 1.15 or cue is not None) and (best is None or ratio > best[0]):
-                best = (ratio, k, score, ci)
-        if best is None:
+            self._cue_ratios[ci] = float(ratio)
+            if ratio < 1.15 and cue is None:
+                continue
+            a = float(angs[k])
+            if 0 < k < n_ang - 1:
+                den = score[k - 1] - 2 * score[k] + score[k + 1]
+                if den < 0:
+                    a += math.radians(step_deg) * 0.5 * (score[k - 1] - score[k + 1]) / den
+            cands.append((float(ratio), centre + a, ci))
+        if not cands:
             return None                       # no clear row direction this scan
-        _, k, score, ci = best
-        a = float(angs[k])
-        if 0 < k < n_ang - 1:
-            den = score[k - 1] - 2 * score[k] + score[k + 1]
-            if den < 0:
-                a += math.radians(step_deg) * 0.5 * (score[k - 1] - score[k + 1]) / den
-        return centre + a, ci
+        # Which cue to trust (ray-cast sim, every stage, 0.80 and 0.99 m
+        # mounts): the COUNT cues are ≤ ~1° wherever they have a clear peak —
+        # except the crop-band count when the band is nearly empty (4 cm bed,
+        # tilt residual: ≤ 15 % of the swath, up to 30° off).  The
+        # height-variance cue is 5–17° off under a mature canopy, yet the only
+        # accurate one on a lodged canopy, where no count cue has a clear peak.
+        # Its peak/median ratio lives on a larger scale (1.6–2.0 even on a bare
+        # bed), so "clearest wins" let it drag a mature-canopy axis 5° (U-turn
+        # re-entry, 0.99 m mount).
+        if cue is None:
+            band_ok = float(np.mean(band)) >= self.bed_axis_band_min
+            counts = [c for c in cands if c[2] == 0 or (c[2] == 1 and band_ok)]
+            if counts:
+                cands = counts
+            elif not any(c[2] == 2 for c in cands):
+                return None
+            else:
+                cands = [c for c in cands if c[2] == 2]
+        best = max(cands, key=lambda c: c[0])
+        return best[1], best[2]
 
     def _soil_centre(self, perp: np.ndarray) -> "Optional[float]":
         """Bed centre from the raised-bed soil plateau's two edges, or None.

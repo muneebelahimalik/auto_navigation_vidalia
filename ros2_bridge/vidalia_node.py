@@ -64,7 +64,8 @@ SHM_IMG_RIGHT = "/dev/shm/vidalia_img_right.bin"
 # ---------------------------------------------------------------------------
 # Geometry constants (must match CLAUDE.md)
 # ---------------------------------------------------------------------------
-LIDAR_MOUNT_HEIGHT = 0.80    # m — z offset base_link → velodyne (lifts cloud to ground); 2026-07 mount
+LIDAR_MOUNT_HEIGHT = 0.99    # m — z offset base_link → velodyne (lifts cloud to ground); 2026-10 raised mount
+                             # keep equal to lidar/obstacle_filter.py (the container has no repo import)
 LIDAR_MOUNT_X      = 0.0      # m — sensor is centre-mounted on the crossbar
 LIDAR_TILT_DEG     = 0.0      # cloud is ALREADY yaw+tilt corrected upstream (row_navigator)
 

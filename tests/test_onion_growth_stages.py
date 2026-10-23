@@ -20,6 +20,7 @@ from dataclasses import replace
 import numpy as np
 import pytest
 
+from lidar.obstacle_filter import LIDAR_MOUNT_HEIGHT
 from navigation.row_perception import RowDetector
 from navigation.row_safety import SafetyMonitor
 from sim.onion_field import STAGES, FieldConfig, OnionField, SensorConfig, stage_config
@@ -178,10 +179,12 @@ def test_lost_azimuth_sector_is_not_read_as_a_furrow():
 
 
 def test_canopy_at_lidar_height_lowers_confidence_instead_of_steering_blind():
-    """Tops within ~7 cm of the 0.80 m LiDAR: nearly every downward beam hits
-    leaves inside the self-filter and the view collapses.  Was: an unchecked
-    crop fit steered at −17…−24° / 34 cm off with confidence ~0.85."""
-    f = OnionField(FieldConfig(stage=replace(STAGES["mature"], height=0.66)), seed=0)
+    """Tops within ~7 cm of the LiDAR: nearly every downward beam hits leaves
+    inside the self-filter and the view collapses.  Was: an unchecked crop fit
+    steered at −17…−24° / 34 cm off with confidence ~0.85.  (0.66 m plants
+    under the old 0.80 m mount; the limit moves up with the mount.)"""
+    tall = LIDAR_MOUNT_HEIGHT - 0.14
+    f = OnionField(FieldConfig(stage=replace(STAGES["mature"], height=tall)), seed=0)
     det, lat, hdg, conf, _, _ = _drive(f, 0.12, 0.0, n=30, settle=12)
     assert conf.max() < 0.45
     assert np.abs(hdg).max() < 6.0
@@ -207,7 +210,7 @@ def test_canopy_adaptive_obstacle_height():
     assert fixed.check(tall_leaves).forward_blocked
     assert not saf.check(tall_leaves, canopy_top=det.last_canopy_top).forward_blocked
     person = np.column_stack((rng.normal(0, 0.12, 300), rng.normal(2.0, 0.08, 300),
-                              rng.uniform(0.2, 1.7, 300) - 0.8))
+                              rng.uniform(0.2, 1.7, 300) - LIDAR_MOUNT_HEIGHT))
     assert saf.check(np.vstack([P, person]), canopy_top=det.last_canopy_top).forward_blocked
     assert saf.last_forward_height <= 0.95
     # off by default: soybean thresholds unchanged
@@ -222,7 +225,7 @@ def test_simulator_reproduces_the_visibility_regimes():
     def soil_frac(stage):
         f = OnionField(stage_config(stage), seed=0)
         P = f.scan(0.0, 0.0, rng=rng)
-        h = P[:, 2] + 0.80
+        h = P[:, 2] + LIDAR_MOUNT_HEIGHT
         m = (P[:, 1] > 1.5) & (P[:, 1] < 7.0) & (np.abs(P[:, 0]) < 0.5)
         return float(np.mean(np.abs(h[m] - f.cfg.stage.bed_h) < 0.03))
 
@@ -235,16 +238,16 @@ def test_turn_hooks_release_the_bed_end_latch_and_free_the_axis():
     """Entering a headland U-turn must clear the 'bed ending' latch (it scales
     confidence ×0.3 and would block the perception-closed turn ending) and let
     the bed axis follow the raw search while the robot rotates."""
-    f = OnionField(stage_config("bare", y_end=4.0), seed=0)
+    f = OnionField(stage_config("bare", y_end=10.0), seed=0)
     det = _det()
     rng = np.random.default_rng(6)
     for i in range(40):
         det.update(f.scan(0.0, 0.0, rng=rng))
     yr = 0.0
-    while not det._bed_ending and yr < 3.0:
+    while not det._bed_ending and yr < 9.0:
         det.update(f.scan(0.0, yr, rng=rng))
         yr += 0.04
-    assert det._bed_ending                     # the latch engaged before the end
+    assert det._bed_ending and yr > 5.0        # latched ~3–4 m before the end, not at once
     det.begin_turn()
     assert not det._bed_ending and det._turning
     det.end_turn()
@@ -282,3 +285,35 @@ def test_navigator_calls_turn_hooks(monkeypatch):
     nav._enter(_S.HEADLAND)
     nav._enter(_S.APPROACH)
     assert det.calls[:2] == ["begin", "end"] and "reset" in det.calls
+
+
+def test_bed_axis_trusts_count_cues_over_height_variance():
+    """The height-variance cue is 5–17° off under a mature canopy but its
+    peak/median ratio is larger, so 'clearest wins' let it drag the axis (U-turn
+    re-entry from the 0.99 m mount); on a 4 cm bed the crop-band count is empty
+    and 30° off.  Every single-scan search must stay within ~2°."""
+    det = _det()
+    for st, kw in (("mature", {}), ("bare", dict(bed_h=0.04)), ("lodged", {})):
+        f = OnionField(stage_config(st, **kw), seed=0)
+        rng = np.random.default_rng(3)
+        for d, yaw in ((0.30, 10.0), (-0.20, -6.0)):
+            for i in range(0, 24, 4):
+                P, tr = f.scan(xr=d, yr=0.02 * i, yaw_deg=yaw, rng=rng, return_truth=True)
+                a = det._bed_box_heading(P)
+                assert a is not None and abs(math.degrees(a - tr["heading"])) < 2.6, (st, kw, d, yaw)
+
+
+def test_poisoned_quarter_baseline_cannot_latch_a_false_bed_end():
+    """Re-entering a mature bed angled (+0.30 m / +10°) right after a U-turn,
+    one wild second-quarter profile seeded a ~51 cm relief baseline that, under
+    the canopy, is rarely refreshed — every honest 10–18 cm reading then looked
+    like the bed ending (confidence ×0.3).  An absolute 5 cm floor keeps it bed."""
+    f = OnionField(stage_config("mature"), seed=0)
+    det = _det()
+    det._floor_lvl = 0.10                      # bed top tracked on the previous bed
+    rng = np.random.default_rng(100)
+    conf = []
+    for i in range(40):
+        P, tr = f.scan(xr=0.30, yr=0.02 * i, yaw_deg=10.0, rng=rng, return_truth=True)
+        conf.append(det.update(P).confidence)
+    assert not det._bed_ending and min(conf[15:]) > 0.8, min(conf[15:])

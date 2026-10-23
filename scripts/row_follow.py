@@ -1053,6 +1053,13 @@ def main() -> None:
                              "ahead should read azimuth ~0°). Applied FIRST (after self-filter, "
                              "before tilt) so the tilt then rotates the pitch about the robot's "
                              "left-right axis.")
+    parser.add_argument("--lidar-height", type=float, default=None, metavar="M",
+                        help="LiDAR drum-centre height above the ground (m) for this run, "
+                             "overriding LIDAR_MOUNT_HEIGHT in lidar/obstacle_filter.py "
+                             "(default: the code constant, 0.99 m — 2026-10 raised mount). Use the "
+                             "height solved by diag_pitch_rings.py / diag_birdseye.py --tilt-sweep "
+                             "until the constant is updated; every crop/obstacle height is "
+                             "measured from it.")
     parser.add_argument("--debug", action="store_true",
                         help="Stream a LiDAR height profile instead of navigating")
     parser.add_argument("--save-dir", default="", metavar="PATH",
@@ -1207,6 +1214,15 @@ def main() -> None:
                              "topics for RViz2 visualization.")
     args = parser.parse_args()
 
+    from lidar import obstacle_filter as _of
+    if args.lidar_height is not None:
+        if not 0.3 <= args.lidar_height <= 2.0:
+            parser.error(f"--lidar-height {args.lidar_height} m is implausible (0.3–2.0 m)")
+        _of.set_mount_height(args.lidar_height)
+    args.lidar_height = _of.LIDAR_MOUNT_HEIGHT
+    print(f"[row_follow] LiDAR mount: height {args.lidar_height:.3f} m, "
+          f"yaw {args.lidar_yaw:+.1f}°, tilt {args.lidar_tilt:.1f}°")
+
     # Apply field presets BEFORE any further validation so explicit flags can
     # still override them (argparse has already parsed user-supplied values, but
     # we only want the preset to fill params the user did NOT explicitly specify).
@@ -1298,6 +1314,7 @@ def main() -> None:
                    else Path("runs") / f"run_{args.controller}_{ts}")
         calibration = {
             "lidar_yaw_deg": args.lidar_yaw, "lidar_tilt_deg": args.lidar_tilt,
+            "lidar_height_m": args.lidar_height,
             "self_radius_m": args.self_radius, "roi_x_m": args.roi_x,
             "crop_band_m": [args.crop_min, args.crop_max],
             "row_spacing_seed_m": args.row_spacing, "swath_m": args.swath,

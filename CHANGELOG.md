@@ -4,6 +4,42 @@ All notable changes to this project are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/);
 versions are git tags on `main`.
 
+## [Unreleased] — LiDAR raised to ~0.99 m: recalibration support (2026-10-23)
+
+The VLP-16 was raised from 0.80 m to ~0.98–1.00 m (tape); mount otherwise
+unchanged.  `LIDAR_MOUNT_HEIGHT = 0.99` is provisional until the box
+calibration (CLAUDE.md → Sensor Frame Convention) is run on the robot.
+
+### Added
+- `row_follow.py --lidar-height M` — per-run mount-height override
+  (`obstacle_filter.set_mount_height()` rebinds every importing module);
+  recorded as `lidar_height_m` in the run manifest; the mount is printed at start.
+- `diag_pitch_rings.py`: default `--height` = the code constant; prints the
+  `--lidar-tilt` / `--lidar-height` to use and flags a tape/fit mismatch.
+- `diag_birdseye.py`: tilt sweep reports the implied mount height on a flat
+  floor; `--box-height` checks the calibration box's measured top.
+- `tests/test_mount_height.py`.
+
+### Changed
+- Mount height 0.80 → 0.99 m in `obstacle_filter.py`, the ROS 2 bridge TF,
+  URDF, static-TF launch files, ROS node defaults and `viz_perception.py`
+  (now imports the constant).  The onion simulator follows the constant.
+- Onion bed mode re-validated at 0.99 m (ray-cast sim, all stages + robust
+  suite; still passes at 0.80 m).  Fixes the higher view needed:
+  - bed-axis cue selection: the clearer COUNT cue (crop-band count only when
+    the band holds ≥ 30 % of the swath), height-variance only when no count
+    cue is clear — it is 5–17° off under a mature canopy and its larger ratio
+    scale let it drag the axis 5° at a U-turn re-entry (mature axis error
+    2.7°/8.1° → 0.5°/1.3° rms/max);
+  - crop-comb concentration 1.5 → 1.4 to lock, 1.3 to hold (leafy rows read
+    1.35–1.8 from the steeper view; grass p95 1.24);
+  - furrow-line fit trims outlier range bins and is never first fitted once
+    soil has been seen and is hidden (bed floor read +5 cm under a canopy);
+  - bed-end second-quarter check gains an absolute 5 cm floor (a poisoned
+    baseline latched a false bed end at a mature re-entry).
+- Tall-canopy limit: tracks mature plants up to ~0.78 m, stops ≳ 0.82 m
+  (was ≳ 0.63 m at the 0.80 m mount).
+
 ## [Unreleased] — onion bed navigation at every growth stage (2026-10-22)
 
 Validated in a new ray-cast VLP-16 Hi-Res simulator (`sim/onion_field.py`) —

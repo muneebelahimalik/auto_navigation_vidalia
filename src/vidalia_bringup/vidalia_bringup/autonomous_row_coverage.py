@@ -66,7 +66,7 @@ Parameters
 
   # Physical calibration — must match amiga_min.urdf
   lidar_x_offset        float  Velodyne X offset from base_link (m). Default 0.85 (1 ft ahead of front tires).
-  lidar_z_offset        float  Velodyne Z offset from base_link (m). Default 0.80 (2026-07 re-mount).
+  lidar_z_offset        float  Velodyne Z offset from base_link (m). Default 0.99 (2026-10 raised mount).
 
 Usage
 ─────
@@ -304,7 +304,7 @@ class AutonomousRowCoverageNode(Node):
         self.declare_parameter('nav_frame',             'map')
         self.declare_parameter('base_frame',            'base_link')
         self.declare_parameter('lidar_x_offset',        0.85)    # m fwd (1 ft ahead of front tires) — matches URDF
-        self.declare_parameter('lidar_z_offset',        0.80)    # 2026-07 forward-facing re-mount
+        self.declare_parameter('lidar_z_offset',        0.99)    # 2026-10 raised mount
 
         # ── TF ──────────────────────────────────────────────────────────────
         self.tf_buffer   = tf2_ros.Buffer()

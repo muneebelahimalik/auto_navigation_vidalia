@@ -17,11 +17,12 @@ equation.  With ≥2 channels the pair (θ, H) is over-determined:
   * joint fit:   R_i·sin(θ − α_i) = H  → for each θ, H(θ)=mean(R_i sin(θ−α_i));
                  the θ that minimises the spread of those H is the pitch.
 
-Run on the brain (best with a clear, flat floor straight ahead; a box or object
-dead-ahead only affects one azimuth slice and is median-rejected):
+Run on the brain with a CLEAR, flat floor straight ahead for ~8 m — move the
+calibration box out of the way first (the forward ±3° window is exactly where
+the box would sit, and rays hitting it read short):
 
-    python3 scripts/diag_pitch_rings.py --height 0.80
-    python3 scripts/diag_pitch_rings.py --height 0.80 --az-window 4 --scans 8
+    python3 scripts/diag_pitch_rings.py --height 0.99
+    python3 scripts/diag_pitch_rings.py --height 0.99 --az-window 4 --scans 8
 """
 from __future__ import annotations
 
@@ -36,6 +37,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from lidar.lidar_driver import LidarDriver, VLP16_VERTICAL_ANGLES
+from lidar.obstacle_filter import LIDAR_MOUNT_HEIGHT
 
 
 async def collect(scans: int, az_window: float, rmin: float, rmax: float):
@@ -113,19 +115,22 @@ def solve(rings: dict, H_known: float):
             print(f"      height H = {best[1]:.3f} m   (independent of the tape)")
             print(f"      residual spread = {best[2]*100:.1f} cm "
                   f"({'tight — trustworthy' if best[2] < 0.03 else 'loose — noisy floor/box'})")
-            print(f"\n  Compare to: tape H = {H_known:.2f} m, iPhone pitch ≈ 15°, "
-                  f"sweep pitch ≈ 22°.")
-            print( "  • If θ≈22 and H≈1.17 here → the RAW sensor data really has that")
-            print( "    geometry (a sensor/driver calibration issue, not the tape).")
-            print( "  • If θ≈15 and H≈0.80 here → the correction pipeline is wrong and")
-            print( "    the sweep/height were misleading; send me this output and I fix it.")
-
+            print(f"\n  Compare to: tape H = {H_known:.2f} m (the --height you passed).")
+            if best[2] < 0.03:
+                print(f"  >>> Use: --lidar-tilt {best[0]:.1f}  and  --lidar-height {best[1]:.2f}")
+                print(f"      (or set LIDAR_MOUNT_HEIGHT = {best[1]:.2f} in lidar/obstacle_filter.py).")
+                print( "      Cross-check the tilt with diag_birdseye.py --tilt-sweep; the two "
+                       "should agree within ~0.5°.")
+            if abs(best[1] - H_known) > 0.05:
+                print(f"  ! Fitted height differs from the tape by {100 * (best[1] - H_known):+.0f} cm"
+                      " — re-measure ground → drum centre (robot on its wheels, level floor).")
 
 async def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--height", type=float, default=0.80, metavar="M",
-                    help="Tape-measured LiDAR height above the floor (default 0.80).")
+    ap.add_argument("--height", type=float, default=LIDAR_MOUNT_HEIGHT, metavar="M",
+                    help="Tape-measured LiDAR height above the floor "
+                         f"(default: LIDAR_MOUNT_HEIGHT = {LIDAR_MOUNT_HEIGHT:.2f}).")
     ap.add_argument("--az-window", type=float, default=3.0, metavar="DEG",
                     help="Forward azimuth half-window for 'straight ahead' (default 3°).")
     ap.add_argument("--rmin", type=float, default=1.0, help="min planar range (m)")
