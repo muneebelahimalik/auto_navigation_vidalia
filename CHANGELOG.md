@@ -4,6 +4,16 @@ All notable changes to this project are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/);
 versions are git tags on `main`.
 
+## [Unreleased] — never hang on a LiDAR port held by an old run (2026-10-29)
+
+### Fixed
+- A restarted run waited forever at `[LiDAR validate] collecting 5 scans`
+  because the previous run (still alive) held UDP 2368 and, with
+  `SO_REUSEPORT`, received the whole VLP-16 stream.  `lidar/port_check.py`
+  finds the holder from `/proc`; `LidarDriver` prints its PID and the kill
+  command, `row_follow.py` aborts, and the startup check times out after 8 s
+  with a diagnosis.  CLAUDE.md: always end runs with Ctrl+C, never Ctrl+Z.
+
 ## [Unreleased] — raised-mount calibration: 1.035 m / 15.7° / yaw 0.9° (2026-10-29)
 
 Measured on a flat warehouse floor: raw ring fit 15.7–15.8° / 1.036 m (all 14

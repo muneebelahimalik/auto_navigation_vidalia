@@ -93,6 +93,20 @@ source /farm_ng_image/venv/bin/activate
 cd ~/auto_navigation_vidalia
 ```
 
+> **⚠️ Always END a run properly before starting the next — Ctrl+C, never
+> Ctrl+Z.**  Ctrl+Z only *pauses* the program; it keeps the LiDAR's UDP port
+> 2368.  The driver binds with `SO_REUSEPORT`, so a second run can bind too,
+> but the kernel delivers the VLP-16's whole stream to ONE socket — the old
+> run — and the new one gets **no data** (field 2026-10-29: restart stuck at
+> `[LiDAR validate] collecting 5 scans`).  Since then the entry points detect
+> it: `LidarDriver` prints the PID still holding the port and the kill command
+> (`lidar/port_check.py`), `row_follow.py` aborts, and the startup check times
+> out after 8 s with a diagnosis instead of hanging.  Clean up by hand with
+> `pgrep -af "row_follow|slam_mapper|diag_"` → `kill -INT <PID>` (or `kill %1`
+> for a Ctrl+Z'd job in the same shell); `sudo ss -ulpn | grep 2368` must then
+> print nothing.  Wait for `[row_follow] done.` after Ctrl+C — the recording
+> (summary, SLAM map, figures) is saved during shutdown.
+
 ### Unit tests (any machine — no hardware, no farm-ng SDK required)
 
 ```bash
@@ -1665,6 +1679,7 @@ OAK-D defaults: hfov=73°, vfov=54°, 640×400 → scale factor ≈ 0.91.
 | Robot steadily drifts forward-right; heading estimate climbs +5°→+14° while the robot turns right | VLP-16 drops whole azimuth sectors (UDP packet loss — `left=0`/`right=0` in validate, scans of 2 578 vs 17 000 pts), so one row stripe is truncated in y; whole-cloud PCA over stripes with unequal extents tilts toward the line joining the stripe centroids → spurious positive heading → pure-pursuit chases it rightward | Cluster-centred two-pass PCA (previously camera-fusion-only) now applied to ALL dual-row fits, iterated 2×, with a 0.25 m peak-distance gate; regression tests `test_dual_row_truncated_stripe_*` |
 | Lateral estimate snaps ±half spacing in one scan | Peak pairing changes when a row drops out for one scan; EMA follows the jump | Lateral outlier gate in `_smooth()` — per-scan jump clamped to 0.30 m (mirrors the heading gate) |
 | Robot follows the row, then during a correction drifts onto the NEXT strip / crosses rows (worst under RL) | The dual-row target is the midpoint of two rows, but a soybean field is PERIODIC — "on my strip, offset +half" and "on the next strip, offset −half" give two peak pairs that both match the spacing, so `find_row_midpoint` picked one arbitrarily and could alias onto the adjacent strip; an aggressive controller then centred on it. Worse under RL because it reacts fastest to the jumped target | **Continuity ("strip-lock") prior** in `find_row_midpoint`: pair cost = `|sep−spacing| + prior_weight·|midpoint − tracked_lateral|`, so the detector stays locked to the strip it is following — a jump to the adjacent strip costs ≈ one spacing and is rejected unless the robot has truly crossed the half-way point. `RowDetector.midpoint_prior_weight=1.5`; reset→prior 0 so the post-turn re-acquire prefers the nearest (centred) strip. Fixes hopping for pursuit/MPC/RL. Tests `test_strip_lock_*` |
+| Restarted run hangs at `[LiDAR validate] collecting 5 scans …` (field 2026-10-29) | The previous run was still alive (Ctrl+Z'd / not ended) and bound to UDP 2368; with `SO_REUSEPORT` the kernel steers the VLP-16's whole flow to the OLD socket, so the new run receives nothing | `lidar/port_check.py` finds any process bound to 2368 from `/proc` → `LidarDriver` prints its PID + kill command and `row_follow.py` aborts; `validate_lidar_startup` times out after 8 s with the causes listed. Always stop runs with Ctrl+C. Tests `test_port_holder_found_and_reported`, `test_lidar_validate_times_out_instead_of_hanging` |
 | Robot keeps driving on last twist if LiDAR dies mid-row | `run()` blocked forever inside `async for`; no further commands sent | Scan-stall watchdog: no scan for 0.5 s → actively command zero velocity until the stream recovers |
 | Dead camera stream freezes fusion + blocks ROW_END | `get_latest()` returns the final frame forever; frozen green fraction vetoes ROW_END indefinitely | Staleness gate (1.5 s) in both navigators treats old frames as "no camera" |
 | Stale EMA from previous row fights re-acquisition after U-turn | Detector EMA accumulates garbage while the ROI sweeps the headland; outlier gates then clamp genuine detections of the next row | `RowDetector.reset()` / tracker `reset()` called on HEADLAND→ACQUIRE |

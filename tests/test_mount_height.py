@@ -47,3 +47,31 @@ def test_lidar_validate_times_out_instead_of_hanging():
     t0 = time.monotonic()
     ok = asyncio.run(of.validate_lidar_startup(SilentLidar(), timeout_s=0.3))
     assert ok is False and time.monotonic() - t0 < 2.0
+
+
+def test_port_holder_found_and_reported(capsys):
+    """An old run still bound to the LiDAR port is named with its PID."""
+    import socket
+    import subprocess
+    import sys
+
+    from lidar import port_check
+    probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    probe.bind(("127.0.0.1", 0))
+    port = probe.getsockname()[1]
+    probe.close()
+    holder = subprocess.Popen([sys.executable, "-c",
+                               "import socket,time,sys;s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM);"
+                               "s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEPORT,1);"
+                               f"s.bind(('',{port}));print('up',flush=True);time.sleep(30)"],
+                              stdout=subprocess.PIPE)
+    try:
+        assert holder.stdout.readline().strip() == b"up"
+        found = port_check.udp_port_holders(port)
+        assert [p for p, _ in found] == [holder.pid]
+        assert port_check.report_port_holders(port)
+        assert f"PID {holder.pid}" in capsys.readouterr().out
+    finally:
+        holder.kill()
+        holder.wait()
+    assert port_check.udp_port_holders(port) == []

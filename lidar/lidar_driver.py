@@ -229,6 +229,14 @@ class LidarDriver:
 
     async def __aenter__(self) -> "LidarDriver":
         self._loop = asyncio.get_running_loop()
+        # SO_REUSEPORT below lets a SECOND program bind the port, but the kernel
+        # then steers the whole VLP-16 flow to one socket (usually the older):
+        # warn loudly if an earlier run is still alive (see lidar/port_check.py).
+        try:
+            from lidar.port_check import report_port_holders
+            report_port_holders(self._port)
+        except Exception:
+            pass
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)

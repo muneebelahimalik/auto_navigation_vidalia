@@ -615,6 +615,15 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
     print("=" * 68)
     print()
 
+    from lidar.port_check import udp_port_holders
+    if udp_port_holders():
+        # An earlier run still holds UDP 2368 and would take every LiDAR packet;
+        # LidarDriver prints which PID and how to stop it.
+        async with LidarDriver():
+            pass
+        print("[row_follow] another program is receiving the LiDAR data — aborting.")
+        return
+
     async with LidarDriver() as lidar:
         if not args.no_validate:
             healthy = await validate_lidar_startup(lidar)
