@@ -29,6 +29,7 @@ Sector convention (azimuth 0°–360°, matches lidar_driver.py VLP-16 output):
 
 from __future__ import annotations
 
+import asyncio
 import math
 from typing import Dict, List
 
@@ -222,6 +223,7 @@ async def validate_lidar_startup(
     num_scans: int = 5,
     min_points_per_scan: int = 5000,
     min_rings: int = 14,
+    timeout_s: float = 8.0,
 ) -> bool:
     """
     Collect num_scans, print per-scan diagnostics, and return True if healthy.
@@ -236,29 +238,49 @@ async def validate_lidar_startup(
     print(f"\n[LiDAR validate] collecting {num_scans} scans …")
     results: List[Dict] = []
 
+    async def _collect() -> None:
+        nonlocal count
+        async for scan in lidar.scan_stream():
+            rings_seen = len({p.ring for p in scan})
+            sct = sector_counts(scan)
+            n_fwd = nearest_in_sector(scan, 0.0)
+            n_left = nearest_in_sector(scan, 270.0)
+            n_right = nearest_in_sector(scan, 90.0)
+
+            results.append({"total": len(scan), "rings": rings_seen, "sectors": sct})
+
+            def _fmt(v: float) -> str:
+                return f"{v:.2f} m" if v < math.inf else "  open"
+
+            print(
+                f"  [{count + 1}/{num_scans}] "
+                f"pts={len(scan):5d} rings={rings_seen:2d}/16 | "
+                f"fwd={sct['fwd']:4d} left={sct['left']:4d} right={sct['right']:4d} rear={sct['rear']:4d} | "
+                f"nearest → fwd={_fmt(n_fwd)} left={_fmt(n_left)} right={_fmt(n_right)}"
+            )
+
+            count += 1
+            if count >= num_scans:
+                break
+
+    # The driver binds UDP 2368 with SO_REUSEPORT, so a previous run still alive
+    # (Ctrl+Z, or hung while saving) silently receives the WHOLE stream — the
+    # kernel steers one sender's flow to one socket — and this run would wait
+    # here forever.  Field 2026-10-29: stuck at "collecting 5 scans" after a
+    # restart.
     count = 0
-    async for scan in lidar.scan_stream():
-        rings_seen = len({p.ring for p in scan})
-        sct = sector_counts(scan)
-        n_fwd = nearest_in_sector(scan, 0.0)
-        n_left = nearest_in_sector(scan, 270.0)
-        n_right = nearest_in_sector(scan, 90.0)
-
-        results.append({"total": len(scan), "rings": rings_seen, "sectors": sct})
-
-        def _fmt(v: float) -> str:
-            return f"{v:.2f} m" if v < math.inf else "  open"
-
-        print(
-            f"  [{count + 1}/{num_scans}] "
-            f"pts={len(scan):5d} rings={rings_seen:2d}/16 | "
-            f"fwd={sct['fwd']:4d} left={sct['left']:4d} right={sct['right']:4d} rear={sct['rear']:4d} | "
-            f"nearest → fwd={_fmt(n_fwd)} left={_fmt(n_left)} right={_fmt(n_right)}"
-        )
-
-        count += 1
-        if count >= num_scans:
-            break
+    try:
+        await asyncio.wait_for(_collect(), timeout_s)
+    except asyncio.TimeoutError:
+        print(f"[LiDAR validate] FAIL: no LiDAR data for {timeout_s:.0f} s "
+              f"({count} scan(s)).  Most likely:")
+        print("   1. an earlier row_follow / diag script is still running and holds "
+              "UDP 2368 —  pgrep -af 'row_follow|slam_mapper|diag_'  then  "
+              "pkill -INT -f row_follow.py  (or  kill %1  if it was Ctrl+Z'd)")
+        print("   2. the LiDAR network is down —  sudo bash scripts/setup_lidar_network.sh"
+              "  and  ping 192.168.1.201")
+        print("   3. the VLP-16 has no power / cable unplugged")
+        return False
 
     if not results:
         print("[LiDAR validate] FAIL: no scans received — check UDP (port 2368)")

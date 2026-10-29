@@ -31,3 +31,19 @@ def test_safety_uses_overridden_height():
             assert st.forward_blocked is expect, H
     finally:
         of.set_mount_height(old)
+
+
+def test_lidar_validate_times_out_instead_of_hanging():
+    """A previous run still bound to UDP 2368 (SO_REUSEPORT) receives the whole
+    stream — startup must fail with a diagnosis, not wait forever."""
+    import asyncio
+    import time
+
+    class SilentLidar:
+        async def scan_stream(self):
+            await asyncio.sleep(3600)
+            yield []
+
+    t0 = time.monotonic()
+    ok = asyncio.run(of.validate_lidar_startup(SilentLidar(), timeout_s=0.3))
+    assert ok is False and time.monotonic() - t0 < 2.0
