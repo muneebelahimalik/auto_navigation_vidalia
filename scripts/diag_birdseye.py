@@ -58,13 +58,36 @@ def locate_forward_objects(pts: np.ndarray, applied_yaw_deg: float,
         print("\n  Object locator: too few floor points to estimate level.")
         return
     floor = float(np.percentile(base[:, 2] + LIDAR_MOUNT_HEIGHT, 50))
-    elev = (h > floor + 0.12) & (pts[:, 1] > 0.5) & (rng < max_range)
+    # With a known box height, only count returns well up its side: in a
+    # field the grass / crop reaches 0.2–0.35 m, and at +0.12 m it merged with
+    # the box into wide clusters (field 2026-10-29: a 0.40 m box at 5 m was
+    # never reported).
+    elev_min = max(0.12, 0.6 * box_height) if box_height > 0 else 0.12
+    elev = (h > floor + elev_min) & (pts[:, 1] > 0.5) & (rng < max_range)
     e = pts[elev]
-    print(f"\n  Forward object locator (floor≈{floor:+.2f} m, elevation > +0.12 m, "
+    print(f"\n  Forward object locator (floor≈{floor:+.2f} m, elevation > +{elev_min:.2f} m, "
           f"range < {max_range:g} m):")
     if len(e) < 20:
         print("    no elevated forward objects found")
         return
+    # Straight-ahead corridor first: the elevated returns within ±1 m of the
+    # centreline, grouped along range; the largest group is the target.
+    cor = e[(np.abs(e[:, 0]) < 1.0) & (e[:, 1] > 1.5)]
+    cor_az = None
+    if len(cor) >= 15:
+        cor = cor[np.argsort(cor[:, 1])]
+        cuts = np.nonzero(np.diff(cor[:, 1]) > 0.4)[0] + 1
+        groups = [g for g in np.split(cor, cuts) if len(g) >= 15]
+        if groups:
+            g = max(groups, key=len)
+            gx = 0.5 * (float(np.percentile(g[:, 0], 5)) + float(np.percentile(g[:, 0], 95)))
+            gy = float(np.percentile(g[:, 1], 10))      # the face toward the sensor
+            cor_az = math.degrees(math.atan2(gx, gy))
+            top = float(np.percentile(g[:, 2] + LIDAR_MOUNT_HEIGHT, 95)) - floor
+            print(f"    corridor target: n={len(g)}  x={gx:+.2f} y={gy:+.2f}  "
+                  f"range={math.hypot(gx, gy):.2f} m  azimuth={cor_az:+.2f}°  "
+                  f"top {top:.2f} m above floor  "
+                  f"(width {float(np.ptp(g[:, 0])):.2f} m)")
     az = np.degrees(np.arctan2(e[:, 0], e[:, 1]))   # 0 = forward, + = right
     order = np.argsort(az)
     e, az = e[order], az[order]
@@ -100,11 +123,14 @@ def locate_forward_objects(pts: np.ndarray, applied_yaw_deg: float,
                      "(diag_sensor_model.py)."))
         if abs(cx) < 0.9 and abs(caz) < 20.0:   # the straight-ahead object
             centre_az = caz
+    if cor_az is not None:
+        centre_az = cor_az
     if centre_az is not None:
         print(f"    >>> straight-ahead object azimuth = {centre_az:+.1f}° "
               f"→ residual yaw error.  Corrected --lidar-yaw = "
-              f"{applied_yaw_deg - centre_az:.1f}  (= {applied_yaw_deg:.0f} − "
-              f"{centre_az:+.1f}).  |error|<~1.5° is within placement tolerance.")
+              f"{applied_yaw_deg - centre_az:.1f}  (= {applied_yaw_deg:.1f} − "
+              f"{centre_az:+.1f}).  Placement tolerance: 5 cm off-centre = "
+              f"{math.degrees(math.atan2(0.05, max(1.0, max_range - 1.0))):.1f}° at this range.")
 
 
 async def collect_raw(n: int, self_r: float) -> np.ndarray:
