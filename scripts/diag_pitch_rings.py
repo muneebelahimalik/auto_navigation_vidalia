@@ -21,8 +21,8 @@ Run on the brain with a CLEAR, flat floor straight ahead for ~8 m — move the
 calibration box out of the way first (the forward ±3° window is exactly where
 the box would sit, and rays hitting it read short):
 
-    python3 scripts/diag_pitch_rings.py --height 0.99
-    python3 scripts/diag_pitch_rings.py --height 0.99 --az-window 4 --scans 8
+    python3 scripts/diag_pitch_rings.py --height 1.035
+    python3 scripts/diag_pitch_rings.py --height 1.035 --az-window 4 --scans 8
 """
 from __future__ import annotations
 

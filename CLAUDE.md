@@ -217,7 +217,7 @@ falls in the ±5 cm pairing dead-band).  Bed mode instead:
   `tests/test_coverage_plan.py`.
 - **Every growth stage (2026-10-22 rework, `sim/onion_field.py`,
   `scripts/eval_onion_growth.py`, `tests/test_onion_growth_stages.py`).**
-  A ray-cast VLP-16 Hi-Res simulator (real beam geometry, 12.3° tilt, 0.2°
+  A ray-cast VLP-16 Hi-Res simulator (real beam geometry, the calibrated mount (`LIDAR_TILT_DEG`, `LIDAR_MOUNT_HEIGHT`), 0.2°
   azimuth, porous leaf-element canopy, raised-bed heightfield, grass headland,
   weeds, stand gaps) showed what the LiDAR sees per stage: **transplants**
   invisible; **young** rows separate; from **mid** season the canopy hides
@@ -273,7 +273,11 @@ falls in the ±5 cm pairing dead-band).  Bed mode instead:
     quarter dropping below ITS OWN relief baseline (not the near half's; the
     second quarter also counts as bed above an absolute 5 cm — mid-bed it is
     ≥ 8 cm at every stage, at an end 0–4 cm — so a baseline poisoned by one
-    wild profile after a U-turn can't latch a false end);
+    wild profile after a U-turn can't latch a false end; and the end logic
+    — cut, axis hold, latch — only ARMS once the far half or second quarter
+    has shown relief since the reset: under a tall canopy from the 15.7° mount
+    the second quarter never does, and a cut there latched confidence ×0.3
+    from the first metre and let a 1.4 m axis search run away 0 → 10°);
     the profile and axis search are then cut to the bed that remains, the axis
     is held once the end is inside the nearest quarter, and a sustained
     nearest-quarter cut latches "bed ending" (confidence ×0.3 → row end
@@ -282,8 +286,8 @@ falls in the ±5 cm pairing dead-band).  Bed mode instead:
   - **View quality** (`last_view_quality`, `VIEW=` in status): smoothed count
     of returns in the 3 m × 5.5 m swath; when tops near the LiDAR height
     the view collapses and confidence falls → the robot slows, then stops
-    (sim, mature canopy: 0.80 m mount → plants ≳ 0.63 m tall; **0.99 m mount
-    → tracks plants up to ~0.78 m, stops ≳ 0.82 m**).  **Sector dropouts**: a hole in the azimuth
+    (sim, mature canopy: 0.80 m mount → plants ≳ 0.63 m tall; **1.035 m /
+    15.7° mount → tracks plants up to ~0.82 m (≤ 4 cm), stops ≳ 0.86 m**).  **Sector dropouts**: a hole in the azimuth
     coverage → no profile this scan (coast), never "furrows".  Profile jumps
     > 10 cm from a confident track get half the trust.
   - **Canopy-adaptive obstacle height** (`SafetyMonitor(canopy_clearance=…)`,
@@ -291,22 +295,24 @@ falls in the ±5 cm pairing dead-band).  Bed mode instead:
     (top measured beyond the 2.5 m safety zone so an obstacle can't raise its
     own threshold), capped 0.95 m forward / 1.0 m tires — tall tops no longer
     false-stop; a person still stops.  Off by default (soybean unchanged).
-  **Sim results, 0.99 m mount** (`eval_onion_growth.py`, 5 start cases per
-  stage, bias / std): bare & seedling ≤ 1.1 / ≤ 1.1 cm; young ≤ 0.4 / ≤ 0.2 cm
-  (crop comb); mid ≤ 0.5 / ≤ 1.2 cm; mature ≤ 2.6 / ≤ 1.4 cm; lodged ≤ 2.2 /
-  ≤ 2.2 cm; heading ≤ 1.1°; confidence 1.0, no false row ends; bed end found
-  2.5–3.5 m early at every stage (what the 3.5 m headland exit expects) and
-  grass never followed (max confidence after 0.32).  (0.80 m mount, before
-  the raise: mature ≤ 6 cm, lodged ≤ 5 cm, bed end 2.1–3.8 m early — the
-  onion suites still pass there.)  Mature/lodged bias is an UNDER-READ ∝ offset (~⅓) —
+  **Sim results, calibrated mount 1.035 m / 15.7°** (`eval_onion_growth.py`,
+  5 start cases per stage, bias / std): bare & seedling ≤ 1.2 / ≤ 0.6 cm;
+  young ≤ 0.6 / ≤ 0.2 cm (crop comb); mid ≤ 1.1 / ≤ 1.1 cm; mature ≤ 1.1 /
+  ≤ 1.8 cm; lodged ≤ 2.4 / ≤ 2.2 cm; heading ≤ 0.6°; confidence 1.0, no
+  false row ends; bed end found 2.3–3.6 m early at every stage (what the
+  3.5 m headland exit expects) and grass never followed (max confidence
+  after 0.33).  (Earlier mounts: 0.80 m / 12.3° mature ≤ 6 cm; see CHANGELOG.)  Mature/lodged bias is an UNDER-READ ∝ offset (~⅓) —
   zero when centred, so the controller still converges to the centre.  Robust
   suite (`--robust`): weeds, 30 % stand gaps, 4 cm beds, 1.5° tilt error,
   azimuth-sector dropouts, ±3° weaving, re-entry after a U-turn at up to
   0.35 m / 12° — all ≤ ~5 cm bias.  **Known limits:** a whole outer row
   missing under a merged (mid+) canopy reads ~13 cm toward the remaining rows
   (inherent); plants within ~0.17 m of the LiDAR height collapse the view →
-  the robot stops (≳ 0.82 m tall plants on the 0.99 m mount; it was ≳ 0.63 m
-  on the old 0.80 m mount); all of this is simulation — field-confirm with `--record`
+  the robot stops (≳ 0.86 m tall plants on the 1.035 m mount; it was ≳ 0.63 m
+  on the old 0.80 m mount); under very tall onions (≳ 0.70 m) the far bed
+  never shows relief, so the row end comes from the bed-presence gate only
+  1.2–1.6 m before the bed end (the U-turn then starts ~2 m further into the
+  headland); all of this is simulation — field-confirm with `--record`
   (telemetry now logs `canopy_top_m`, `soil_visible`, `view_q`, `view_n`,
   `sector_gap`, `comb_ratio`, `crop_locked`, `fwd_obs_h`).  Detector cost
   11–17 ms/scan (x86), similar to the previous release.
@@ -499,8 +505,8 @@ the crop for a structure-only map. Regression-locked in `tests/test_slam.py`.
 
 | `slam_mapper.py` flag | Default | Description |
 |---|---|---|
-| `--lidar-yaw DEG` | **0.0** | Mount yaw correction (applied FIRST) — matches row-follow (forward-facing) |
-| `--lidar-tilt DEG` | **15.0** | Nose-down pitch correction (applied AFTER yaw); VLP-16 Hi-Res angles |
+| `--lidar-yaw DEG` | **0.9** (`LIDAR_YAW_DEG`) | Mount yaw correction (applied FIRST) — matches row-follow |
+| `--lidar-tilt DEG` | **15.7** (`LIDAR_TILT_DEG`) | Nose-down pitch correction (applied AFTER yaw); VLP-16 Hi-Res angles |
 | `--slice-min M` | **0.05** | Slice lower bound, ground-relative m (includes crop; raise to 0.20 for structure-only) |
 | `--slice-max M` | **1.50** | Slice upper bound, ground-relative m |
 | `--map-3d` | off | Also build a 3-D point-cloud map → `map3d.ply` + `.npz` |
@@ -1046,25 +1052,32 @@ python3 scripts/row_follow.py --auto --dual-row --camera --no-cam-obstacles --ro
 > geometry with no correction code in the loop (correct angles → all 16 channels
 > agree; wrong angles → they fan out 9–19°).
 >
-> **CURRENT MOUNT (2026-10 RAISED mount, Hi-Res angles):** the LiDAR was
-> raised to **~0.98–1.00 m** (tape); everything else about the mount is the
-> same (forward-facing, nose-down).  `LIDAR_MOUNT_HEIGHT = 0.99 m` is the
-> provisional value until the box calibration below is run; override per run
-> with `row_follow.py --lidar-height M`.  Last field calibration on the
-> previous 0.80 m mount (2026-10): `--lidar-yaw 1.7 --lidar-tilt 12.3` —
-> re-derive both after the raise.  **Everything below about 66° yaw / 21.5°
+> **CURRENT MOUNT (2026-10 RAISED mount, calibrated 2026-10-29 on a flat
+> warehouse floor):** `LIDAR_MOUNT_HEIGHT = 1.035 m`, `LIDAR_TILT_DEG = 15.7`,
+> `LIDAR_YAW_DEG = 0.9` (all in `lidar/obstacle_filter.py`; they are the
+> defaults of every `--lidar-height/--lidar-tilt/--lidar-yaw`, the SLAM
+> engine, the ROS bridge/URDF z and the onion simulator — no flags needed).
+> Raw ring fit 15.7–15.8° / 1.036 m (all 14 floor rings within 0.1°, 0.3 cm
+> spread); floor reads −0.005 m at 1.03 m / 15.6°; 0.40 m box reads 0.40 m.
+> The YAW is the weakest: three box placements gave +0.4 / −1.4 / +0.9° (5 cm
+> of placement = 1° at 3 m) — pin it with a box at 5–6 m on a string line
+> from the robot centreline.  **Calibrate on FLAT ground only:** an outdoor
+> patch sloping ~3° read 12.5° / 0.93 m (ground rising ahead looks like less
+> pitch AND a lower mount).  The old 0.80 m mount's field values
+> (`--lidar-yaw 1.7 --lidar-tilt 12.3`) were measured on a bedded field and
+> no longer apply.  **Everything below about 66° yaw / 21.5°
 > pitch / 0.75 m predates the 2026-07 re-mount AND the Hi-Res fix — treat it
 > as history, not current calibration.**
 >
 > **Mount calibration procedure (after ANY mount change; robot on its wheels,
 > flat ground):**
 > 1. **Pitch + height, pipeline-free** — clear ~8 m straight ahead (box OUT of
->    the way): `python3 scripts/diag_pitch_rings.py --height 0.99` → joint fit
+>    the way): `python3 scripts/diag_pitch_rings.py --height 1.035` → joint fit
 >    `pitch θ` and `height H`; a tight fit (< 3 cm spread) prints
 >    `Use: --lidar-tilt θ and --lidar-height H`.
 > 2. **Tilt + yaw with the box** — box straight ahead, ~4–5 m (a far target pins
 >    yaw ~2× tighter): `python3 scripts/diag_birdseye.py --mount-height H
->    --lidar-yaw 1.7 --tilt-sweep 10:16:0.25 --locate-range 6 --box-height B`
+>    --lidar-yaw 0 --tilt-sweep 13:18:0.25 --locate-range 7 --box-height B`
 >    → flattest tilt (should agree with step 1 within ~0.5°), implied mount
 >    height (`H − ground@3.75m`), and the box azimuth → corrected yaw =
 >    applied − azimuth.  Re-run with the corrected `--lidar-yaw` until the box
@@ -1077,7 +1090,7 @@ python3 scripts/row_follow.py --auto --dual-row --camera --no-cam-obstacles --ro
 
 - **X** = right, **Y** = forward, **Z** = up (sensor frame, after tilt correction)
 - Ground-relative height: `h = z_corrected + LIDAR_MOUNT_HEIGHT`
-- `LIDAR_MOUNT_HEIGHT = 0.99 m` (defined in `lidar/obstacle_filter.py`; ground to VLP-16 Hi-Res drum centre, robot on wheels — 2026-10 raised mount, tape ~0.98–1.00 m; was 0.80 m).  `--lidar-height M` overrides it for one run (`set_mount_height()` rebinds every importing module); the manifest records `lidar_height_m`
+- `LIDAR_MOUNT_HEIGHT = 1.035 m` (defined in `lidar/obstacle_filter.py`; ground to VLP-16 Hi-Res drum centre, robot on wheels — 2026-10-29 ring fit; tape ~1.0 m; was 0.80 m).  `--lidar-height M` overrides it for one run (`set_mount_height()` rebinds every importing module); the manifest records `lidar_height_m`
 - **LiDAR yaw: 0° (forward-facing, 2026-07 re-mount).** The sensor Y+ axis points along
   robot-forward, so `yaw_correct_pts` is a no-op.  **Verify after ANY mount change** with the
   `diag_birdseye.py` object locator: place a target straight ahead and read its azimuth
@@ -1089,7 +1102,7 @@ python3 scripts/row_follow.py --auto --dual-row --camera --no-cam-obstacles --ro
   the current yaw=0 mount the order is moot, but the pipeline keeps it for any future side-yaw
   (regression-locked in `test_yaw_then_tilt_recovers_flat_ground` /
   `test_tilt_then_yaw_leaves_residual_ramp`).
-- **LiDAR tilt: 15° (verified).** Phone level on the sensor read ~15°, and the raw ring geometry
+- **LiDAR tilt: 15.7° (2026-10-29, raised mount — `LIDAR_TILT_DEG`).** History, 2026-07 mount: 15° (verified). Phone level on the sensor read ~15°, and the raw ring geometry
   (`diag_pitch_rings.py`, pipeline-independent) fits **14.8°** — all 16 channels agree to ±0.1°.
   The ground-slope sweep (`diag_birdseye.py --tilt-sweep 12:18:0.25`) crosses zero at **~15°**.
   **The old "21.5°" was NOT a real pitch** — it was an artifact of the driver using the standard
@@ -1232,9 +1245,9 @@ to the noiseless convergence.  Regression-locked in `tests/test_row_controller.p
 | `--canopy-clearance M` | **0** (onion **0.15**) | Canopy-adaptive obstacle height (bed mode): an obstacle must rise M above the measured crop canopy top (measured beyond the safety zone), capped 0.95 m forward / 1.0 m tires — tall mature onions don't false-stop; a person still stops. 0 = fixed thresholds |
 | `--speed-conf-full C` | **1.0** (onion **0.65**) | Confidence at/above which speed is not reduced: `v = max × min(1, conf/C) × heading factor`. 1.0 = original speed ∝ confidence |
 | `--accel-limit A` / `--decel-limit A` | **0.15 / 0.5** | Forward-speed rate limits (m/s²) in FOLLOW/APPROACH; 0 = off. Zero-speed stops and obstacle stops pass through immediately |
-| `--lidar-tilt DEG` | **15.0** | Nose-down PITCH correction (degrees), applied AFTER `--lidar-yaw` (2026-07 forward-facing mount). Verify via `diag_birdseye.py --tilt-sweep 12:18:0.25` (ground slope → 0 at ~15°) and `diag_pitch_rings.py` (raw geometry: 14.8°). Old 21.5° was an artifact of the driver's wrong angle table — this is a VLP-16 Puck **Hi-Res** (±10°), fixed in `lidar_driver.py` |
-| `--lidar-height M` | **0.99** (code constant) | LiDAR drum-centre height above ground for this run; overrides `LIDAR_MOUNT_HEIGHT` everywhere (crop band, bed floor, safety heights, SLAM). Use the height from `diag_pitch_rings.py` until the constant is updated |
-| `--lidar-yaw DEG` | **0.0** | Sensor mount yaw (CCW positive) relative to robot-forward (0 = forward-facing, 2026-07 re-mount; was 66/71 on the side-yawed mount). Applied FIRST (before tilt). Verify with `diag_birdseye.py` object locator (straight-ahead target → azimuth ~0). Re-verify after any mount change |
+| `--lidar-tilt DEG` | **15.7** (`LIDAR_TILT_DEG`) | Nose-down PITCH correction (degrees), applied AFTER `--lidar-yaw`. 2026-10-29 raised mount, flat floor: raw ring fit 15.7°. Re-derive with `diag_pitch_rings.py` + `diag_birdseye.py --tilt-sweep 13:18:0.25` on FLAT ground |
+| `--lidar-height M` | **1.035** (`LIDAR_MOUNT_HEIGHT`) | LiDAR drum-centre height above ground for this run; overrides `LIDAR_MOUNT_HEIGHT` everywhere (crop band, bed floor, safety heights, SLAM). Use the height from `diag_pitch_rings.py` until the constant is updated |
+| `--lidar-yaw DEG` | **0.9** (`LIDAR_YAW_DEG`) | Sensor mount yaw (CCW positive) relative to robot-forward (2026-10-29 box check; was 66/71 on the old side-yawed mount). Applied FIRST (before tilt). Verify with `diag_birdseye.py` object locator (straight-ahead target → azimuth ~0). Re-verify after any mount change |
 | `--roi-x W` | 0.80 | Row detection ROI half-width m — applies to BOTH the LiDAR detector and the dual-camera tracker (wired in both scripts) |
 | `--crop-min H` | 0.05 | Minimum crop height above ground m |
 | `--crop-max H` | 0.60 | Maximum crop height above ground m |
@@ -1504,7 +1517,7 @@ journalctl --user -u vidalia-ros2-bridge -f
 | Topic | Type | Notes |
 |---|---|---|
 | `/velodyne_points` | `sensor_msgs/PointCloud2` | xyz + intensity (height-relative); frame `velodyne` |
-| `/tf_static` | TF | `base_link → velodyne`: z=0.99 m (`LIDAR_MOUNT_HEIGHT` in `vidalia_node.py` — keep equal to `obstacle_filter.py`), identity rotation (cloud is already yaw+tilt corrected upstream) |
+| `/tf_static` | TF | `base_link → velodyne`: z=1.035 m (`LIDAR_MOUNT_HEIGHT` in `vidalia_node.py` — keep equal to `obstacle_filter.py`), identity rotation (cloud is already yaw+tilt corrected upstream) |
 | `/row_viz` | `visualization_msgs/MarkerArray` | Arrow = row direction; green line = lateral offset |
 | `/safety_viz` | `visualization_msgs/MarkerArray` | Wireframe boxes: forward zone + tire zones; green = clear, red = blocked |
 | `/cmd_vel` | `geometry_msgs/Twist` | Current commanded velocity (linear.x, angular.z) |
@@ -1705,7 +1718,7 @@ at 15° — only 3.4% difference — so the self-filter threshold does not chang
 map
  └── odom          (rtabmap via ICP odometry or EKF)
       └── base_link (icp_odometry or ekf_filter_node)
-           └── velodyne  (static: x=1.130 m, z=0.990 m, from robot_state_publisher)
+           └── velodyne  (static: x=1.130 m, z=1.035 m, from robot_state_publisher)
 ```
 
 ### Full Autonomous Stack (localize_nav.launch.py)

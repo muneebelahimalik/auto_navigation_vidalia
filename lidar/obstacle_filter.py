@@ -18,7 +18,7 @@ A point at sensor-frame z has ground-relative height:
 
 Using ground-relative height instead of a fixed sensor-frame z threshold
 correctly handles objects below the LiDAR centreline (e.g. a 16-inch/0.41 m
-box whose top is at sensor-frame z ≈ −0.58 m with the 0.99 m mount).
+box whose top is at sensor-frame z ≈ −0.63 m with the 1.035 m mount).
 
 Sector convention (azimuth 0°–360°, matches lidar_driver.py VLP-16 output):
     0°   → Y+  forward
@@ -39,11 +39,18 @@ from lidar.lidar_driver import LidarDriver, VelodynePoint
 # ---------------------------------------------------------------------------
 # Mount geometry — must match URDF and tf_static_base_to_velodyne.launch.py
 # ---------------------------------------------------------------------------
-LIDAR_MOUNT_HEIGHT = 0.99    # metres — measured: ground to VLP-16 drum centre
-                             # (2026-10 raised mount, tape ~0.98–1.00 m; was 0.80
-                             # on the 2026-07 forward-facing mount, 0.75 before).
-                             # Re-derive with diag_pitch_rings.py after any change;
-                             # override per run with row_follow.py --lidar-height.
+LIDAR_MOUNT_HEIGHT = 1.035   # metres — ground to VLP-16 drum centre, robot on wheels.
+                             # 2026-10-29 raised mount, warehouse floor: raw ring fit
+                             # 1.036 m (diag_pitch_rings.py, 0.3 cm spread), bird's-eye
+                             # floor −0.005 m at 1.03 m; tape ~1.0 m.  Was 0.80 m on the
+                             # 2026-07 mount.  Override per run: row_follow.py --lidar-height.
+LIDAR_TILT_DEG = 15.7        # nose-down pitch (deg), same calibration: per-ring median
+                             # 15.7° (all 14 floor rings ±0.1°), floor flat at 15.6°.
+                             # Calibrate on a FLAT floor — an outdoor patch sloping ~3°
+                             # read 12.5° / 0.93 m.  Default of every --lidar-tilt.
+LIDAR_YAW_DEG = 0.9          # mount yaw (deg, CCW +); box 2.8 m ahead read −0.9°.  Box
+                             # placement dominates (5 cm = 1° at 3 m) — pin it with a box
+                             # at 5–6 m on a string line.  Default of every --lidar-yaw.
 
 
 def set_mount_height(height_m: float) -> float:
@@ -120,8 +127,8 @@ def yaw_correct_pts(pts: np.ndarray, yaw_rad: float) -> np.ndarray:
 # ---------------------------------------------------------------------------
 # Minimum height above ground to classify a return as an obstacle.
 # In sensor frame this equals z > MIN_OBSTACLE_GROUND_HEIGHT − LIDAR_MOUNT_HEIGHT
-# = 0.15 − 0.99 = −0.84 m, which captures a 16-in (0.41 m) box whose top
-# is at sensor-frame z ≈ −0.58 m.
+# = 0.15 − 1.035 = −0.885 m, which captures a 16-in (0.41 m) box whose top
+# is at sensor-frame z ≈ −0.63 m.
 MIN_OBSTACLE_GROUND_HEIGHT = 0.15   # metres above ground
 
 # Safety corridor geometry

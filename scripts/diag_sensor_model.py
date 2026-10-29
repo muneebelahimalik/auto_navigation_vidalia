@@ -21,14 +21,18 @@ Run on the brain:
 from __future__ import annotations
 
 import socket
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 PORT = 2368
 PACKET = 1206
 
 _PRODUCTS = {
     0x21: ("HDL-32E", "±10.67° 32-ch"),
-    0x22: ("VLP-16 (Puck)", "±15°, 2.00° spacing — the driver's current table"),
-    0x24: ("VLP-16 Puck Hi-Res", "±10°, 1.33° spacing — DRIVER TABLE IS WRONG for this"),
+    0x22: ("VLP-16 (Puck)", "±15°, 2.00° spacing"),
+    0x24: ("VLP-16 Puck Hi-Res", "±10°, 1.33° spacing (this robot's unit)"),
     0x28: ("VLP-32C", "-25°..+15° 32-ch"),
     0x31: ("VLP-16 Puck LITE", "±15°, 2.00° spacing"),
 }
@@ -66,12 +70,14 @@ def main() -> None:
     print(f"  >>> MODEL         : {name}")
     print(f"      {note}")
     if pid_byte == 0x24:
-        print("\n  CONFIRMED: this is a Hi-Res. The driver's ±15° angle table is wrong;")
-        print("  switching it to the ±10° Hi-Res table makes the mount read its true")
-        print("  ~15° pitch and 0.80 m height (your tape + iPhone were correct).")
+        from lidar.lidar_driver import VLP16_VERTICAL_ANGLES, VLP16_VERTICAL_ANGLES_HIRES
+        ok = VLP16_VERTICAL_ANGLES == VLP16_VERTICAL_ANGLES_HIRES
+        print("\n  CONFIRMED: this is a Hi-Res, and the driver "
+              + ("uses the ±10° Hi-Res angle table — OK." if ok else
+                 "is NOT using the Hi-Res table — fix lidar_driver.VLP16_VERTICAL_ANGLES."))
     elif pid_byte == 0x22:
-        print("\n  This says standard VLP-16 (±15°). If the geometry still fits 1.17 m,")
-        print("  the channel angles need to be measured empirically — send me this output.")
+        print("\n  This says standard VLP-16 (±15°) — the driver's Hi-Res table would be")
+        print("  WRONG for it (set VLP16_VERTICAL_ANGLES = VLP16_VERTICAL_ANGLES_STD).")
 
 
 if __name__ == "__main__":

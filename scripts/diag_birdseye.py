@@ -38,6 +38,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from lidar.lidar_driver import LidarDriver
 from lidar.obstacle_filter import LIDAR_MOUNT_HEIGHT, tilt_correct_pts, yaw_correct_pts
+from lidar.obstacle_filter import LIDAR_TILT_DEG, LIDAR_YAW_DEG
 
 
 def locate_forward_objects(pts: np.ndarray, applied_yaw_deg: float,
@@ -256,7 +257,7 @@ def save_png(pts: np.ndarray, out: str, max_range: float,
     ax.set_ylim(0, max_range)
     ax.set_xlabel("X → RIGHT (m)")
     ax.set_ylabel("Y → FORWARD (m)")
-    ax.set_title(f"Forward bird's-eye  yaw={yaw_deg:.0f}°  tilt={tilt_deg:.0f}°\n"
+    ax.set_title(f"Forward bird's-eye  yaw={yaw_deg:.1f}°  tilt={tilt_deg:.1f}°\n"
                  f"n_fwd={len(fwd_pts):,}  n_total={len(pts):,}")
     ax.legend(fontsize=7, loc="lower right")
     ax.grid(True, alpha=0.3)
@@ -303,14 +304,13 @@ async def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--scans", type=int, default=5)
-    ap.add_argument("--lidar-yaw", type=float, default=0.0, metavar="DEG",
-                    help="Mount yaw correction (CCW positive). Default 0 (2026-07 rigid "
-                         "forward-facing re-mount; was 66). Verify with the object locator.")
-    ap.add_argument("--lidar-tilt", type=float, default=15.0, metavar="DEG",
+    ap.add_argument("--lidar-yaw", type=float, default=LIDAR_YAW_DEG, metavar="DEG",
+                    help=f"Mount yaw correction (CCW positive). Default {LIDAR_YAW_DEG} "
+                         "(LIDAR_YAW_DEG). Verify with the object locator.")
+    ap.add_argument("--lidar-tilt", type=float, default=LIDAR_TILT_DEG, metavar="DEG",
                     help="Nose-down pitch correction (degrees), applied AFTER yaw. "
-                         "Default 15 (2026-07 forward-facing re-mount; matches phone-level and "
-                         "raw ring geometry once the Hi-Res channel angles are used). "
-                         "Use --tilt-sweep 12:18:0.25 to re-derive (slope → 0 near 15°).")
+                         f"Default {LIDAR_TILT_DEG} (LIDAR_TILT_DEG). Re-derive on a FLAT floor "
+                         "with --tilt-sweep 13:18:0.25 and diag_pitch_rings.py.")
     ap.add_argument("--tilt-sweep", default="", metavar="LO:HI:STEP",
                     help="Sweep tilt (after yaw) and report the ground-ramp slope "
                          "per angle to find the value that flattens the ground, "

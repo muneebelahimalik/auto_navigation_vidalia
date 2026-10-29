@@ -6,7 +6,7 @@ def generate_launch_description():
 #   x = 0.85 m   (1 ft forward of the front-tire centres, ~0.55 m ahead of
 #                base_link = half the ~1.10 m wheelbase; confirm half-wheelbase)
 #   y = 0.000 m  (centered on robot centreline)
-#   z = 0.990 m  (LiDAR spin-axis height above ground; tape ~0.98–1.00, robot on wheels; 2026-10 raised mount)
+#   z = 1.035 m  (LiDAR spin-axis height above ground; raw ring fit 2026-10-29, robot on wheels)
     #
     # NOTE: this dev-PC ROS 2 stack consumes the RAW velodyne cloud, so — unlike
     # the native brain stack, where row_navigator corrects the cloud — the mount
@@ -22,6 +22,6 @@ def generate_launch_description():
         executable='static_transform_publisher',
         name='static_base_to_velodyne',
         output='screen',
-        arguments=['0.85', '0', '0.990', '0', '0', '0', 'base_link', 'velodyne']
+        arguments=['0.85', '0', '1.035', '0', '0', '0', 'base_link', 'velodyne']
     )
     return LaunchDescription([static_tf])

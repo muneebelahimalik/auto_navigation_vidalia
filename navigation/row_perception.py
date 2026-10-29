@@ -665,6 +665,7 @@ class RowDetector:
         self._qcut_run = 0
         self.bed_end_cut_scans = 6
         self.bed_q2_abs = 0.05                 # m; second-quarter relief that is always "bed"
+        self._bed_end_armed = False            # far bed seen since reset (see _bed_shape)
         self._bed_ending = False               # diagnostic + latch: bed seen ending ≲ 3 m ahead
         self._turning = False                  # navigator: headland U-turn in progress
         self._far_back = 0
@@ -983,7 +984,7 @@ class RowDetector:
             # all; the grass beyond dragged it to ~10°).
             yq_ = 0.25 * (3 * self.roi_y_min + self.roi_y_max)
             hold = (y_cut is not None and y_cut <= yq_ + 1e-6
-                    and self._bed_axis is not None)
+                    and self._bed_axis is not None and self._bed_end_armed)
             ang = self._bed_box_heading(pts, y_cut) if (have and not hold) else None
             if ang is None and have and not hold:
                 ang = self._bed_relief_heading(pts)
@@ -1791,7 +1792,16 @@ class RowDetector:
             q2_ok = f2c > 0.0 and (self._q2_base is None
                                    or f2c >= min(self.bed_far_ratio * self._q2_base,
                                                  self.bed_q2_abs))
-            if q2_ok:
+            if self._q2_base is None and f2c >= self.bed_q2_abs:
+                self._q2_base = f2c           # this quarter has shown the bed
+            if self._far_base is None and self._q2_base is None:
+                # The far bed has never shown relief since the reset: a short
+                # view (tall canopy), not an end — keep the whole swath.  Cutting
+                # the axis search to the nearest 1.4 m let it run away 0 → 10°
+                # (sim, 0.70 m plants, 15.7° mount: 25 cm at confidence 0.9).
+                self._bed_y_cut = None
+                r = self._bed_centre_robust(xs, hd)
+            elif q2_ok:
                 self._bed_y_cut = ymid
                 r = self._bed_centre_robust(xs[near], hd[near])
             else:
@@ -1799,8 +1809,15 @@ class RowDetector:
                 r = self._bed_centre_robust(xs[q1], hd[q1])
         else:
             return None
+        # A bed END is a CHANGE — the far bed was seen, then fades.  If neither
+        # the far half nor the second quarter has shown any relief since the
+        # reset, there is no evidence of an end, only of a short view (tall
+        # canopy from the steeper 15.7° mount: the second quarter never shows
+        # relief, and the latch capped confidence at 0.3 from the first metre).
+        self._bed_end_armed = self._far_base is not None or self._q2_base is not None
         self._qcut_run = self._qcut_run + 1 if (
-            self._bed_y_cut is not None and self._bed_y_cut <= yq + 1e-6) else 0
+            self._bed_y_cut is not None and self._bed_y_cut <= yq + 1e-6
+            and self._bed_end_armed) else 0
         # Latch "bed ending" once the quarter cut is sustained; release only
         # when the far bed is clearly back (10 scans) or on reset().
         if self._qcut_run >= self.bed_end_cut_scans:

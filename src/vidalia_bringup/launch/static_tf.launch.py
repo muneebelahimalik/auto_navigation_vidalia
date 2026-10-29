@@ -3,7 +3,7 @@ from launch_ros.actions import Node
 
 def generate_launch_description():
     # 2026-07 forward-facing re-mount: x=0.85 m (1 ft ahead of front-tire centres,
-    # ~0.55 m ahead of base_link), z=0.990 m (tape ~0.98–1.00, robot on wheels; 2026-10 raised mount).
+    # ~0.55 m ahead of base_link), z=1.035 m (raw ring fit 2026-10-29, robot on wheels).
     # See tf_static_base_to_velodyne.launch.py — for this RAW-cloud ROS stack the
     # ~15° nose-down mount pitch must go in this transform, and the velodyne
     # driver needs the VLP-16 Puck Hi-Res calibration (unit is Hi-Res).
@@ -12,7 +12,7 @@ def generate_launch_description():
         executable='static_transform_publisher',
         name='base_to_velodyne_tf',
         output='screen',
-        arguments=['0.85', '0', '0.990', '0', '0', '0', 'base_link', 'velodyne']
+        arguments=['0.85', '0', '1.035', '0', '0', '0', 'base_link', 'velodyne']
     )
 
     return LaunchDescription([base_to_velodyne])

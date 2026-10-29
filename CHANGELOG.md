@@ -4,6 +4,29 @@ All notable changes to this project are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/);
 versions are git tags on `main`.
 
+## [Unreleased] — raised-mount calibration: 1.035 m / 15.7° / yaw 0.9° (2026-10-29)
+
+Measured on a flat warehouse floor: raw ring fit 15.7–15.8° / 1.036 m (all 14
+floor rings within 0.1°), floor −0.005 m at 1.03 m, 0.40 m box reads 0.40 m,
+box azimuth −0.9° at 2.8 m.  (An outdoor run on ground sloping ~3° read
+12.5° / 0.93 m — calibrate on flat ground only.)
+
+### Changed
+- `obstacle_filter`: `LIDAR_MOUNT_HEIGHT = 1.035`, new `LIDAR_TILT_DEG = 15.7`
+  and `LIDAR_YAW_DEG = 0.9` — the defaults of `row_follow.py`,
+  `slam_mapper.py`, `diag_birdseye.py`, the SLAM engine and the onion
+  simulator (no calibration flags needed any more); ROS bridge / URDF /
+  launch z = 1.035.
+- Bed-end logic arms only after the far half or second quarter has shown
+  bed relief since the reset (tall canopy at the steeper tilt: a false latch
+  capped confidence at 0.3, and the near-quarter axis search ran away 10°).
+- `diag_birdseye`: finds the box among clutter (box-height threshold,
+  straight-ahead corridor search); `diag_sensor_model` no longer prints the
+  stale "driver table is wrong" message.
+- Onion stack re-validated at the calibrated geometry (all stages ≤ 2.4 cm
+  bias, heading ≤ 0.6°, bed end 2.3–3.6 m early); tracks mature plants up to
+  ~0.82 m, stops ≳ 0.86 m.
+
 ## [Unreleased] — LiDAR raised to ~0.99 m: recalibration support (2026-10-23)
 
 The VLP-16 was raised from 0.80 m to ~0.98–1.00 m (tape); mount otherwise

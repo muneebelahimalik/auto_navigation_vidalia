@@ -30,6 +30,7 @@ from typing import List, Optional, Tuple
 import numpy as np
 
 from lidar.lidar_driver import VelodynePoint
+from lidar.obstacle_filter import LIDAR_TILT_DEG, LIDAR_YAW_DEG
 from slam.scan_matcher import (
     Pose2D,
     SLICE_MAX_GND,
@@ -56,8 +57,8 @@ from slam.voxel_map import VoxelMap
 # into the robot frame before slicing — see scan_matcher.correct_scan and
 # CLAUDE.md (LiDAR yaw/tilt calibration).  Older 66°/21.5° predates both the
 # re-mount and the Hi-Res angle fix.
-_DEFAULT_YAW_DEG = 0.0
-_DEFAULT_TILT_DEG = 15.0
+_DEFAULT_YAW_DEG = LIDAR_YAW_DEG
+_DEFAULT_TILT_DEG = LIDAR_TILT_DEG
 
 # ---------- ICP / submap parameters -----------------------------------------
 # ICP result is rejected if mean error exceeds this (metres).

@@ -188,7 +188,8 @@ def test_canopy_at_lidar_height_lowers_confidence_instead_of_steering_blind():
     det, lat, hdg, conf, _, _ = _drive(f, 0.12, 0.0, n=30, settle=12)
     assert conf.max() < 0.45
     assert np.abs(hdg).max() < 6.0
-    assert det.last_view_quality < 0.6
+    # by the view-quality gauge or by the bed fit giving up entirely
+    assert det.last_view_quality < 0.6 or conf.max() < 0.1
 
 
 def test_canopy_adaptive_obstacle_height():

@@ -69,7 +69,7 @@ try:                    # LiDAR drum-centre height above ground (m) — single s
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     from lidar.obstacle_filter import LIDAR_MOUNT_HEIGHT as MOUNT_H
 except Exception:       # standalone copy of this script: 2026-10 raised mount
-    MOUNT_H = 0.99
+    MOUNT_H = 1.035
 ROI_Y = (1.5, 7.0)      # detection ROI forward extent (m)
 ROI_X = 0.80            # detection ROI half-width (m)
 SELF_R = 1.5            # self-filter radius (m)

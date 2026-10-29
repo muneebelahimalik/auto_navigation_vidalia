@@ -45,7 +45,7 @@ from typing import Optional
 import numpy as np
 
 from lidar.lidar_driver import VLP16_VERTICAL_ANGLES_HIRES
-from lidar.obstacle_filter import LIDAR_MOUNT_HEIGHT
+from lidar.obstacle_filter import LIDAR_MOUNT_HEIGHT, LIDAR_TILT_DEG
 
 PITCH = 1.83                     # 72 in bed centres
 ROW_SP = 0.2794                  # 11 in
@@ -99,7 +99,7 @@ class FieldConfig:
 @dataclass
 class SensorConfig:
     height: float = LIDAR_MOUNT_HEIGHT
-    tilt_deg: float = 12.3       # field calibration (2026-10)
+    tilt_deg: float = LIDAR_TILT_DEG   # the robot's calibrated mount pitch
     az_half_deg: float = 62.0    # simulate only the forward sector the detector uses
     az_step_deg: float = 0.2
     beam_half_div_deg: float = 0.08

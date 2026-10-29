@@ -63,6 +63,7 @@ if _FARMNG_SITE.exists() and str(_FARMNG_SITE) not in sys.path:
 
 from lidar.lidar_driver import LidarDriver
 from lidar.obstacle_filter import validate_lidar_startup, tilt_correct_pts
+from lidar.obstacle_filter import LIDAR_TILT_DEG as _LIDAR_TILT_DEG, LIDAR_YAW_DEG as _LIDAR_YAW_DEG
 from navigation.row_controller import PurePursuitController
 from navigation.row_navigator import RowNavigator
 from navigation.row_perception import RowDetector
@@ -1038,25 +1039,22 @@ def main() -> None:
                              "estimates the forward ground grade each scan and removes its slope "
                              "so crop stays inside the height band on sloped/undulating fields; "
                              "pass this to revert to a fixed flat-ground height band.")
-    parser.add_argument("--lidar-tilt", type=float, default=15.0, metavar="DEG",
+    parser.add_argument("--lidar-tilt", type=float, default=_LIDAR_TILT_DEG, metavar="DEG",
                         help="Forward (nose-down) PITCH correction of the LiDAR mount in degrees, "
-                             "applied AFTER --lidar-yaw (default: 15 — 2026-07 forward-facing "
-                             "re-mount, phone-level ~15° and raw ring geometry 14.8° agree once the "
-                             "driver uses the correct VLP-16 *Hi-Res* channel angles. The earlier "
-                             "21.7° was an artifact of the driver's wrong ±15° angle table stretching "
-                             "the vertical geometry; that is fixed in lidar_driver.py. Re-verify with "
-                             "diag_birdseye.py --tilt-sweep 12:18:0.25 — slope should cross zero ~15°.")
-    parser.add_argument("--lidar-yaw", type=float, default=0.0, metavar="DEG",
+                             f"applied AFTER --lidar-yaw (default: {_LIDAR_TILT_DEG} — LIDAR_TILT_DEG, "
+                             "2026-10-29 raised mount on a flat warehouse floor: raw ring fit 15.7°). "
+                             "Re-derive with diag_pitch_rings.py and diag_birdseye.py --tilt-sweep on "
+                             "FLAT ground after any mount change.")
+    parser.add_argument("--lidar-yaw", type=float, default=_LIDAR_YAW_DEG, metavar="DEG",
                         help="Yaw of the LiDAR mount relative to robot forward, CCW positive "
-                             "(degrees, default: 0 — 2026-07 rigid forward-facing re-mount; was 66. "
-                             "Verify with diag_birdseye.py object locator, a target placed straight "
-                             "ahead should read azimuth ~0°). Applied FIRST (after self-filter, "
-                             "before tilt) so the tilt then rotates the pitch about the robot's "
-                             "left-right axis.")
+                             f"(degrees, default: {_LIDAR_YAW_DEG} — LIDAR_YAW_DEG). Verify with the "
+                             "diag_birdseye.py object locator (a box straight ahead should read "
+                             "azimuth ~0°). Applied FIRST (after self-filter, before tilt) so the "
+                             "tilt then rotates the pitch about the robot's left-right axis.")
     parser.add_argument("--lidar-height", type=float, default=None, metavar="M",
                         help="LiDAR drum-centre height above the ground (m) for this run, "
                              "overriding LIDAR_MOUNT_HEIGHT in lidar/obstacle_filter.py "
-                             "(default: the code constant, 0.99 m — 2026-10 raised mount). Use the "
+                             "(default: the code constant, 1.035 m — 2026-10-29 raised mount). Use the "
                              "height solved by diag_pitch_rings.py / diag_birdseye.py --tilt-sweep "
                              "until the constant is updated; every crop/obstacle height is "
                              "measured from it.")
