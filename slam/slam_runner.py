@@ -18,6 +18,7 @@ Mapping only — this never commands the wheels.
 
 from __future__ import annotations
 
+import math
 import threading
 import time
 from typing import Optional
@@ -32,6 +33,8 @@ class SlamRunner:
         self.engine = engine
         self._idle_sleep = idle_sleep
         self._latest: Optional[np.ndarray] = None
+        self._latest_odom: Optional[tuple] = None   # odometry (x, y, θ) at submit
+        self._last_odom: Optional[tuple] = None     # … at the last PROCESSED scan
         self._lock = threading.Lock()
         self._stop = False
         self._thread = threading.Thread(target=self._loop, daemon=True, name="slam")
@@ -43,12 +46,19 @@ class SlamRunner:
     def start(self) -> None:
         self._thread.start()
 
-    def submit(self, pts: np.ndarray) -> None:
-        """Hand the latest scan (Nx3, sensor frame) to the worker. Non-blocking."""
+    def submit(self, pts: np.ndarray, odom_pose: Optional[tuple] = None) -> None:
+        """Hand the latest scan (Nx3, sensor frame) to the worker. Non-blocking.
+
+        ``odom_pose`` = the wheel-odometry pose ``(x, y, θ)`` (x along θ = 0,
+        CCW θ) when the scan was taken.  The worker turns the change between the
+        scans it actually PROCESSES (it drops the ones it cannot keep up with)
+        into the ``(ds, dθ)`` warm start — without it ICP alone collapsed the
+        along-row motion in an onion field (175 m mapped as 7.9 m)."""
         if pts is None or len(pts) == 0:
             return
         with self._lock:
             self._latest = pts            # keep only the most recent
+            self._latest_odom = odom_pose
             self.scans_submitted += 1
 
     def stop(self, timeout: float = 2.0) -> None:
@@ -61,12 +71,20 @@ class SlamRunner:
         while not self._stop:
             with self._lock:
                 pts = self._latest
+                odom = self._latest_odom
                 self._latest = None
             if pts is None:
                 time.sleep(self._idle_sleep)
                 continue
+            delta = None
+            if odom is not None and self._last_odom is not None:
+                x0, y0, t0 = self._last_odom
+                ds = (odom[0] - x0) * math.cos(t0) + (odom[1] - y0) * math.sin(t0)
+                dth = (odom[2] - t0 + math.pi) % (2 * math.pi) - math.pi
+                delta = (ds, dth)
+            self._last_odom = odom
             try:
-                self.engine.process_scan(pts)
+                self.engine.process_scan(pts, odom_delta=delta)
                 self.scans_processed += 1
             except Exception:           # never let mapping crash driving
                 self.errors += 1

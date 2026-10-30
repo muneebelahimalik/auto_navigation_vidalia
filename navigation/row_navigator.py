@@ -407,7 +407,9 @@ class RowNavigator:
                 # runner, which applies its own yaw/tilt and maps in a separate
                 # thread.  O(1) here (stores latest); never blocks control.
                 if self.slam is not None:
-                    self.slam.submit(pts.copy())
+                    od = self.odometry
+                    self.slam.submit(pts.copy(), None if od is None
+                                     else (od.x, od.y, od.theta))
                 # Order matters: yaw FIRST, then tilt.  The yaw aligns the cloud
                 # to the robot frame so the subsequent tilt rotates about the
                 # robot's left-right (X) axis — i.e. corrects a true nose-down

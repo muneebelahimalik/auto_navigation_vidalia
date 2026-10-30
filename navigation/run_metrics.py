@@ -157,16 +157,22 @@ def compute_run_metrics(records: List[dict], *, coverage: Optional[dict] = None)
     grade = _arr(records, "grade_deg")
     drop = _arr(records, "drop_m")
 
-    # Distance: prefer the drift-corrected SLAM path; else sum per-row maxima.
+    # Distance: prefer the drift-corrected SLAM path; else sum per-row maxima
+    # (wheel odometry).  The SLAM path is only trusted if it roughly agrees
+    # with the in-row odometry: on 2026-10-29 SLAM collapsed the along-row
+    # motion (no odometry fed) and reported 7.9 m for a 180 m run.
+    per_row_dist = {}
+    for r in records:
+        per_row_dist[int(r.get("rows_done", 0))] = max(
+            per_row_dist.get(int(r.get("rows_done", 0)), 0.0),
+            float(r.get("row_dist", 0.0) or 0.0))
+    odom_distance = float(sum(per_row_dist.values()))
+    distance = odom_distance
+    distance_source = "odometry"
     if coverage and coverage.get("path_length_m"):
-        distance = float(coverage["path_length_m"])
-    else:
-        per_row_dist = {}
-        for r in records:
-            per_row_dist[int(r.get("rows_done", 0))] = max(
-                per_row_dist.get(int(r.get("rows_done", 0)), 0.0),
-                float(r.get("row_dist", 0.0) or 0.0))
-        distance = float(sum(per_row_dist.values()))
+        slam_path = float(coverage["path_length_m"])
+        if odom_distance <= 0 or slam_path >= 0.7 * odom_distance:
+            distance, distance_source = slam_path, "slam"
 
     turns = _turns(records)
     metrics = {
@@ -174,6 +180,7 @@ def compute_run_metrics(records: List[dict], *, coverage: Optional[dict] = None)
         "duration_s": round(duration, 2),
         "scan_rate_hz": round(n / duration, 2) if duration > 0 else 0.0,
         "distance_m": round(distance, 2),
+        "distance_source": distance_source,
         "rows_completed": int(max((r.get("rows_done", 0) for r in records), default=0)),
         "rows_total": int(max((r.get("rows_total", 0) for r in records), default=0)),
         "state_fraction": state_frac,

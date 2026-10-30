@@ -4,6 +4,20 @@ All notable changes to this project are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/);
 versions are git tags on `main`.
 
+## [Unreleased] — SLAM keeps along-row motion; 5–6× cheaper (2026-10-30)
+
+### Fixed
+- Field run 2026-10-29 (onion, 180 m + U-turn) mapped as a 7.9 m path: the
+  SLAM thread got no wheel odometry, and along parallel rows of plants every
+  ~10 cm ICP aliased back toward zero motion.  `row_follow` now feeds the
+  navigator's odometry to SLAM (`SlamRunner.submit(pts, odom_pose)`), and with
+  odometry ICP may move the pose ≤ 3 cm along track per processed scan.
+- Odometry prediction moved the pose sideways (forward is sensor +Y).
+- `icp_points` was ignored; ICP/outlier search used N×M×2 difference tensors
+  → BLAS distances + grid outlier removal (~350 → ~60 ms/scan).
+- `summary.json` `distance_m` falls back to odometry when the SLAM path
+  disagrees (`distance_source`).
+
 ## [Unreleased] — never hang on a LiDAR port held by an old run (2026-10-29)
 
 ### Fixed

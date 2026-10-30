@@ -507,6 +507,24 @@ leave a faint seam in the cloud at revisits — acceptable for lawnmower coverag
 `--map-3d` (off by default), `--voxel-3d M` (0.15 m; smaller = denser, more
 memory). Regression-locked in `tests/test_slam.py`.
 
+**Crop rows need wheel odometry (field 2026-10-29: a 180 m onion run mapped
+as a 7.9 m path).**  Along parallel rows ICP is degenerate, and with plants
+every ~10 cm it ALIASES: the SLAM thread (latest-scan-only) saw a scan every
+0.2–0.7 m on the Jetson, so each match snapped back toward zero along-track
+motion.  Now: `row_follow` hands the navigator's odometry pose to
+`SlamRunner.submit(pts, odom_pose)` and the runner turns it into `(ds, dθ)`
+between the scans it actually processes; with odometry, ICP keeps its
+cross-track/heading correction but may move the pose at most
+`_ODOM_ALONG_MAX` (3 cm) along track per processed scan
+(`SlamEngine._limit_along_track`).  Also fixed: the odometry prediction moved
+the pose SIDEWAYS (robot forward is sensor +Y = (−sin θ, cos θ));
+`icp_points` (400) was never applied; brute-force N×M difference tensors →
+BLAS distances + grid outlier removal: ~350 → ~60 ms/scan (x86), much less CPU
+taken from the driving loop.  `run_metrics` uses the SLAM path for
+`distance_m` only if it is ≥ 70 % of the odometry row distance
+(`distance_source` says which).  Sim: periodic onion rows, scan every 0.25 m —
+no odometry 2.3 m of 14.75 m, with odometry (2 % scale error) 14.66 m.
+
 **Critical — same yaw/tilt correction as row-follow.** SLAM yaw/tilt-corrects
 the raw VLP-16 cloud into the robot frame (`slam/scan_matcher.py::correct_scan`,
 **yaw first then tilt**) before slicing. Without it the ~15° nose-down tilt

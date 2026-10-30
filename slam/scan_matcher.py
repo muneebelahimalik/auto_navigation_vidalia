@@ -188,6 +188,34 @@ def deskew_scan(pts: np.ndarray, fwd_speed: float, scan_period: float = 0.1) -> 
     return result
 
 
+def _sq_dists(a: np.ndarray, b: np.ndarray) -> np.ndarray:
+    """N×M squared distances via ‖a‖² + ‖b‖² − 2a·b (one BLAS product; the
+    N×M×2 difference tensor was ~80 % of the SLAM time — ~1 s/scan on x86)."""
+    a2 = np.einsum("ij,ij->i", a, a)[:, None]
+    b2 = np.einsum("ij,ij->i", b, b)[None, :]
+    return np.maximum(a2 + b2 - 2.0 * (a @ b.T), 0.0)
+
+
+def _remove_outliers_grid(pts: np.ndarray, cell: float = 0.30, min_nb: int = 3) -> np.ndarray:
+    """O(N log N) isolated-point removal for large clouds: keep points with at
+    least ``min_nb`` points (themselves included) in the 3×3 cells around
+    them.  A dense crop field leaves ~3000 points after the 0.15 m voxel grid,
+    where the exact all-pairs k-NN cost ~250 ms per scan."""
+    keys = np.floor(pts / cell).astype(np.int64)
+    off = 1 << 20
+    packed = (keys[:, 0] + off) * (1 << 21) + (keys[:, 1] + off)
+    uniq, inv, counts = np.unique(packed, return_inverse=True, return_counts=True)
+    nb = np.zeros(len(pts), dtype=np.int64)
+    for dx in (-1, 0, 1):
+        for dy in (-1, 0, 1):
+            q = packed + dx * (1 << 21) + dy
+            j = np.searchsorted(uniq, q)
+            j = np.clip(j, 0, len(uniq) - 1)
+            hit = uniq[j] == q
+            nb[hit] += counts[j[hit]]
+    return pts[nb >= min_nb]
+
+
 def remove_outliers(pts: np.ndarray, k: int = 8, std_mult: float = 2.0) -> np.ndarray:
     """
     Statistical outlier removal: discard points whose mean distance to their
@@ -198,8 +226,9 @@ def remove_outliers(pts: np.ndarray, k: int = 8, std_mult: float = 2.0) -> np.nd
     """
     if len(pts) <= k + 1:
         return pts
-    diff = pts[:, None, :] - pts[None, :, :]        # N × N × 2
-    sq = np.einsum("ijk,ijk->ij", diff, diff)         # N × N
+    if len(pts) > 800:
+        return _remove_outliers_grid(pts)
+    sq = _sq_dists(pts, pts)                          # N × N
     # k nearest excluding self (self-distance = 0 is always the minimum)
     knn_sq = np.partition(sq, k + 1, axis=1)[:, 1:k + 1]
     mean_dists = np.sqrt(knn_sq).mean(axis=1)         # N
@@ -238,8 +267,7 @@ def icp_2d(
 
     for _ in range(max_iter):
         # --- nearest-neighbour correspondences ---
-        diff = src[:, None, :] - target_world[None, :, :]   # N × M × 2
-        sq = np.einsum("ijk,ijk->ij", diff, diff)            # N × M
+        sq = _sq_dists(src, target_world)                    # N × M
         nn_idx = np.argmin(sq, axis=1)
         nn_d = np.sqrt(sq[np.arange(len(src)), nn_idx])
 

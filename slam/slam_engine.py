@@ -73,6 +73,10 @@ _REF_WINDOW = 8
 # Target point count for the merged reference scan fed into ICP.
 _REF_MAX_PTS = 1200
 
+# With wheel odometry, ICP may move the pose at most this far ALONG the direction
+# of travel per processed scan (rows are degenerate/aliased along-track).
+_ODOM_ALONG_MAX = 0.03           # metres
+
 # ---------- Physical motion caps ---------------------------------------------
 # Robot max speed 0.8 m/s; LiDAR worst-case ~1.5 Hz → 0.53 m/scan.
 # Cap is generous to handle LiDAR rate variation without clipping real motion.
@@ -199,12 +203,33 @@ class SlamEngine:
         ds     : forward arc distance in metres
         dtheta : heading change in radians (CCW positive)
         """
+        # Robot forward is the sensor +Y axis, i.e. world R(θ)·(0, 1) =
+        # (−sin θ, cos θ) — the earlier (cos θ, sin θ) predicted SIDEWAYS motion
+        # and left ICP to undo it.
         mid_theta = current.theta + dtheta / 2.0
         return Pose2D(
-            current.x + ds * math.cos(mid_theta),
-            current.y + ds * math.sin(mid_theta),
+            current.x - ds * math.sin(mid_theta),
+            current.y + ds * math.cos(mid_theta),
             current.theta + dtheta,
         )
+
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _limit_along_track(icp_pose: Pose2D, odom_pose: Pose2D) -> Pose2D:
+        """Keep ICP's cross-track and heading correction, but bound how far it
+        may move the pose ALONG the direction of travel from the wheel-odometry
+        prediction.  Crop rows are parallel lines repeating every plant
+        (onions: 10 cm): along them ICP is degenerate/aliased and snapped each
+        step back toward zero motion — a 175 m field run mapped as a 7.9 m
+        path (2026-10-29).  Wheel odometry is good to ~1–2 % along track."""
+        fx, fy = -math.sin(odom_pose.theta), math.cos(odom_pose.theta)
+        dx, dy = icp_pose.x - odom_pose.x, icp_pose.y - odom_pose.y
+        along = dx * fx + dy * fy
+        lim = _ODOM_ALONG_MAX
+        if abs(along) <= lim:
+            return icp_pose
+        excess = along - math.copysign(lim, along)
+        return Pose2D(icp_pose.x - excess * fx, icp_pose.y - excess * fy, icp_pose.theta)
 
     # ------------------------------------------------------------------
     def _apply_motion_caps(self, new_pose: Pose2D, ref_pose: Pose2D) -> Pose2D:
@@ -319,9 +344,14 @@ class SlamEngine:
         icp_err = 0.0
         pose_est = pose_predicted
         if ref is not None and len(ref) >= 10:
-            refined, icp_err = icp_2d(pts_ds, ref, pose_predicted)
+            src = pts_ds
+            if self._icp_points and len(src) > self._icp_points:
+                src = src[np.linspace(0, len(src) - 1, self._icp_points).astype(int)]
+            refined, icp_err = icp_2d(src, ref, pose_predicted)
             if icp_err < ICP_REJECT_THRESHOLD:
                 pose_est = refined
+                if odom_delta is not None:
+                    pose_est = self._limit_along_track(pose_est, pose_predicted)
 
         # --- 2. Velocity / rotation caps ---
         with self._lock:

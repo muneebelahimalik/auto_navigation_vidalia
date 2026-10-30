@@ -350,3 +350,76 @@ def test_slam_runner_ignores_empty_submissions():
     runner.submit(None)
     runner.submit(np.zeros((0, 3)))
     assert runner.scans_submitted == 0
+
+
+# ---------------------------------------------------------------------------
+# Crop rows: along-track degeneracy (field 2026-10-29: 175 m mapped as 7.9 m)
+# ---------------------------------------------------------------------------
+def test_odom_prediction_moves_robot_forward_not_sideways():
+    """Robot forward is sensor +Y = world R(θ)·(0, 1); the old prediction moved
+    along (cos θ, sin θ), i.e. sideways."""
+    e = SlamEngine(grid_size_m=20.0)
+    p = e._predict_pose_odom(Pose2D(0.0, 0.0, 0.0), 1.0, 0.0)
+    assert abs(p.x) < 1e-9 and abs(p.y - 1.0) < 1e-9
+    p = e._predict_pose_odom(Pose2D(0.0, 0.0, math.pi / 2), 1.0, 0.0)
+    assert abs(p.x + 1.0) < 1e-9 and abs(p.y) < 1e-9
+
+
+def _onion_rows_world(seed=0):
+    rng = np.random.default_rng(seed)
+    pts = []
+    for k in (-1, 0, 1):
+        for off in (-0.42, -0.14, 0.14, 0.42):          # 4 rows / bed, plants 10 cm apart
+            ys = np.arange(-5.0, 25.0, 0.10)
+            for _ in range(3):
+                pts.append(np.column_stack([k * 1.83 + off + rng.normal(0, 0.02, len(ys)),
+                                            ys + rng.normal(0, 0.015, len(ys)),
+                                            rng.uniform(0.06, 0.20, len(ys))]))
+    return np.vstack(pts)
+
+
+def _raw_view(world, py):
+    from lidar.obstacle_filter import LIDAR_TILT_DEG, LIDAR_YAW_DEG
+    xr, yr = world[:, 0], world[:, 1] - py
+    m = (np.hypot(xr, yr) > 1.5) & (np.hypot(xr, yr) < 9.0)
+    pts = np.column_stack([xr[m], yr[m], world[m, 2] - LIDAR_MOUNT_HEIGHT])
+    pts = tilt_correct_pts(pts, -math.radians(LIDAR_TILT_DEG))
+    return yaw_correct_pts(pts, -math.radians(LIDAR_YAW_DEG))
+
+
+def test_odometry_keeps_along_row_motion_through_aliased_plants():
+    """Periodic plants make ICP alias along the row when the SLAM thread only
+    sees a scan every ~0.25 m (Jetson): alone it collapses the motion; with
+    wheel odometry (2 % scale error) the path stays metric."""
+    world = _onion_rows_world()
+    step, n = 0.25, 24
+    ends = {}
+    for use_odom in (False, True):
+        e = SlamEngine(grid_size_m=60.0)
+        for i in range(n):
+            e.process_scan(_raw_view(world, i * step),
+                           odom_delta=(1.02 * step, 0.0) if (use_odom and i) else None)
+        ends[use_odom] = e.get_state().pose.y
+    truth = (n - 1) * step
+    assert abs(ends[True] - truth) < 0.04 * truth
+    assert ends[False] < 0.5 * truth            # documents the failure mode
+
+
+def test_slam_runner_turns_odometry_poses_into_deltas():
+    """The runner converts the navigator's odometry pose at submit time into
+    (ds, dθ) between the scans it actually processes."""
+    world = _onion_rows_world()
+    e = SlamEngine(grid_size_m=60.0)
+    runner = SlamRunner(e, idle_sleep=0.001)
+    runner.start()
+    try:
+        for i in range(16):
+            y = i * 0.25                     # navigator odometry: x along θ = 0
+            runner.submit(_raw_view(world, y), odom_pose=(y, 0.0, 0.0))
+            deadline = time.monotonic() + 5.0
+            while runner.scans_processed < i + 1 and time.monotonic() < deadline:
+                time.sleep(0.005)
+    finally:
+        runner.stop()
+    assert runner.errors == 0
+    assert abs(e.get_state().pose.y - 15 * 0.25) < 0.15
