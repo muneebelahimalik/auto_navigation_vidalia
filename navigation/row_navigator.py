@@ -122,6 +122,7 @@ class RowNavigator:
         headland_speed: float = 0.15,
         headland_turn_rate: float = 0.30,
         headland_radius: float = 0.0,
+        headland_arc_cap: float = 3.0,
         turn_scrub_comp: float = 0.5,
         reacquire_conf: float = 0.72,
         reacquire_align_deg: float = 11.5,
@@ -282,6 +283,7 @@ class RowNavigator:
                 turn_radius=(headland_radius if headland_radius > 0.0 else None),
                 heading_source=heading_source,
                 scrub_comp=turn_scrub_comp,
+                max_turn_frac=headland_arc_cap,
             )
         self.align_heading = align_heading
         self.align_thresh = align_thresh

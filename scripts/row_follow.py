@@ -525,6 +525,7 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
         headland_speed=args.headland_speed,
         headland_turn_rate=args.headland_turn_rate,
         headland_radius=args.headland_radius,
+        headland_arc_cap=args.headland_arc_cap,
         turn_scrub_comp=args.turn_scrub_comp,
         reacquire_conf=args.reacquire_conf,
         approach_speed=args.approach_speed,
@@ -581,7 +582,8 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
         print(f"  headland: IMU/perception arc U-turn first={args.turn_dir} "
               f"(then alternating)  radius={radius_str}  "
               f"exit={args.headland_exit:.2f}m  rate={args.headland_turn_rate:.2f}rad/s  "
-              f"reacq-conf={args.reacquire_conf:.2f}  scrub-comp={args.turn_scrub_comp:.2f}")
+              f"reacq-conf={args.reacquire_conf:.2f}  scrub-comp={args.turn_scrub_comp:.2f}  "
+              f"arc-cap={args.headland_arc_cap:.1f}×half-circle")
     print(f"  speed   : {args.speed:.2f} m/s max  full-speed conf≥{args.speed_conf_full:.2f}  "
           f"accel≤{args.accel_limit:.2f} decel≤{args.decel_limit:.2f} m/s²")
     print(f"  SLAM map: {'on' if args.slam else 'off'}")
@@ -912,6 +914,13 @@ def main() -> None:
     parser.add_argument("--headland-turn-rate", type=float, default=0.30, metavar="R",
                         help="Angular rate (rad/s) of the headland U-turn arc "
                              "(default: 0.30). Arc forward speed = radius × this rate.")
+    parser.add_argument("--headland-arc-cap", type=float, default=3.0, metavar="K",
+                        help="U-turn safety limit: stop if the wheels have driven K × a "
+                             "half-circle of arc (π × radius) without finishing the turn "
+                             "(default 3.0). The arc is measured on the WHEELS, so on soft "
+                             "or slippery headlands wheel spin uses it up while the robot "
+                             "barely moves (field 2026-11-06: 8.7 m of wheel arc, 3 m of "
+                             "GPS path, stopped at 149°). Raise to 4.5–5 there.")
     parser.add_argument("--headland-radius", type=float, default=0.0, metavar="M",
                         help="Headland U-turn arc radius (m). Default 0 = auto (1.0 m). "
                              "The turn drives a gentle large-radius arc and keeps arcing "

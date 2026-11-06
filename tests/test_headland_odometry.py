@@ -268,3 +268,26 @@ def test_reverse_distance_accumulates_magnitude():
     odo.tick(-0.2, 0.0, 1.0)
     assert odo.distance == pytest.approx(0.2)
     assert odo.x == pytest.approx(-0.2)
+
+
+def test_arc_cap_flag_reaches_the_turn(monkeypatch):
+    """--headland-arc-cap is passed through; the default stays 3 half-circles."""
+    import sys
+    import types
+    for m in ("farm_ng", "farm_ng.canbus", "farm_ng.canbus.canbus_pb2", "farm_ng.canbus.packet",
+              "farm_ng.core", "farm_ng.core.event_client", "farm_ng.core.event_service_pb2",
+              "farm_ng.core.uri_pb2", "farm_ng.filter", "farm_ng.filter.filter_pb2"):
+        if m not in sys.modules:
+            mod = types.ModuleType(m)
+            mod.__getattr__ = lambda name: type(name, (), {})
+            monkeypatch.setitem(sys.modules, m, mod)
+    from navigation.row_navigator import RowNavigator
+    from navigation.row_perception import RowDetector
+    from navigation.row_safety import SafetyMonitor
+    nav = RowNavigator(None, RowDetector(), SafetyMonitor(), None,
+                       rows=3, headland=True, odometry=FakeOdo())
+    assert nav._headland_turn.max_turn_frac == 3.0
+    nav = RowNavigator(None, RowDetector(), SafetyMonitor(), None,
+                       rows=3, headland=True, odometry=FakeOdo(),
+                       headland_arc_cap=4.5)
+    assert nav._headland_turn.max_turn_frac == 4.5
