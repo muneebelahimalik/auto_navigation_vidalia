@@ -318,3 +318,21 @@ def test_poisoned_quarter_baseline_cannot_latch_a_false_bed_end():
         P, tr = f.scan(xr=0.30, yr=0.02 * i, yaw_deg=10.0, rng=rng, return_truth=True)
         conf.append(det.update(P).confidence)
     assert not det._bed_ending and min(conf[15:]) > 0.8, min(conf[15:])
+
+
+@pytest.mark.parametrize("stage,bed_h", [("young", 0.06), ("mid", 0.08)])
+def test_bed_followed_past_the_last_onion_to_the_real_bed_end(stage, bed_h):
+    """Field 2026-11-06: onions planted on only part of the bed, bare (weedy)
+    bed beyond.  The relief baseline learnt over the 0.2 m canopy (16–19 cm)
+    made the bare bed (7 cm) read as "ending" — the robot turned ~2 m before
+    the last onion every time.  It must follow the bed to its real end."""
+    f = OnionField(stage_config(stage, crop_end=12.0, y_end=30.0, bed_h=bed_h), seed=0)
+    det = _det()
+    rng = np.random.default_rng(3)
+    yr, lost = 0.0, None
+    while yr < 30.0:
+        e = det.update(f.scan(0.05, yr, rng=rng))
+        if lost is None and yr > 2.0 and e.confidence < 0.35:
+            lost = yr
+        yr += 0.075
+    assert lost is not None and 26.0 <= lost <= 29.5, (stage, lost)

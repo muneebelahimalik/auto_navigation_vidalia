@@ -184,6 +184,16 @@ falls in the ±5 cm pairing dead-band).  Bed mode instead:
   **Field result 2026-10-15 (bare bed, seedlings invisible):** 150 m in
   `[BED-SHAPE]` mode, lateral mean +0.2 cm / std 5.7 cm, heading std 2.0°,
   relief 7.4 ± 0.7 cm, conf 1.0 throughout.
+- **Planting ends before the bed (field 2026-11-06):** onions on only part
+  of the bed, bare weedy bed beyond.  The far-half relief baseline learnt over
+  the canopy (16–19 cm with 0.2 m onions) made the bare bed (~7 cm) read as
+  "ending" — the robot turned ~2 m before the last onion every time (the
+  previous visit's tiny onions left the baseline at soil level, so it reached
+  the real end).  The far half now also counts as bed above an absolute
+  `bed_far_abs` = 2 cm (far relief over bare bed 2.3–4.7 cm, over flat
+  headland 0 — sim), like the second quarter's 5 cm floor.  Sim
+  (`FieldConfig.crop_end`): row end 2.3–3 m before the REAL bed end.
+  Test `test_bed_followed_past_the_last_onion_to_the_real_bed_end`.
 - **Bed END / grass headland** (same run: relief faded, heading crept to the
   20° box cap, then the crop fit FOLLOWED GRASS for 6 m).  Fixes:
   **bed-presence gate** (`_bed_present`) — once the relief has been tracked

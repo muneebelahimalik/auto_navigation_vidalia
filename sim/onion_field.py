@@ -94,6 +94,7 @@ class FieldConfig:
     weeds_per_m2: float = 0.0    # weed clumps on bed/furrow
     roughness: float = 0.008     # soil roughness amplitude (m)
     gap_prob: float = 0.0        # fraction of plants missing (random stand gaps)
+    crop_end: Optional[float] = None  # planting stops here; the bed runs on bare (world y)
 
 
 @dataclass
@@ -169,6 +170,8 @@ class OnionField:
                     keep = gap_all[np.clip(js % 2000, 0, 1999)] >= c.gap_prob
                     if c.y_end is not None:
                         keep &= py < c.y_end
+                    if c.crop_end is not None:
+                        keep &= py < c.crop_end
                     py = py[keep]
                     if len(py) == 0:
                         continue

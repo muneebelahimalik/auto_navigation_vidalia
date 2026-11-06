@@ -665,6 +665,7 @@ class RowDetector:
         self._qcut_run = 0
         self.bed_end_cut_scans = 6
         self.bed_q2_abs = 0.05                 # m; second-quarter relief that is always "bed"
+        self.bed_far_abs = 0.02                # m; far-half relief that is always "bed" (see _bed_shape)
         self._bed_end_armed = False            # far bed seen since reset (see _bed_shape)
         self._bed_ending = False               # diagnostic + latch: bed seen ending ≲ 3 m ahead
         self._turning = False                  # navigator: headland U-turn in progress
@@ -1766,10 +1767,19 @@ class RowDetector:
         # canopy the far furrows are always partly hidden, so far < 0.7 × near
         # fired mid-bed).  Same for the second quarter vs the first.
         ffc = ff[1] if (ff is not None and ff[1] >= mc) else 0.0
-        far_ok = ffc > 0.0 and (self._far_base is None or ffc >= self.bed_far_ratio * self._far_base)
+        # …or above an absolute floor.  The profile includes the crop, so the
+        # baseline learnt over planted bed (field 2026-11-06: 16–19 cm with a
+        # 0.2 m canopy) made the BARE bed beyond the last onion (7 cm) read as
+        # "ending" and the robot turned where the planting stopped, though the
+        # bed ran on.  A real end is flat headland (0–4 cm, sim).
+        far_ok = ffc > 0.0 and (self._far_base is None
+                                or ffc >= min(self.bed_far_ratio * self._far_base,
+                                              self.bed_far_abs))
         if far_ok and near_ok:
             self._far_base = ffc if self._far_base is None else self._far_base + 0.02 * (ffc - self._far_base)
         self._shape_far_ok = bool(far_ok)
+        self.last_far_relief = ffc
+        self.last_near_relief = fn[1] if near_ok else 0.0
         yq = 0.5 * (self.roi_y_min + ymid)
         if far_ok:
             self._bed_y_cut = None
