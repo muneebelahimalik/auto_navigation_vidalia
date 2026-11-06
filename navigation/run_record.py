@@ -25,6 +25,7 @@ import json
 import platform
 import subprocess
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -50,6 +51,8 @@ class RunRecord:
         self.manifest = {
             "run_id": self.dir.name,
             "start_time": self.start.isoformat(timespec="seconds"),
+            "start_wall_unix": round(time.time(), 3),
+            "start_monotonic": round(time.monotonic(), 3),
             "git_commit": _git("rev-parse", "HEAD"),
             "git_dirty": bool(_git("status", "--porcelain")),
             "git_branch": _git("rev-parse", "--abbrev-ref", "HEAD"),

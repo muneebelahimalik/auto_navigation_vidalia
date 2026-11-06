@@ -51,7 +51,11 @@ class TelemetryLogger:
         if self._f is None:
             return
         try:
-            record.setdefault("t", round(time.monotonic() - self._t0, 4))
+            now = time.monotonic()
+            record.setdefault("t", round(now - self._t0, 4))
+            # Absolute system monotonic clock — the same clock side loggers
+            # (scripts/gnss_logger.py) stamp with, so streams join exactly.
+            record.setdefault("mono", round(now, 4))
             self._f.write(json.dumps(record, separators=(",", ":")) + "\n")
             self._n += 1
             if self._n % self._flush_every == 0:

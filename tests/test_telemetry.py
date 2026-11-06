@@ -44,3 +44,18 @@ def test_logger_records_are_pandas_loadable(tmp_path):
         import pandas as pandas_mod
         df = pandas_mod.read_json(str(p), lines=True)
         assert list(df["conf"]) == [0.0, 0.1, 0.2]
+
+
+def test_records_carry_absolute_monotonic_for_side_loggers(tmp_path):
+    """Each line has the system monotonic time, the clock gnss_logger stamps
+    with — so GPS and telemetry join without guessing an offset."""
+    import json
+    import time
+    from navigation.telemetry import TelemetryLogger
+    log = TelemetryLogger(str(tmp_path / "t.jsonl"))
+    before = time.monotonic()
+    log.log({"state": "FOLLOW"})
+    log.close()
+    rec = json.loads((tmp_path / "t.jsonl").read_text().splitlines()[0])
+    assert before - 0.01 <= rec["mono"] <= time.monotonic() + 0.01
+    assert rec["t"] >= 0.0
