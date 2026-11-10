@@ -94,6 +94,21 @@ class _S:
 _HEADLAND_STATES = (_S.HEADLAND, _S.APPROACH)
 
 
+def _forward_coverage(pts: np.ndarray) -> float:
+    """Share of the forward ±60° (5° slices) that has LiDAR returns — 1.0 for a
+    whole scan, ~0.5 when packet loss took a whole side (field 2026-11-06).
+    Every 4th point is enough and keeps this ~1 ms."""
+    if pts is None or len(pts) == 0:
+        return 0.0
+    p = pts[::4]
+    az = np.degrees(np.arctan2(p[:, 0], p[:, 1]))
+    az = az[np.abs(az) < 60.0]
+    if len(az) == 0:
+        return 0.0
+    occ = np.bincount(((az + 60.0) // 5.0).astype(int), minlength=24)[:24] > 0
+    return float(occ.mean())
+
+
 class RowNavigator:
     """Autonomous crop-row follower driven by a stream of VLP-16 scans."""
 
@@ -358,6 +373,7 @@ class RowNavigator:
         silently blocking with the last non-zero twist still in effect.
         """
         self._t_prev = time.monotonic()
+        self._lidar = lidar
         stream = lidar.scan_stream_np(with_intensity=self.capture_intensity)
         next_scan = None       # pending __anext__ task (survives watchdog timeouts)
         stall_warned = False
@@ -385,6 +401,8 @@ class RowNavigator:
             now = time.monotonic()
             dt = min(max(now - self._t_prev, 1e-3), 0.5)
             self._t_prev = now
+            self._t_scan = now                 # loop-time diagnostic (telemetry)
+            self._fwd_cov = _forward_coverage(pts)
 
             # Split off intensity (column 3) as a PARALLEL array so the live
             # geometry pipeline stays exactly Nx3; intensity rides through the
@@ -1286,9 +1304,23 @@ class RowNavigator:
             rec["view_q"] = round(float(getattr(self.detector, "last_view_quality", 1.0)), 2)
             rec["view_n"] = int(getattr(self.detector, "_view_n", 0) or 0)
             rec["sector_gap"] = bool(getattr(self.detector, "last_sector_gap", False))
+            rec["half_scan"] = bool(getattr(self.detector, "last_half_scan", False))
             rec["comb_ratio"] = round(float(getattr(self.detector, "last_comb_ratio", 0.0)), 2)
             rec["crop_locked"] = bool(getattr(self.detector, "_crop_locked", False))
             rec["fwd_obs_h"] = round(float(getattr(self.safety, "last_forward_height", 0.0)), 2)
+        # Scan health (2026-11-06 half-scans): packets in this revolution, its
+        # age when processing started, scans the reader skipped so far, the
+        # share of forward 5° slices with returns, and this loop's compute time.
+        info = getattr(getattr(self, "_lidar", None), "last_scan_info", None) or {}
+        if info:
+            rec["pkts"] = int(info.get("packets", 0))
+            rec["scan_age_ms"] = info.get("age_ms")
+            rec["lidar_skipped"] = info.get("skipped")
+            rec["scan_partial"] = bool(info.get("partial", False))
+        rec["fwd_cov"] = round(float(getattr(self, "_fwd_cov", 1.0)), 2)
+        t_scan = getattr(self, "_t_scan", None)
+        if t_scan is not None:
+            rec["loop_ms"] = round((time.monotonic() - t_scan) * 1000.0, 1)
         if self.state in _HEADLAND_STATES:
             rec["approach_dist"] = round(float(self._approach_dist), 3)
             rec["post_turn"] = bool(self._post_turn)

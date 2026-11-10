@@ -107,6 +107,12 @@ cd ~/auto_navigation_vidalia
 > print nothing.  Wait for `[row_follow] done.` after Ctrl+C — the recording
 > (summary, SLAM map, figures) is saved during shutdown.
 
+> **Change log + rollback since the 2026-10-29 field visit:**
+> `docs/CHANGES_SINCE_2026-10-29.md` — every change, whether it was
+> field-tested, the flag that switches it off, and the commits to go back to
+> (`43968a1` = code run on 2026-11-06, `7e6cbc4` = before the SLAM rework).
+> Loop-speed check before driving: `bash scripts/field_speed_test.sh`.
+
 ### Unit tests (any machine — no hardware, no farm-ng SDK required)
 
 ```bash
@@ -1326,6 +1332,9 @@ to the noiseless convergence.  Regression-locked in `tests/test_row_controller.p
 | `--ros2-bridge` | off | Write scan + nav status to `/dev/shm/` at each scan for the Docker ROS 2 bridge |
 | `--slam` | off | Build a field map in a background thread while driving (mapping only; no effect on control). Saved on exit |
 | `--no-slam` | off | Disable SLAM even under `--record` (skips map / coverage / trajectory). The rest of the record bundle — telemetry, metrics, perception figures, raw scans — is unaffected |
+| `--lidar-reader R` | **thread** | `thread`: background reader keeps up with every packet; navigation takes the newest COMPLETE scan (slow loop → whole scans skipped). `inline`: original (≤ 2026-11-06) — a loop slower than ~0.2 s/scan overflows the kernel buffer and scans lose a whole side |
+| `--slam-hz HZ` | **2** | Max scans/s the background SLAM mapper processes (mapping only); 0 = unlimited (≤ 2026-11-06) |
+| `--no-half-scan-guard` | off | Bed mode: use scans whose bed swath has one side empty (≤ 2026-11-06 behaviour). Default skips them (≤ 5 in a row, then confidence capped 0.30) |
 | `--save-scans [EVERY]` | on w/ `--record` (10) | With `--record`, stream the raw corrected LiDAR scans to `runs/<ts>/scans/` (bare = every scan, `N` = every Nth, `0` = off) for offline figure/animation rendering |
 | `--map-3d` / `--voxel-3d M` | off / 0.15 | With `--slam`, also build the 3-D point cloud (`map3d.ply`) |
 | `--telemetry [PATH]` | off | Log one JSON line per scan (state, conf, crop points, lateral/heading error, row-end conf, grade/drop, command, safety zones, headland turn, `sp`) → `logs/run_<ts>.jsonl`. Load with `pandas.read_json(path, lines=True)`. No effect on control |
@@ -1708,6 +1717,7 @@ OAK-D defaults: hfov=73°, vfov=54°, 640×400 → scale factor ≈ 0.91.
 | Lateral estimate snaps ±half spacing in one scan | Peak pairing changes when a row drops out for one scan; EMA follows the jump | Lateral outlier gate in `_smooth()` — per-scan jump clamped to 0.30 m (mirrors the heading gate) |
 | Robot follows the row, then during a correction drifts onto the NEXT strip / crosses rows (worst under RL) | The dual-row target is the midpoint of two rows, but a soybean field is PERIODIC — "on my strip, offset +half" and "on the next strip, offset −half" give two peak pairs that both match the spacing, so `find_row_midpoint` picked one arbitrarily and could alias onto the adjacent strip; an aggressive controller then centred on it. Worse under RL because it reacts fastest to the jumped target | **Continuity ("strip-lock") prior** in `find_row_midpoint`: pair cost = `|sep−spacing| + prior_weight·|midpoint − tracked_lateral|`, so the detector stays locked to the strip it is following — a jump to the adjacent strip costs ≈ one spacing and is rejected unless the robot has truly crossed the half-way point. `RowDetector.midpoint_prior_weight=1.5`; reset→prior 0 so the post-turn re-acquire prefers the nearest (centred) strip. Fixes hopping for pursuit/MPC/RL. Tests `test_strip_lock_*` |
 | Restarted run hangs at `[LiDAR validate] collecting 5 scans …` (field 2026-10-29) | The previous run was still alive (Ctrl+Z'd / not ended) and bound to UDP 2368; with `SO_REUSEPORT` the kernel steers the VLP-16's whole flow to the OLD socket, so the new run receives nothing | `lidar/port_check.py` finds any process bound to 2368 from `/proc` → `LidarDriver` prints its PID + kill command and `row_follow.py` aborts; `validate_lidar_startup` times out after 8 s with the causes listed. Always stop runs with Ctrl+C. Tests `test_port_holder_found_and_reported`, `test_lidar_validate_times_out_instead_of_hanging` |
+| Loop at 4 scans/s (was 7.9) and 4 of 5 scans missing a whole left/right half of the forward view; lateral wobble 9.6 cm RMSE (field 2026-11-06) | Packets were read between scans; a ~250 ms loop let the kernel UDP buffer (~0.2 s) overflow, dropping half a revolution. The missing SIDE left no internal azimuth hole, so the sector-gap test passed it and the bed was fitted from one side (sim, 4 of 5 halved: 8 cm std, 16 cm spikes). Slowdown first seen with the SLAM rework (`ec5f300`, multi-core BLAS in a continuous thread — suspected, not yet confirmed) | `--lidar-reader thread` (default: background reader, newest complete scan; lab test 0/8 partial vs 7/8), whole-scan **half-scan guard** (< 1.1 cm in sim), numpy one core (`OPENBLAS_NUM_THREADS=1`), `--slam-hz 2`, scan-health telemetry. Confirm with `scripts/field_speed_test.sh`. Tests `test_lidar_reader.py`, `test_half_scan_guard.py`, `test_slam_runner_rate.py` |
 | Robot keeps driving on last twist if LiDAR dies mid-row | `run()` blocked forever inside `async for`; no further commands sent | Scan-stall watchdog: no scan for 0.5 s → actively command zero velocity until the stream recovers |
 | Dead camera stream freezes fusion + blocks ROW_END | `get_latest()` returns the final frame forever; frozen green fraction vetoes ROW_END indefinitely | Staleness gate (1.5 s) in both navigators treats old frames as "no camera" |
 | Stale EMA from previous row fights re-acquisition after U-turn | Detector EMA accumulates garbage while the ROI sweeps the headland; outlier gates then clamp genuine detections of the next row | `RowDetector.reset()` / tracker `reset()` called on HEADLAND→ACQUIRE |

@@ -39,6 +39,9 @@ import asyncio
 import math
 import socket
 import struct
+import sys
+import threading
+import time
 from dataclasses import dataclass
 from typing import AsyncIterator, List
 
@@ -221,11 +224,25 @@ class LidarDriver:
         self,
         host: str = VELODYNE_HOST,
         port: int = VELODYNE_DATA_PORT,
+        reader: str = "inline",
     ) -> None:
         self._host = host
         self._port = port
         self._sock: socket.socket | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
+        # "inline": packets are read by the consumer between scans (original).
+        # "thread": a background thread reads every packet and keeps only the
+        # newest COMPLETE scan (see _ScanReader) — a slow consumer then skips
+        # whole scans instead of getting half-scans from kernel packet drops.
+        if reader not in ("inline", "thread"):
+            raise ValueError(f"reader must be 'inline' or 'thread', not {reader!r}")
+        self.reader_mode = reader
+        self._reader: "_ScanReader | None" = None
+        self.rcvbuf_bytes = 0
+        # Health of the scan just yielded by scan_stream_np (both modes):
+        # packets in it, ms since it completed, scans skipped so far (thread),
+        # and whether it looked partial (fewer packets than a full revolution).
+        self.last_scan_info: dict = {}
 
     async def __aenter__(self) -> "LidarDriver":
         self._loop = asyncio.get_running_loop()
@@ -251,9 +268,18 @@ class LidarDriver:
             pass
         self._sock.setblocking(False)
         self._sock.bind(("", self._port))
+        try:
+            # The kernel silently caps SO_RCVBUF at net.core.rmem_max (often
+            # ~208 KB ≈ 0.2 s of VLP-16 data); record what we really got.
+            self.rcvbuf_bytes = int(self._sock.getsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF))
+        except OSError:
+            self.rcvbuf_bytes = 0
         return self
 
     async def __aexit__(self, *_) -> None:
+        if self._reader is not None:
+            self._reader.stop()
+            self._reader = None
         if self._sock is not None:
             self._sock.close()
             self._sock = None
@@ -302,8 +328,14 @@ class LidarDriver:
         CAPTURE intensity into the recorded scan stream; the live geometry path
         keeps the default Nx3.
         """
+        if self.reader_mode == "thread":
+            async for pts in self._scan_stream_thread(with_intensity):
+                yield pts
+            return
+
         packets: List[bytes] = []
         last_azimuth = 0.0
+        full = _FullScanTracker()
 
         while True:
             raw = await self._recv_packet()
@@ -313,8 +345,132 @@ class LidarDriver:
             first_az = struct.unpack_from("<H", raw, 2)[0] * VELODYNE_ROTATION_UNIT
 
             if first_az < last_azimuth and packets:
+                self.last_scan_info = {"packets": len(packets), "age_ms": 0.0,
+                                       "skipped": None,
+                                       "partial": full.partial(len(packets))}
                 yield _parse_scan_np(packets, with_intensity=with_intensity)
                 packets = []
 
             last_azimuth = first_az
             packets.append(raw)
+
+    async def _scan_stream_thread(self, with_intensity: bool) -> "AsyncIterator[np.ndarray]":
+        """scan_stream_np() in "thread" mode: the background reader assembles
+        every revolution; here we wait for the newest complete one."""
+        assert self._sock is not None and self._loop is not None
+        if self._reader is None:
+            self._reader = _ScanReader(self._sock, self._loop)
+            self._reader.start()
+        reader = self._reader
+        while True:
+            await reader.event.wait()
+            reader.event.clear()
+            item = reader.take()
+            if item is None:
+                continue
+            packets, t_done, partial = item
+            self.last_scan_info = {
+                "packets": len(packets),
+                "age_ms": round((time.monotonic() - t_done) * 1000.0, 1),
+                "skipped": reader.skipped,
+                "partial": partial,
+            }
+            yield _parse_scan_np(packets, with_intensity=with_intensity)
+
+
+class _FullScanTracker:
+    """Packets in a FULL revolution (75–76 at 600 rpm; scales with rpm),
+    learnt as the largest count seen recently.  A scan with < 90 % of it is
+    partial — packets were lost (kernel buffer overflow) or it is the first
+    revolution after the reader started mid-turn."""
+
+    def __init__(self) -> None:
+        self._recent: List[int] = []
+
+    def partial(self, n: int) -> bool:
+        self._recent = (self._recent + [n])[-50:]
+        full = max(self._recent)
+        return len(self._recent) >= 3 and n < 0.9 * full
+
+
+class _ScanReader(threading.Thread):
+    """Reads EVERY VLP-16 packet in a background thread and keeps only the
+    newest COMPLETE revolution (field 2026-11-06: with packets read inline, a
+    ~250 ms perception loop let the kernel buffer (~0.2 s) overflow, so 4 of 5
+    scans lost a whole left or right half of the forward view).  socket.recv
+    releases the GIL, so this keeps up even while the main thread computes."""
+
+    def __init__(self, sock: socket.socket, loop: asyncio.AbstractEventLoop) -> None:
+        super().__init__(daemon=True, name="lidar-reader")
+        self._sock = sock
+        self._loop = loop
+        self.event = asyncio.Event()
+        self._lock = threading.Lock()
+        self._latest = None
+        self._stop_flag = False
+        self.received = 0        # complete revolutions assembled
+        self.skipped = 0         # revolutions replaced before the consumer took them
+        self.partial = 0         # revolutions with missing packets
+        self._full = _FullScanTracker()
+
+    # Python runs one thread at a time and, by default, hands over only every
+    # 5 ms — too rarely for ~750 packets/s while perception keeps Python busy
+    # (test: 5 ms → 7 of 8 scans partial; 1 ms → none).  0.5 ms while the
+    # reader runs; restored on stop.
+    SWITCH_INTERVAL_S = 0.0005
+
+    def start(self) -> None:
+        self._prev_switch = sys.getswitchinterval()
+        sys.setswitchinterval(min(self._prev_switch, self.SWITCH_INTERVAL_S))
+        super().start()
+
+    def run(self) -> None:
+        self._sock.settimeout(0.5)          # blocking with timeout (thread-owned now)
+        packets: List[bytes] = []
+        last_az = 0.0
+        first = True
+        while not self._stop_flag:
+            try:
+                raw = self._sock.recv(VELODYNE_PACKET_SIZE)
+            except socket.timeout:
+                continue
+            except OSError:
+                break                        # socket closed
+            if len(raw) < VELODYNE_PACKET_SIZE:
+                continue
+            az = struct.unpack_from("<H", raw, 2)[0] * VELODYNE_ROTATION_UNIT
+            if az < last_az and packets:
+                if first:                    # started mid-revolution: discard
+                    first = False
+                else:
+                    self._publish(packets)
+                packets = []
+            last_az = az
+            packets.append(raw)
+
+    def _publish(self, packets: List[bytes]) -> None:
+        partial = self._full.partial(len(packets))
+        with self._lock:
+            if self._latest is not None:
+                self.skipped += 1
+            self._latest = (packets, time.monotonic(), partial)
+            self.received += 1
+            self.partial += int(partial)
+        try:
+            self._loop.call_soon_threadsafe(self.event.set)
+        except RuntimeError:                 # event loop closed
+            self._stop_flag = True
+
+    def take(self):
+        with self._lock:
+            item, self._latest = self._latest, None
+        return item
+
+    def stop(self) -> None:
+        self._stop_flag = True
+        if self.is_alive():
+            self.join(timeout=1.0)
+        prev = getattr(self, "_prev_switch", None)
+        if prev is not None:
+            sys.setswitchinterval(prev)
+            self._prev_switch = None

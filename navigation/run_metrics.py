@@ -175,6 +175,7 @@ def compute_run_metrics(records: List[dict], *, coverage: Optional[dict] = None)
             distance, distance_source = slam_path, "slam"
 
     turns = _turns(records)
+    scan_health = _scan_health(records, duration)
     metrics = {
         "n_scans": n,
         "duration_s": round(duration, 2),
@@ -212,8 +213,38 @@ def compute_run_metrics(records: List[dict], *, coverage: Optional[dict] = None)
         "turns": turns,
         "n_turns": len(turns),
         "turns_completed": int(sum(1 for t in turns if t.get("completed"))),
+        "scan_health": scan_health,
         "per_row": _per_row(records),
     }
     if coverage:
         metrics["coverage"] = coverage
     return metrics
+
+
+def _scan_health(records: List[dict], duration: float) -> dict:
+    """LiDAR scan health (field 2026-11-06: 4 scans/s and half-scans).
+    Fields that a run did not log are simply left out."""
+    out: dict = {}
+    t = _arr(records, "t")
+    if len(t) > 1:
+        dt = np.diff(t) * 1000.0
+        out["interval_ms_p50"] = round(float(np.percentile(dt, 50)), 1)
+        out["interval_ms_p95"] = round(float(np.percentile(dt, 95)), 1)
+    for key, name in (("loop_ms", "loop_ms"), ("scan_age_ms", "scan_age_ms"), ("pkts", "packets")):
+        v = np.array([float(r[key]) for r in records if r.get(key) is not None])
+        if len(v):
+            out[f"{name}_p50"] = round(float(np.percentile(v, 50)), 1)
+            out[f"{name}_p95"] = round(float(np.percentile(v, 95)), 1)
+    v = np.array([float(r["fwd_cov"]) for r in records if r.get("fwd_cov") is not None])
+    if len(v):
+        out["fwd_cov_mean"] = round(float(np.mean(v)), 3)
+        out["incomplete_frac"] = round(float(np.mean(v < 0.85)), 4)
+    for key, name in (("half_scan", "half_scan_frac"), ("scan_partial", "partial_frac")):
+        v = [bool(r[key]) for r in records if key in r]
+        if v:
+            out[name] = round(float(np.mean(v)), 4)
+    sk = [r["lidar_skipped"] for r in records if r.get("lidar_skipped") is not None]
+    if sk and duration > 0:
+        out["lidar_scans_skipped"] = int(sk[-1])
+        out["lidar_rate_hz"] = round((len(records) + int(sk[-1])) / duration, 2)
+    return out

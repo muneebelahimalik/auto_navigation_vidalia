@@ -162,6 +162,20 @@ class RunRecord:
         print(f"  FOLLOW tracking:  xtrack RMSE {f.get('xtrack_rmse_cm', 0):.1f} cm "
               f"(max {f.get('xtrack_max_cm', 0):.1f})  |  heading RMSE "
               f"{f.get('heading_rmse_deg', 0):.1f}°  |  jerk {f.get('control_jerk', 0):.3f}")
+        sh = m.get("scan_health") or {}
+        if sh:
+            parts = []
+            if "loop_ms_p50" in sh:
+                parts.append(f"loop {sh['loop_ms_p50']:.0f} ms")
+            if "fwd_cov_mean" in sh:
+                parts.append(f"incomplete scans {100 * sh.get('incomplete_frac', 0):.0f}%")
+            if "half_scan_frac" in sh:
+                parts.append(f"half-scans {100 * sh['half_scan_frac']:.0f}%")
+            if "lidar_scans_skipped" in sh:
+                parts.append(f"skipped whole {sh['lidar_scans_skipped']}")
+            if "scan_age_ms_p50" in sh:
+                parts.append(f"scan age {sh['scan_age_ms_p50']:.0f} ms")
+            print("  scan health: " + "  |  ".join(parts))
         cov = m.get("coverage")
         if cov:
             print(f"  coverage {cov.get('covered_area_m2', 0):.0f} m²  "

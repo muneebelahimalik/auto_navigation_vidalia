@@ -29,9 +29,14 @@ from slam.slam_engine import SlamEngine
 
 
 class SlamRunner:
-    def __init__(self, engine: SlamEngine, *, idle_sleep: float = 0.01) -> None:
+    def __init__(self, engine: SlamEngine, *, idle_sleep: float = 0.01,
+                 max_hz: float = 0.0) -> None:
         self.engine = engine
         self._idle_sleep = idle_sleep
+        # Process at most max_hz scans/s (0 = as fast as possible, the
+        # behaviour up to 2026-11-06).  Mapping only needs a few scans per
+        # second; the rest of the CPU belongs to driving.
+        self._min_period = 1.0 / max_hz if max_hz and max_hz > 0 else 0.0
         self._latest: Optional[np.ndarray] = None
         self._latest_odom: Optional[tuple] = None   # odometry (x, y, θ) at submit
         self._last_odom: Optional[tuple] = None     # … at the last PROCESSED scan
@@ -83,8 +88,12 @@ class SlamRunner:
                 dth = (odom[2] - t0 + math.pi) % (2 * math.pi) - math.pi
                 delta = (ds, dth)
             self._last_odom = odom
+            t0 = time.monotonic()
             try:
                 self.engine.process_scan(pts, odom_delta=delta)
                 self.scans_processed += 1
             except Exception:           # never let mapping crash driving
                 self.errors += 1
+            rest = self._min_period - (time.monotonic() - t0)
+            if rest > 0:
+                time.sleep(rest)

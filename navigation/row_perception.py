@@ -31,7 +31,7 @@ Output: a RowEstimate the controller and state machine consume directly.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import replace, dataclass
 from typing import Optional
 
 import numpy as np
@@ -636,6 +636,15 @@ class RowDetector:
         self._view_n = None
         self.last_view_quality = 1.0
         self.last_sector_gap = False           # diagnostic: azimuth sector missing this scan
+        # A whole SIDE missing (field 2026-11-06: UDP packet loss took the left
+        # or right half of the forward view in 4 of 5 scans) leaves no internal
+        # hole, so the gap test passed it and the bed was fitted from one side.
+        self.half_scan_guard = True
+        self.last_half_scan = False            # diagnostic: one side of the swath empty
+        self.half_hold_max = 5                 # max consecutive half-scans skipped
+        self.half_conf_cap = 0.30              # confidence cap on a half-scan used anyway
+        self._half_run = 0
+        self.half_scans_skipped = 0
         self._canopy_top = None                # crop canopy top above the furrow (m), slow EMA
         self._canopy_n = 0
         self.last_canopy_top = None
@@ -909,6 +918,7 @@ class RowDetector:
         """
         self._est = RowEstimate()
         self._spacing_factor = 1.0
+        self._half_run = 0
         self._last_shape = None            # never coast across a turn
         self._shape_miss = 0
         self._bed_axis = None
@@ -937,6 +947,19 @@ class RowDetector:
         self._bed_axis = None
 
     # ------------------------------------------------------------------
+    def _is_half_scan(self, pts: np.ndarray) -> bool:
+        """One whole side of the forward bed swath (robot frame, |x| ≤
+        bed_shape_x_half, ROI depth) is (nearly) empty: < 15 % of its returns
+        on one side.  Ground covers both sides wherever the bed is, so a
+        complete scan is never lopsided like this (field: 47/53 %)."""
+        x, y = pts[:, 0], pts[:, 1]
+        sel = (y >= self.roi_y_min) & (y <= self.roi_y_max) & (np.abs(x) <= self.bed_shape_x_half)
+        n = int(np.count_nonzero(sel))
+        if n < 400:
+            return False
+        n_left = int(np.count_nonzero(x[sel] < 0.0))
+        return min(n_left, n - n_left) < 0.15 * n
+
     def update(self, pts: np.ndarray, aux_xy: Optional[np.ndarray] = None) -> RowEstimate:
         """
         Detect the centre row/residue from an Nx3 (x, y, z) sensor-frame
@@ -956,6 +979,31 @@ class RowDetector:
         estimate is decayed (confidence reduced, row-end confidence raised)
         so the state machine can react instead of acting on a stale fix.
         """
+        # Half-scan guard (bed mode): a scan that lost one whole SIDE of the
+        # forward view to packet loss biases every fit (ray-cast sim, 4 of 5
+        # scans halved: lateral std 8 cm, spikes 16 cm — the 2026-11-06 field
+        # numbers).  Skip it and hold the last estimate, but never for more
+        # than ``half_hold_max`` scans in a row: after that the scan is used
+        # (degraded) so a broken reader can't leave the robot on a stale fix.
+        if self.bed_rows >= 2 and pts is not None and len(pts):
+            half = self._is_half_scan(pts)
+            self.last_half_scan = half
+            if half and self.half_scan_guard:
+                if self._half_run < self.half_hold_max:
+                    self._half_run += 1
+                    self.last_sector_gap = True
+                    self.half_scans_skipped += 1
+                    return self._est
+                # Still halved after the hold: use it, but below the FOLLOW
+                # threshold — every scan halved (sim) reads ~26 cm off at
+                # confidence 0.6, so the robot must slow and stop instead.
+                est = self._update(pts, aux_xy)
+                return replace(est, confidence=min(est.confidence, self.half_conf_cap))
+            self._half_run = 0
+        return self._update(pts, aux_xy)
+
+    def _update(self, pts: np.ndarray, aux_xy: Optional[np.ndarray] = None) -> RowEstimate:
+        """The detector proper (see update)."""
         # Bed mode: align the ROI box with the TRACKED bed heading.  The fixed
         # robot-frame box cuts narrow-spaced rows diagonally when the robot is
         # angled to the bed (at 5° and 0.28 m spacing the rows drift over two

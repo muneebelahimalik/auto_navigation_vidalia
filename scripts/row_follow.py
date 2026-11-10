@@ -45,6 +45,17 @@ Key flags:
 
 from __future__ import annotations
 
+import os
+
+# numpy's maths library (OpenBLAS) uses every CPU core for each matrix product
+# by default and keeps those threads spinning between calls.  Since the SLAM
+# rework (2026-11) a background thread does such products continuously; on the
+# 6-core Jetson that can starve the perception loop (field 2026-11-06: 4 scans/s
+# instead of ~8).  One thread each — must be set BEFORE numpy is imported.
+# Revert for a test:  OPENBLAS_NUM_THREADS=6 OMP_NUM_THREADS=6 python3 scripts/row_follow.py …
+for _v in ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS"):
+    os.environ.setdefault(_v, "1")
+
 import argparse
 import asyncio
 import json
@@ -297,9 +308,11 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
             build_3d=args.map_3d, voxel_3d=args.voxel_3d,
             swath_m=args.swath,
         )
-        slam = SlamRunner(slam_engine)
+        slam = SlamRunner(slam_engine, max_hz=args.slam_hz)
         slam.start()
-        print(f" [row_follow] SLAM mapping ON (thread){'  +3D point cloud' if args.map_3d else ''}"
+        print(f" [row_follow] SLAM mapping ON (thread, "
+              f"{'unlimited' if args.slam_hz <= 0 else f'≤ {args.slam_hz:g} scans/s'})"
+              f"{'  +3D point cloud' if args.map_3d else ''}"
               f" — coverage + map saved on exit to {args.save_dir or 'maps/<ts>'}")
 
     left_cam = None
@@ -433,6 +446,7 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
         bed_shape=not args.no_bed_shape,
         bed_pitch=args.bed_pitch,
     )
+    detector.half_scan_guard = not args.no_half_scan_guard
     tire_h =args.tire_height if args.tire_height is not None else args.obstacle_height
     safety = SafetyMonitor(
         obstacle_height=args.obstacle_height,
@@ -626,7 +640,11 @@ async def _run(args: argparse.Namespace, nav_ref: list) -> None:
         print("[row_follow] another program is receiving the LiDAR data — aborting.")
         return
 
-    async with LidarDriver() as lidar:
+    async with LidarDriver(reader=args.lidar_reader) as lidar:
+        print(f"  lidar   : reader={args.lidar_reader}  kernel UDP buffer "
+              f"{lidar.rcvbuf_bytes / 1024:.0f} KB  |  numpy threads="
+              f"{os.environ.get('OPENBLAS_NUM_THREADS')}  half-scan guard="
+              f"{'off' if args.no_half_scan_guard else 'on'}")
         if not args.no_validate:
             healthy = await validate_lidar_startup(lidar)
             if not healthy:
@@ -958,6 +976,23 @@ def main() -> None:
                              "headland turn) for offline analysis. Bare --telemetry auto-names "
                              "logs/run_<ts>.jsonl; or give a PATH. Load with "
                              "pandas.read_json(path, lines=True). No effect on control.")
+    parser.add_argument("--slam-hz", type=float, default=2.0, metavar="HZ",
+                        help="Max scans per second the background SLAM mapper processes "
+                             "(default 2). Mapping only; fewer scans = more CPU left for "
+                             "driving. 0 = no limit (behaviour up to 2026-11-06).")
+    parser.add_argument("--no-half-scan-guard", action="store_true",
+                        help="Onion bed mode: do NOT skip scans where one whole side of the "
+                             "bed swath is empty (LiDAR packet loss). Default: such scans "
+                             "give no bed profile and the estimate coasts, as for a missing "
+                             "sector (behaviour up to 2026-11-06 = this flag).")
+    parser.add_argument("--lidar-reader", choices=["thread", "inline"], default="thread",
+                        help="How LiDAR packets are read (default: thread). 'thread' = a "
+                             "background reader keeps up with every packet and navigation "
+                             "takes the newest COMPLETE scan, so a slow loop skips whole "
+                             "scans. 'inline' = the original (up to 2026-11-06): packets "
+                             "read between scans — a loop slower than ~0.2 s/scan lets the "
+                             "kernel buffer overflow and scans lose a whole side (field "
+                             "2026-11-06: 4 of 5 scans half-empty).")
     parser.add_argument("--record", nargs="?", const="auto", default=None, metavar="DIR",
                         help="Record a COMPLETE, reproducible experiment folder for "
                              "publishing: manifest.json (git commit + args + calibration), "
@@ -1335,6 +1370,9 @@ def main() -> None:
             "crop_band_m": [args.crop_min, args.crop_max],
             "row_spacing_seed_m": args.row_spacing, "swath_m": args.swath,
             "controller": args.controller, "max_speed_ms": args.speed,
+            "blas_threads": os.environ.get("OPENBLAS_NUM_THREADS"),
+            "lidar_reader": args.lidar_reader, "slam_hz": args.slam_hz,
+            "half_scan_guard": not args.no_half_scan_guard,
         }
         run_record = RunRecord(run_dir, args=vars(args), calibration=calibration)
         args.telemetry = run_record.telemetry_path       # telemetry → run dir

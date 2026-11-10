@@ -122,3 +122,25 @@ def test_run_record_bundle(tmp_path):
     # coverage path length flows into distance
     assert metrics["distance_m"] == 30.0
     assert metrics["coverage"]["covered_area_m2"] == 120.0
+
+
+def test_scan_health_block():
+    """Scan health (2026-11-06 half-scans): loop time, incomplete scans,
+    skipped whole scans and the LiDAR's true rate; absent fields are skipped."""
+    from navigation.run_metrics import compute_run_metrics
+    recs = []
+    for i in range(100):
+        recs.append({"t": 0.125 * i, "state": "FOLLOW", "lateral": 0.0, "heading_deg": 0.0,
+                     "lin_cmd": 0.2, "ang_cmd": 0.0, "n": 100, "rows_done": 0,
+                     "loop_ms": 60.0, "fwd_cov": 1.0 if i % 10 else 0.5,
+                     "half_scan": i % 10 == 0, "pkts": 75, "scan_age_ms": 20.0,
+                     "lidar_skipped": i // 4, "scan_partial": False})
+    sh = compute_run_metrics(recs)["scan_health"]
+    assert sh["loop_ms_p50"] == 60.0 and sh["packets_p50"] == 75
+    assert abs(sh["incomplete_frac"] - 0.1) < 1e-9 and abs(sh["half_scan_frac"] - 0.1) < 1e-9
+    assert sh["lidar_scans_skipped"] == 24
+    assert abs(sh["lidar_rate_hz"] - (100 + 24) / 12.375) < 0.05
+    old = compute_run_metrics([{k: r[k] for k in ("t", "state", "lateral", "heading_deg",
+                                                  "lin_cmd", "ang_cmd", "n", "rows_done")}
+                               for r in recs])["scan_health"]
+    assert set(old) == {"interval_ms_p50", "interval_ms_p95"}
