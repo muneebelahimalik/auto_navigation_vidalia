@@ -1,2 +1,57 @@
-[SAC | profile soybean | seed 2 | 1000000 steps | reward {'c_e': 2.0, 'c_theta': 0.5, 'c_u': 0.8, 'c_du': 8.0} | explore gsde]
+# Reconstructed from results/trainers/sac1m_soybean_s2_curve.csv: the original stdout
+# log was lost (its file was replaced by a git checkout while training was running).
+# The curve CSV and the .npz were written independently and are complete.
+[SAC | profile soybean | seed 2 | 1000000 steps | reward {'c_e': 2.0, 'c_theta': 0.5, 'c_u': 0.8, 'c_du': 8.0}]
           0 steps       0s | val return  +37.42 | xtrack  32.3 cm | heading  7.4° | jerk 0.013 | success  17.2%  *best
+      20000 steps      80s | val return  -42.52 | xtrack  33.1 cm | heading 38.8° | jerk 0.020 | success  17.2%
+      40000 steps     187s | val return  +29.09 | xtrack  30.5 cm | heading 13.0° | jerk 0.019 | success  15.6%
+      60000 steps     292s | val return  +47.48 | xtrack  27.8 cm | heading  8.1° | jerk 0.013 | success  37.5%  *best
+      80000 steps     399s | val return  +60.50 | xtrack  24.7 cm | heading  9.7° | jerk 0.009 | success  59.4%  *best
+     100000 steps     506s | val return  +66.88 | xtrack  23.4 cm | heading 11.2° | jerk 0.009 | success  70.3%  *best
+     120000 steps     612s | val return  +68.40 | xtrack  22.9 cm | heading 12.6° | jerk 0.009 | success  78.1%  *best
+     140000 steps     716s | val return  +68.59 | xtrack  22.2 cm | heading 15.3° | jerk 0.008 | success  85.9%  *best
+     160000 steps     818s | val return  +68.66 | xtrack  23.1 cm | heading 12.9° | jerk 0.007 | success  79.7%  *best
+     180000 steps     921s | val return  +70.28 | xtrack  22.9 cm | heading 13.7° | jerk 0.007 | success  89.1%  *best
+     200000 steps    1026s | val return  +71.19 | xtrack  22.7 cm | heading 13.9° | jerk 0.007 | success  89.1%  *best
+     220000 steps    1130s | val return  +72.21 | xtrack  22.2 cm | heading 13.4° | jerk 0.008 | success  87.5%  *best
+     240000 steps    1233s | val return  +73.99 | xtrack  21.4 cm | heading 13.6° | jerk 0.008 | success  90.6%  *best
+     260000 steps    1332s | val return  +73.24 | xtrack  22.6 cm | heading 11.1° | jerk 0.007 | success  85.9%
+     280000 steps    1433s | val return  +74.15 | xtrack  21.7 cm | heading 12.6° | jerk 0.009 | success  87.5%  *best
+     300000 steps    1534s | val return  +75.75 | xtrack  20.3 cm | heading 14.0° | jerk 0.010 | success  92.2%  *best
+     320000 steps    1639s | val return  +73.01 | xtrack  21.4 cm | heading 14.3° | jerk 0.009 | success  90.6%
+     340000 steps    1741s | val return  +70.56 | xtrack  23.6 cm | heading 13.9° | jerk 0.008 | success  93.8%
+     360000 steps    1847s | val return  +73.81 | xtrack  22.4 cm | heading 13.7° | jerk 0.008 | success  96.9%
+     380000 steps    1952s | val return  +73.65 | xtrack  22.6 cm | heading 12.5° | jerk 0.006 | success  93.8%
+     400000 steps    2063s | val return  +67.05 | xtrack  25.5 cm | heading 12.1° | jerk 0.006 | success  90.6%
+     420000 steps    2169s | val return  +52.97 | xtrack  29.5 cm | heading 10.7° | jerk 0.006 | success  73.4%
+     440000 steps    2272s | val return  +64.21 | xtrack  27.0 cm | heading  9.4° | jerk 0.004 | success  79.7%
+     460000 steps    2378s | val return  +56.20 | xtrack  29.3 cm | heading  9.5° | jerk 0.004 | success  70.3%
+     480000 steps    2481s | val return  +53.09 | xtrack  30.9 cm | heading  8.9° | jerk 0.004 | success  65.6%
+     500000 steps    2586s | val return  +60.62 | xtrack  28.2 cm | heading 10.3° | jerk 0.004 | success  79.7%
+     520000 steps    2691s | val return  +53.30 | xtrack  30.5 cm | heading  7.0° | jerk 0.005 | success  59.4%
+     540000 steps    2796s | val return  +50.85 | xtrack  30.3 cm | heading  8.3° | jerk 0.004 | success  54.7%
+     560000 steps    2901s | val return  +48.91 | xtrack  30.9 cm | heading  7.1° | jerk 0.005 | success  53.1%
+     580000 steps    3005s | val return  +53.54 | xtrack  28.9 cm | heading  7.1° | jerk 0.005 | success  53.1%
+     600000 steps    3107s | val return  +56.40 | xtrack  28.6 cm | heading  6.2° | jerk 0.006 | success  56.2%
+     620000 steps    3208s | val return  +50.07 | xtrack  31.1 cm | heading  7.4° | jerk 0.007 | success  51.6%
+     640000 steps    3309s | val return  +57.61 | xtrack  28.3 cm | heading  7.7° | jerk 0.005 | success  62.5%
+     660000 steps    3410s | val return  +57.56 | xtrack  28.3 cm | heading  6.9° | jerk 0.006 | success  62.5%
+     680000 steps    3513s | val return  +54.57 | xtrack  28.0 cm | heading  7.0° | jerk 0.008 | success  50.0%
+     700000 steps    3615s | val return  +60.37 | xtrack  25.8 cm | heading  9.0° | jerk 0.007 | success  60.9%
+     720000 steps    3721s | val return  +56.07 | xtrack  28.1 cm | heading  7.0° | jerk 0.008 | success  54.7%
+     740000 steps    3827s | val return  +56.46 | xtrack  26.6 cm | heading 10.4° | jerk 0.008 | success  57.8%
+     760000 steps    3932s | val return  +55.48 | xtrack  24.7 cm | heading 15.4° | jerk 0.011 | success  76.6%
+     780000 steps    4036s | val return  +64.64 | xtrack  22.9 cm | heading 12.1° | jerk 0.010 | success  75.0%
+     800000 steps    4141s | val return  +56.72 | xtrack  24.9 cm | heading 12.6° | jerk 0.009 | success  59.4%
+     820000 steps    4245s | val return  +64.72 | xtrack  22.9 cm | heading 13.5° | jerk 0.009 | success  81.2%
+     840000 steps    4349s | val return  +69.25 | xtrack  21.0 cm | heading 13.9° | jerk 0.010 | success  84.4%
+     860000 steps    4455s | val return  +70.83 | xtrack  19.4 cm | heading 15.1° | jerk 0.011 | success  87.5%
+     880000 steps    4560s | val return  +70.22 | xtrack  17.8 cm | heading 17.7° | jerk 0.012 | success  89.1%
+     900000 steps    4664s | val return  +69.77 | xtrack  19.4 cm | heading 16.2° | jerk 0.011 | success  85.9%
+     920000 steps    4768s | val return  +70.17 | xtrack  19.0 cm | heading 17.4° | jerk 0.010 | success  89.1%
+     940000 steps    4875s | val return  +72.55 | xtrack  19.0 cm | heading 16.4° | jerk 0.009 | success  90.6%
+     960000 steps    4980s | val return  +70.18 | xtrack  18.5 cm | heading 18.6° | jerk 0.009 | success  92.2%
+     980000 steps    5082s | val return  +68.08 | xtrack  18.9 cm | heading 19.7° | jerk 0.009 | success  93.8%
+    1000000 steps    5187s | val return  +72.26 | xtrack  18.4 cm | heading 18.1° | jerk 0.009 | success  93.8%
+
+saved best policy -> policies/trainers/sac1m_soybean_s2.npz  (validation return +75.75)

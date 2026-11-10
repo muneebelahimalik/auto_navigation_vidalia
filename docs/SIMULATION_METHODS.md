@@ -216,7 +216,7 @@ training and are discarded.
 |---|---|---|---|
 | Type | gradient-free, population | on-policy actor-critic | off-policy max-entropy actor-critic |
 | Key settings | population 40, σ 0.10, lr 0.05, 8 episodes/candidate | 8 parallel envs, n_steps 1024, batch 256, 10 epochs, γ 0.99, GAE λ 0.95, clip 0.2, lr 3·10⁻⁴, entropy coef 0; **gSDE exploration** (sample freq 4, initial log-std −2) | buffer 3·10⁵, 5 000 random warm-up steps, batch 256, γ 0.99, τ 0.005, lr 3·10⁻⁴, 1 gradient step per env step, automatic entropy tuning |
-| Budget | 300 iterations (≈15 M simulator steps) | 2 M steps | 3·10⁵ steps |
+| Budget | 300 iterations (≈15 M simulator steps) | 2 M steps | 3·10⁵ steps; soybean also 10⁶ steps (≈1.4 h per seed) |
 | Deterministic action | tanh(net) | clip(Gaussian mean, ±1) | tanh(Gaussian mean) |
 | Exported `out_act` | `tanh` | `clip` | `tanh` |
 
@@ -403,7 +403,8 @@ logs `results/trainers/logs/`.
 | MPC (MPPI) | – | 14.2 | **6.1** | 0.054 | 0.036 | 99.5 | – |
 | ES (NumPy) | 3 | **10.5 ± 0.6** | 9.1 ± 0.6 | 0.043 ± 0.001 | 0.041 ± 0.003 | 99.5 ± 0.0 | 18.4 M |
 | PPO (SB3, gSDE) | 3 | 11.1 ± 0.9 | 9.3 ± 0.6 | 0.023 ± 0.001 | 0.044 ± 0.007 | 99.5 ± 0.0 | 2.0 M |
-| SAC (SB3) | 3 | 18.1 ± 0.5 | 11.8 ± 1.3 | **0.008 ± 0.001** | 0.039 ± 0.005 | 95.8 ± 2.1 | 0.3 M |
+| SAC (SB3) | 3 | 18.1 ± 0.5 | 11.8 ± 1.3 | 0.008 ± 0.001 | 0.039 ± 0.005 | 95.8 ± 2.1 | 0.3 M |
+| SAC (SB3), longer budget | 3 | 18.3 ± 1.2 | 11.1 ± 2.2 | **0.007 ± 0.001** | 0.034 ± 0.008 | 95.8 ± 2.8 | 1.0 M |
 | deployed `follow_field.npz` (ES) | 1 | 10.3 | 9.2 | 0.046 | 0.041 | 99.5 | not logged |
 
 **Onion profile**
@@ -421,7 +422,8 @@ What this shows:
 - **The learned-steering result does not depend on the in-house optimiser.** PPO, from a standard library, reaches the same tracking as ES within about one seed SD (soybean 11.1 vs 10.5 cm), with half the jerk, using 9× fewer simulator steps.
 - **The deployed policies are reproducible:** `follow_field` and `follow_onion` lie inside the spread of three fresh ES seeds trained with the recorded command.
 - **Every learned controller beats pure pursuit on cross-track error** in both profiles. On the onion profile, all learned policies are within 1 cm of each other and of MPC.
-- **SAC at 3·10⁵ steps had not converged on the soybean profile** (validation return still rising, below pursuit on cross-track); it trades accuracy for the smoothest control.  A 1 M-step SAC run is listed in `run_trainer_study.sh` (`ALGOS=sac1m`).
+- **SAC is the one trainer that does not beat pure pursuit on the soybean profile, and more training does not change that.** At 3·10⁵ steps its validation return was still rising, so three more seeds were trained for 10⁶ steps (`ALGOS=sac1m`). The return plateaued below pursuit, at best 74–76 on validation against pursuit's 75 (best checkpoints at 0.3, 0.5 and 0.96 M steps). The test result was unchanged: 18.3 ± 1.2 cm vs 18.1 ± 0.5 cm, test return 83.8 ± 1.4 vs pursuit 85.9 and PPO 92.6 ± 0.9. SAC settles on a different trade-off, with the lowest jerk of any controller (0.007) but no better tracking than pursuit. The test does not show why. A plausible cause is its entropy bonus and squashed-Gaussian policy, which favour small, smooth actions under this reward's heavy jerk cost. On the milder onion profile SAC matches the others (8.7 cm).
+- **Note on the SAC 1 M logs:** the stdout logs in `results/trainers/logs/sac1m_*.log` were rebuilt from the curve CSVs, because the original files were overwritten during training (as each log's header says). The curve CSVs and policies were written separately and are complete. Each exported policy reproduces the best validation return in its curve exactly.
 - Trade-off: ES tracks slightly tighter; the SB3 policies are smoother (lower jerk). Which to deploy is the accuracy–smoothness choice of §5.4.
 
 ### 9.5 Reproduce
