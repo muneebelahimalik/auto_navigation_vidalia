@@ -1,0 +1,2 @@
+[SAC | profile soybean | seed 2 | 1000000 steps | reward {'c_e': 2.0, 'c_theta': 0.5, 'c_u': 0.8, 'c_du': 8.0} | explore gsde]
+          0 steps       0s | val return  +37.42 | xtrack  32.3 cm | heading  7.4° | jerk 0.013 | success  17.2%  *best
