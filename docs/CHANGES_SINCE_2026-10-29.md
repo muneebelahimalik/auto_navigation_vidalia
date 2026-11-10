@@ -15,11 +15,11 @@ switched off or rolled back if the field says so.
 
 | Commit | Date | Change | Affects driving? | Field status | Switch off without a code change |
 |---|---|---|---|---|---|
-| *(this commit)* | 2026-11-10 | **LiDAR reader thread**: every packet is read in a background thread; navigation takes the newest *complete* scan, so a slow loop skips whole scans instead of getting half-scans | Yes (input data) | Lab test only: fake LiDAR + slow consumer → 0 of 8 scans partial (old path: 7 of 8) | `--lidar-reader inline` |
-| *(this commit)* | 2026-11-10 | **numpy on one CPU core** (`OPENBLAS_NUM_THREADS=1` etc., set at the top of `row_follow.py`) — suspected cause of the 2× slowdown since the SLAM rework | Speed only | Not field-tested | prefix the command with `OPENBLAS_NUM_THREADS=6 OMP_NUM_THREADS=6` |
-| *(this commit)* | 2026-11-10 | **SLAM rate limit** `--slam-hz 2` (mapping only) | Speed only | Not field-tested | `--slam-hz 0` |
-| *(this commit)* | 2026-11-10 | **Half-scan guard** (bed mode): a scan with one side of the swath empty is skipped, the estimate held (≤ 5 in a row; after that it is used with confidence capped at 0.30, so a broken reader stops the robot instead of driving 26 cm off) | Yes (perception) | Sim: 4 of 5 halved → lateral max 16 cm without, < 1.1 cm with, all stages; real scans classified correctly | `--no-half-scan-guard` |
-| *(this commit)* | 2026-11-10 | **Scan-health logging**: telemetry `pkts`, `scan_age_ms`, `lidar_skipped`, `scan_partial`, `fwd_cov`, `half_scan`, `loop_ms`; `summary.json` → `scan_health`; one line in the printed summary | No | — | — |
+| `090a151` | 2026-11-10 | **LiDAR reader thread**: every packet is read in a background thread; navigation takes the newest *complete* scan, so a slow loop skips whole scans instead of getting half-scans | Yes (input data) | Lab test only: fake LiDAR + slow consumer → 0 of 8 scans partial (old path: 7 of 8) | `--lidar-reader inline` |
+| `090a151` | 2026-11-10 | **numpy on one CPU core** (`OPENBLAS_NUM_THREADS=1` etc., set at the top of `row_follow.py`) — suspected cause of the 2× slowdown since the SLAM rework | Speed only | Not field-tested | prefix the command with `OPENBLAS_NUM_THREADS=6 OMP_NUM_THREADS=6` |
+| `090a151` | 2026-11-10 | **SLAM rate limit** `--slam-hz 2` (mapping only) | Speed only | Not field-tested | `--slam-hz 0` |
+| `090a151` | 2026-11-10 | **Half-scan guard** (bed mode): a scan with one side of the swath empty is skipped, the estimate held (≤ 5 in a row; after that it is used with confidence capped at 0.30, so a broken reader stops the robot instead of driving 26 cm off) | Yes (perception) | Sim: 4 of 5 halved → lateral max 16 cm without, < 1.1 cm with, all stages; real scans classified correctly | `--no-half-scan-guard` |
+| `090a151` | 2026-11-10 | **Scan-health logging**: telemetry `pkts`, `scan_age_ms`, `lidar_skipped`, `scan_partial`, `fwd_cov`, `half_scan`, `loop_ms`; `summary.json` → `scan_health`; one line in the printed summary | No | — | — |
 | `43968a1` | 2026-11-06 | Bed end: follow bare bed past the last onion (far-half absolute 2 cm relief floor) | Yes (row end) | Ran in the 3-bed run; rows 2–3 were 172 m (earlier same day 154 m). **Confirm it turned at the real bed end** | none (code) — roll back to `b1d002a` |
 | `b1d002a` | 2026-11-06 | `--headland-arc-cap` (default 3 = unchanged) | Only if set | Turn 1 on 11-06 needed 10.2 m of wheel arc (> old 8.6 m limit) | omit the flag |
 | `31c3293` | 2026-11-06 | `scripts/turn_gps_check.py` (offline analysis) | No | Used on 11-06 | — |
@@ -47,6 +47,7 @@ git fetch origin
 git checkout 43968a1      # exactly the code that ran on 2026-11-06
 git checkout 7e6cbc4      # before the SLAM rework (≈ the 2026-10-29 generation;
                           # loses the bed-end fix, arc cap, GPS logger, scan-health)
+git checkout 090a151      # the 2026-11-10 fixes (= main until the next change)
 git checkout main         # back to the newest
 ```
 
