@@ -1,0 +1,42 @@
+== bare
+   off +0.00 yaw +0.0°  lat  -0.2± 0.4 max  1.3cm  hdg +0.0 max  0.2°  conf 1.00 low   0%  rowend   0%  nobed   0%  [shape:40]
+   off +0.12 yaw +0.0°  lat  -0.4± 0.5 max  1.4cm  hdg +0.1 max  0.2°  conf 1.00 low   0%  rowend   0%  nobed   0%  [shape:40]
+   off -0.20 yaw +0.0°  lat  -0.0± 0.5 max  1.0cm  hdg -0.0 max  0.2°  conf 1.00 low   0%  rowend   0%  nobed   0%  [shape:40]
+   off +0.05 yaw +4.0°  lat  -1.2± 0.3 max  1.7cm  hdg +0.2 max  0.2°  conf 1.00 low   0%  rowend   0%  nobed   0%  [shape:40]
+   off -0.08 yaw -6.0°  lat  -0.4± 0.6 max  1.2cm  hdg +0.1 max  0.2°  conf 1.00 low   0%  rowend   0%  nobed   0%  [shape:40]
+   bed end: lost +3.6 m before end; max conf after 0.32; final mode no-bed
+== seedling
+   off +0.00 yaw +0.0°  lat  -0.1± 0.3 max  0.7cm  hdg +0.0 max  0.1°  conf 1.00 low   0%  rowend   0%  nobed   0%  [shape:40]
+   off +0.12 yaw +0.0°  lat  -0.1± 0.3 max  0.6cm  hdg +0.0 max  0.1°  conf 1.00 low   0%  rowend   0%  nobed   0%  [shape:40]
+   off -0.20 yaw +0.0°  lat  +0.0± 0.4 max  0.7cm  hdg -0.0 max  0.1°  conf 1.00 low   0%  rowend   0%  nobed   0%  [shape:40]
+   off +0.05 yaw +4.0°  lat  -0.6± 0.4 max  1.1cm  hdg +0.0 max  0.1°  conf 1.00 low   0%  rowend   0%  nobed   0%  [shape:40]
+   off -0.08 yaw -6.0°  lat  -0.3± 0.3 max  0.6cm  hdg +0.0 max  0.1°  conf 1.00 low   0%  rowend   0%  nobed   0%  [shape:40]
+   bed end: lost +3.5 m before end; max conf after 0.32; final mode no-bed
+== young
+   off +0.00 yaw +0.0°  lat  +0.1± 0.2 max  0.4cm  hdg -0.0 max  0.1°  conf 1.00 low   0%  rowend   0%  nobed   0%  [density:40]
+   off +0.12 yaw +0.0°  lat  +0.2± 0.1 max  0.5cm  hdg +0.0 max  0.1°  conf 1.00 low   0%  rowend   0%  nobed   0%  [density:40]
+   off -0.20 yaw +0.0°  lat  -0.6± 0.1 max  0.9cm  hdg -0.0 max  0.1°  conf 1.00 low   0%  rowend   0%  nobed   0%  [density:40]
+   off +0.05 yaw +4.0°  lat  +0.1± 0.1 max  0.4cm  hdg -0.0 max  0.1°  conf 1.00 low   0%  rowend   0%  nobed   0%  [density:40]
+   off -0.08 yaw -6.0°  lat  -0.2± 0.1 max  0.5cm  hdg -0.0 max  0.1°  conf 1.00 low   0%  rowend   0%  nobed   0%  [density:40]
+   bed end: lost +2.3 m before end; max conf after 0.33; final mode no-bed
+== mid
+   off +0.00 yaw +0.0°  lat  -0.2± 0.7 max  1.6cm  hdg +0.0 max  0.2°  conf 1.00 low   0%  rowend   0%  nobed   0%  [shape:40]
+   off +0.12 yaw +0.0°  lat  +0.2± 1.0 max  2.5cm  hdg +0.0 max  0.1°  conf 1.00 low   0%  rowend   0%  nobed   0%  [shape:40]
+   off -0.20 yaw +0.0°  lat  -0.7± 0.7 max  1.9cm  hdg -0.0 max  0.2°  conf 1.00 low   0%  rowend   0%  nobed   0%  [shape:40]
+   off +0.05 yaw +4.0°  lat  +0.3± 1.1 max  2.1cm  hdg -0.0 max  0.1°  conf 1.00 low   0%  rowend   0%  nobed   0%  [shape:40]
+   off -0.08 yaw -6.0°  lat  -1.1± 0.8 max  3.0cm  hdg +0.1 max  0.2°  conf 1.00 low   0%  rowend   0%  nobed   0%  [shape:40]
+   bed end: lost +2.4 m before end; max conf after 0.32; final mode no-bed
+== mature
+   off +0.00 yaw +0.0°  lat  +0.4± 1.1 max  3.2cm  hdg +0.0 max  0.3°  conf 1.00 low   0%  rowend   0%  nobed   0%  [shape:40]
+   off +0.12 yaw +0.0°  lat  -1.1± 1.5 max  4.9cm  hdg +0.1 max  0.3°  conf 1.00 low   0%  rowend   0%  nobed   0%  [shape:40]
+   off -0.20 yaw +0.0°  lat  +1.4± 0.9 max  3.4cm  hdg -0.2 max  0.3°  conf 1.00 low   0%  rowend   0%  nobed   0%  [shape:40]
+   off +0.05 yaw +4.0°  lat  +0.8± 1.3 max  3.3cm  hdg -0.1 max  0.4°  conf 1.00 low   0%  rowend   0%  nobed   0%  [shape:40]
+   off -0.08 yaw -6.0°  lat  -0.7± 1.9 max  4.6cm  hdg +0.1 max  0.7°  conf 1.00 low   0%  rowend   0%  nobed   0%  [shape:40]
+   bed end: lost +2.7 m before end; max conf after 0.32; final mode no-bed
+== lodged
+   off +0.00 yaw +0.0°  lat  +0.2± 1.4 max  2.6cm  hdg +0.1 max  0.5°  conf 1.00 low   0%  rowend   0%  nobed   0%  [shape:40]
+   off +0.12 yaw +0.0°  lat  -1.0± 1.6 max  5.1cm  hdg +0.1 max  0.4°  conf 1.00 low   0%  rowend   0%  nobed   0%  [shape:40]
+   off -0.20 yaw +0.0°  lat  +0.8± 2.0 max  4.2cm  hdg -0.1 max  0.6°  conf 1.00 low   0%  rowend   0%  nobed   0%  [shape:40]
+   off +0.05 yaw +4.0°  lat  -0.5± 1.4 max  2.8cm  hdg +0.1 max  0.5°  conf 1.00 low   0%  rowend   0%  nobed   0%  [shape:40]
+   off -0.08 yaw -6.0°  lat  +1.2± 2.0 max  4.5cm  hdg -0.2 max  0.6°  conf 1.00 low   0%  rowend   0%  nobed   0%  [shape:40]
+   bed end: lost +2.7 m before end; max conf after 0.32; final mode no-bed

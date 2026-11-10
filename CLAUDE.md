@@ -113,6 +113,10 @@ cd ~/auto_navigation_vidalia
 > (`43968a1` = code run on 2026-11-06, `7e6cbc4` = before the SLAM rework).
 > Loop-speed check before driving: `bash scripts/field_speed_test.sh`.
 
+> **Paper methods (simulators, RL, MPC, evaluation protocol, regenerated
+> results):** `docs/SIMULATION_METHODS.md`; raw outputs in
+> `results/eval_*_20261110.*`.
+
 ### Unit tests (any machine — no hardware, no farm-ng SDK required)
 
 ```bash

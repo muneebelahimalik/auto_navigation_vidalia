@@ -1,0 +1,13 @@
+[sim profile: onion]
+Held-out evaluation over 200 episodes (identical per-seed disturbances)
+
+  pure-pursuit   return +101.31 | xtrack   9.7 cm | heading  4.3° | jerk 0.010 | |ω| 0.016 | success 100.0%
+  RL policy      return +102.66 | xtrack   8.0 cm | heading  4.4° | jerk 0.016 | |ω| 0.022 | success 100.0%
+  delta (RL policy - pursuit):  xtrack -1.73 cm   heading +0.09°   jerk +0.0060   success +0.0%   return +1.34
+
+  MPC (MPPI)     return +102.79 | xtrack   7.7 cm | heading  3.7° | jerk 0.057 | |ω| 0.046 | success 100.0%
+  delta (MPC (MPPI) - pursuit):  xtrack -2.06 cm   heading -0.66°   jerk +0.0468   success +0.0%   return +1.47
+
+
+  per-episode CSV → /tmp/claude-0/simrep/onion.csv  (600 rows)
+  figure-ready: e.g. scatter xtrack_rmse_m vs grade_drift, or box plots grouped by controller.

@@ -1,0 +1,21 @@
+[sim profile: soybean]
+Held-out evaluation over 200 episodes (identical per-seed disturbances)
+
+  pure-pursuit   return  +88.95 | xtrack  17.9 cm | heading  7.8° | jerk 0.028 | |ω| 0.023 | success  98.0%
+  RL policy      return  +98.81 | xtrack  10.3 cm | heading  9.2° | jerk 0.046 | |ω| 0.041 | success  99.5%
+  delta (RL policy - pursuit):  xtrack -7.63 cm   heading +1.36°   jerk +0.0172   success +1.5%   return +9.87
+  by cross-slope drift magnitude:
+    |drift| 0.00-0.03 m/s (n=131): xtrack pursuit 12.4 cm  rl  7.0 cm   success 100% -> 100%
+    |drift| 0.03-0.06 m/s (n= 55): xtrack pursuit 24.9 cm  rl 13.5 cm   success 100% -> 100%
+    |drift| 0.06-1.00 m/s (n= 14): xtrack pursuit 41.5 cm  rl 27.8 cm   success  71% ->  93%
+
+  MPC (MPPI)     return  +95.94 | xtrack  14.2 cm | heading  6.1° | jerk 0.054 | |ω| 0.036 | success  99.5%
+  delta (MPC (MPPI) - pursuit):  xtrack -3.70 cm   heading -1.72°   jerk +0.0257   success +1.5%   return +6.99
+  by cross-slope drift magnitude:
+    |drift| 0.00-0.03 m/s (n=131): xtrack pursuit 12.4 cm  mpc  9.3 cm   success 100% -> 100%
+    |drift| 0.03-0.06 m/s (n= 55): xtrack pursuit 24.9 cm  mpc 20.4 cm   success 100% -> 100%
+    |drift| 0.06-1.00 m/s (n= 14): xtrack pursuit 41.5 cm  mpc 35.6 cm   success  71% ->  93%
+
+
+  per-episode CSV → /tmp/claude-0/simrep/soy.csv  (600 rows)
+  figure-ready: e.g. scatter xtrack_rmse_m vs grade_drift, or box plots grouped by controller.
