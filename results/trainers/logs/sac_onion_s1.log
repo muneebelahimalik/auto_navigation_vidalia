@@ -1,0 +1,35 @@
+[SAC | profile onion | seed 1 | 300000 steps | reward {'c_e': 2.0, 'c_theta': 0.5, 'c_u': 0.8, 'c_du': 8.0} | explore gsde]
+          0 steps       0s | val return  +21.90 | xtrack  31.8 cm | heading 27.4° | jerk 0.005 | success  14.1%  *best
+      10000 steps      27s | val return -170.06 | xtrack  31.3 cm | heading 68.3° | jerk 0.007 | success  37.5%
+      20000 steps      79s | val return  +73.56 | xtrack  24.9 cm | heading 10.8° | jerk 0.004 | success  98.4%  *best
+      30000 steps     129s | val return  +36.34 | xtrack  29.2 cm | heading 24.9° | jerk 0.004 | success  25.0%
+      40000 steps     180s | val return  +73.77 | xtrack  23.8 cm | heading  9.7° | jerk 0.003 | success  78.1%  *best
+      50000 steps     233s | val return  +84.07 | xtrack  20.1 cm | heading  7.0° | jerk 0.005 | success  93.8%  *best
+      60000 steps     285s | val return  +92.76 | xtrack  15.8 cm | heading  5.3° | jerk 0.005 | success  98.4%  *best
+      70000 steps     336s | val return  +98.43 | xtrack  11.5 cm | heading  5.4° | jerk 0.005 | success 100.0%  *best
+      80000 steps     388s | val return  +96.76 | xtrack  12.7 cm | heading  6.1° | jerk 0.005 | success 100.0%
+      90000 steps     440s | val return  +96.72 | xtrack  12.8 cm | heading  6.2° | jerk 0.005 | success 100.0%
+     100000 steps     493s | val return  +98.29 | xtrack  11.4 cm | heading  6.1° | jerk 0.005 | success 100.0%
+     110000 steps     547s | val return  +98.89 | xtrack  11.3 cm | heading  5.6° | jerk 0.005 | success 100.0%  *best
+     120000 steps     600s | val return  +98.67 | xtrack  11.4 cm | heading  5.6° | jerk 0.005 | success 100.0%
+     130000 steps     654s | val return  +99.89 | xtrack  10.4 cm | heading  5.0° | jerk 0.005 | success 100.0%  *best
+     140000 steps     707s | val return +100.87 | xtrack   9.7 cm | heading  4.3° | jerk 0.005 | success 100.0%  *best
+     150000 steps     759s | val return +100.92 | xtrack   9.7 cm | heading  4.0° | jerk 0.005 | success 100.0%  *best
+     160000 steps     812s | val return +100.72 | xtrack  10.0 cm | heading  4.1° | jerk 0.005 | success 100.0%
+     170000 steps     865s | val return +100.12 | xtrack  10.6 cm | heading  4.3° | jerk 0.005 | success 100.0%
+     180000 steps     916s | val return +101.12 | xtrack   9.4 cm | heading  4.2° | jerk 0.005 | success 100.0%  *best
+     190000 steps     968s | val return +100.01 | xtrack  10.6 cm | heading  4.3° | jerk 0.005 | success 100.0%
+     200000 steps    1021s | val return  +99.99 | xtrack  10.4 cm | heading  4.5° | jerk 0.006 | success 100.0%
+     210000 steps    1074s | val return +100.66 | xtrack   9.8 cm | heading  4.2° | jerk 0.005 | success 100.0%
+     220000 steps    1129s | val return +101.43 | xtrack   9.2 cm | heading  3.7° | jerk 0.005 | success 100.0%  *best
+     230000 steps    1180s | val return +101.53 | xtrack   8.9 cm | heading  3.8° | jerk 0.005 | success 100.0%  *best
+     240000 steps    1233s | val return +101.61 | xtrack   8.7 cm | heading  4.0° | jerk 0.005 | success 100.0%  *best
+     250000 steps    1285s | val return +100.81 | xtrack   9.6 cm | heading  4.2° | jerk 0.005 | success 100.0%
+     260000 steps    1337s | val return +101.71 | xtrack   8.6 cm | heading  3.8° | jerk 0.006 | success 100.0%  *best
+     270000 steps    1390s | val return +101.71 | xtrack   8.4 cm | heading  4.1° | jerk 0.006 | success 100.0%  *best
+     280000 steps    1441s | val return +101.79 | xtrack   8.4 cm | heading  4.0° | jerk 0.006 | success 100.0%  *best
+     290000 steps    1493s | val return +101.24 | xtrack   9.0 cm | heading  4.1° | jerk 0.006 | success 100.0%
+     300000 steps    1545s | val return +101.84 | xtrack   8.6 cm | heading  3.6° | jerk 0.006 | success 100.0%  *best
+
+saved best policy -> policies/trainers/sac_onion_s1.npz  (validation return +101.84); curve -> results/trainers/sac_onion_s1_curve.csv
+Test it: python3 scripts/eval_controller.py --profile onion --policy policies/trainers/sac_onion_s1.npz --mpc

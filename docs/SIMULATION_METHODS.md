@@ -7,8 +7,12 @@ identical to the earlier `results/controller_pareto.csv`).
 
 ## 1. Overview
 
-Three simulation components were built, all in plain Python + NumPy (no Gym,
-PyTorch, ROS/Gazebo or physics engine):
+Three simulation components were built in plain Python + NumPy (no
+ROS/Gazebo or physics engine).  The steering simulator is also exposed as a
+standard **Gymnasium** environment, and the steering policy is trained both
+with our NumPy Evolution Strategies and with the **Stable-Baselines3** (PyTorch)
+implementations of **PPO** and **SAC** (§5.5), so the learning results do not
+rest on in-house RL code alone:
 
 | Component | File | What it simulates | Used for |
 |---|---|---|---|
@@ -25,13 +29,15 @@ therefore compared on the same perception and the same speed law.
 
 | Item | Value |
 |---|---|
-| Language / numerics | Python + NumPy only (RL, MPC and simulators) |
+| Language / numerics | Python + NumPy (simulators, ES, MPC, everything that runs on the robot) |
+| RL environment API | Gymnasium 1.4.0 (`sim/gym_env.py`; passes `gymnasium.utils.env_checker.check_env`) |
+| Deep-RL library | Stable-Baselines3 2.9.2 on PyTorch 2.15.0 (CPU), training only (`scripts/train_sb3.py`) |
 | Development / evaluation machine | x86-64, Python 3.11.18, NumPy 2.4.6 (this document's numbers) |
 | Robot computer | NVIDIA Jetson Xavier NX (6-core ARM), Ubuntu 20.04, Python 3.8.10, JetPack 5.1 |
 | Robot | farm-ng Amiga (4-wheel skid-steer), farm-ng OS 2.0 SDK (gRPC) |
 | LiDAR | Velodyne VLP-16 Puck Hi-Res (16 beams, ±10°, 1.33° spacing), 10 Hz, mounted 1.035 m high, 15.7° nose-down |
 | Learned policy format | NumPy `.npz` (layer sizes + flat parameter vector), forward pass in µs on the Jetson |
-| RL algorithm | Evolution Strategies (Salimans et al., 2017), own NumPy implementation (`scripts/train_rl.py`) |
+| RL algorithms | Evolution Strategies (Salimans et al., 2017), own NumPy implementation (`scripts/train_rl.py`); PPO (Schulman et al., 2017) and SAC (Haarnoja et al., 2018) from Stable-Baselines3 (Raffin et al., 2021) |
 | MPC algorithm | MPPI, Model-Predictive Path Integral control (Williams et al., 2017), own NumPy implementation |
 | Unit/regression tests | pytest (`tests/test_rl.py`, `test_onion_rl.py`, `test_row_controller.py`, `test_onion_growth_stages.py`, …) |
 
@@ -185,7 +191,67 @@ w_k ∝ exp(−(J_k − min J)/λ),  λ = 0.6 ;   u_nom ← Σ_k w_k u_k
 | **`follow_field.npz`** | soybean | 2.0 | 0.5 | **0.8** | **8.0** | deployed for soybean (`--controller rl`) |
 | **`follow_onion.npz`** | onion | 2.0 | 0.5 | **0.8** | **8.0** | deployed for onion (`--preset onion --controller rl`), trained from scratch |
 
-The policy files store only the weights. The number of ES iterations for each one was not logged; the script default is 300. Before the manuscript, re-run training with the commands in §9 so every policy is reproducible from a recorded command.
+The deployed policy files store only the weights; their ES iteration count was not logged (script default 300). They are now backed by the training study (§5.5, §9.4): three fresh ES seeds per profile trained with the recorded command (`policies/trainers/es_*`, logs and curves in `results/trainers/`) reproduce them within the seed spread.
+
+### 5.5 Training study: ES vs PPO vs SAC (standard libraries, several seeds)
+
+To show the learned steering does not depend on one in-house optimiser, the
+same 385-parameter network is trained with three algorithms, three training
+seeds each (0, 1, 2), on both profiles, with the reward weights of the
+deployed policies (c_e 2.0, c_θ 0.5, c_u 0.8, c_du 8.0).  One command runs the
+whole study: `bash scripts/run_trainer_study.sh`.
+
+**Environment** (`sim/gym_env.py::RowFollowGymEnv`): a thin Gymnasium wrapper
+of §3 — identical dynamics, disturbances and reward.
+- Observation: the 5 inputs of §3.5 scaled exactly as the robot's policy scales them (`encode_obs`), float32, bounds ±10 (a no-op clip).
+- Action: Box [−1, 1] (ω = a · 0.40 rad/s).  `terminated` = left the row; `truncated` = 20 s elapsed.
+- Each episode's disturbances come from an episode seed drawn from the Gymnasium RNG; `reset(options={"episode_seed": s})` replays exactly the episode `RowFollowEnv.reset(seed=s)` gives, so the test episodes are identical for every trainer.
+- Checked by `gymnasium.utils.env_checker.check_env` and step-by-step against the core simulator (`tests/test_gym_sb3.py`).
+
+**Actor** — identical for all three algorithms: 5 → 16 → 16 → 1, tanh hidden
+units.  The critics (value / Q networks, 64 → 64 tanh) exist only during
+training and are discarded.
+
+| | ES (`train_rl.py`) | PPO (SB3) | SAC (SB3) |
+|---|---|---|---|
+| Type | gradient-free, population | on-policy actor-critic | off-policy max-entropy actor-critic |
+| Key settings | population 40, σ 0.10, lr 0.05, 8 episodes/candidate | 8 parallel envs, n_steps 1024, batch 256, 10 epochs, γ 0.99, GAE λ 0.95, clip 0.2, lr 3·10⁻⁴, entropy coef 0; **gSDE exploration** (sample freq 4, initial log-std −2) | buffer 3·10⁵, 5 000 random warm-up steps, batch 256, γ 0.99, τ 0.005, lr 3·10⁻⁴, 1 gradient step per env step, automatic entropy tuning |
+| Budget | 300 iterations (≈15 M simulator steps) | 2 M steps | 3·10⁵ steps |
+| Deterministic action | tanh(net) | clip(Gaussian mean, ±1) | tanh(Gaussian mean) |
+| Exported `out_act` | `tanh` | `clip` | `tanh` |
+
+Budgets were set so each run takes 6–30 min on one CPU core; SAC is
+sample-efficient but ~25× slower per step (one gradient update per step).
+All other settings are Stable-Baselines3 defaults.
+
+**PPO exploration — a negative result worth reporting.**  With SB3's default
+exploration (independent Gaussian noise, std 1), PPO got *worse* during
+training (validation return 48 → −52 after 0.4 M steps, 3 seeds; curves in
+`results/trainers/ppo_default_noise_failed/`).  Cause: under the deployed
+reward the jerk term 8·(a_t − a_{t−1})² of uncorrelated unit-std noise costs
+≈ 6 per step, far above the +0.5 per-step alive bonus, so while exploring,
+leaving the row early looked better than following it.  PPO uses
+generalized State-Dependent Exploration (gSDE; Raffin et al., 2022), which
+SB3 provides for exactly this case (smooth, temporally correlated noise on
+real robots), with initial std e⁻² ≈ 0.14 (`--explore gsde`, the default;
+`--explore default` reproduces the failure).  ES has no such issue because
+it perturbs the weights, not the actions.
+
+**Model selection** is the same for all three: every 10 ES iterations / 100 k
+PPO steps / 10 k SAC steps, the actor is exported to the robot's NumPy format
+and evaluated on the 64 validation seeds 10 000–10 063; the best export is
+kept.  These evaluations form the learning curves (`*_curve.csv`: simulator
+steps used for training, wall time, validation return, cross-track, heading,
+jerk, effort, success).
+
+**Export to the robot** (`scripts/train_sb3.py::export_actor`): the PyTorch
+actor's linear layers are copied into `navigation/rl_policy.py::MLPPolicy`
+(`.npz`; field `out_act` records clip vs tanh, older files default to tanh).
+The NumPy forward pass reproduces `model.predict(obs, deterministic=True)` to
+< 10⁻⁵ (`test_sb3_actor_exports_exactly_to_numpy`).  The robot therefore runs
+PPO/SAC policies through the same `RLController` safety wrapper, with no
+PyTorch on the Jetson:
+`python3 scripts/row_follow.py --auto --preset onion --controller rl --policy policies/trainers/ppo_onion_s0.npz`.
 
 ## 6. Evaluation protocol (simulator)
 
@@ -319,7 +385,46 @@ Lateral error after settling, over the 5 start conditions (bias ± std, worst |e
 - No false row ends, and no scans below the FOLLOW threshold, at any stage.
 - After the bed end the grass headland was never followed: maximum confidence 0.32–0.33, below the 0.35 threshold.
 
-### 9.4 Reproduce
+### 9.4 Training study: ES vs PPO vs SAC (§5.5), 200 test episodes
+
+Test seeds 50 000–50 199 (as §9.1).  Trained policies: mean ± SD over 3
+training seeds; each is the exported NumPy policy the robot would load.  MPC
+uses the robot's setting for each profile (onion: σ 0.20, λ 0.3, drift gain
+0.05 — so its onion row differs from §9.1, which used the default).
+Raw: `results/trainers/test_{soybean,onion}.csv`, `summary_*.txt`; learning
+curves `results/trainers/*_curve.csv` → `learning_curves.png/.svg`; training
+logs `results/trainers/logs/`.
+
+**Soybean profile**
+
+| Controller | n | Cross-track RMSE (cm) | Heading RMSE (°) | Jerk | Effort \|ω\| (rad/s) | Success (%) | Training steps |
+|---|---|---|---|---|---|---|---|
+| Pure pursuit + integral | – | 17.9 | 7.8 | 0.029 | 0.024 | 98.0 | – |
+| MPC (MPPI) | – | 14.2 | **6.1** | 0.054 | 0.036 | 99.5 | – |
+| ES (NumPy) | 3 | **10.5 ± 0.6** | 9.1 ± 0.6 | 0.043 ± 0.001 | 0.041 ± 0.003 | 99.5 ± 0.0 | 18.4 M |
+| PPO (SB3, gSDE) | 3 | 11.1 ± 0.9 | 9.3 ± 0.6 | 0.023 ± 0.001 | 0.044 ± 0.007 | 99.5 ± 0.0 | 2.0 M |
+| SAC (SB3) | 3 | 18.1 ± 0.5 | 11.8 ± 1.3 | **0.008 ± 0.001** | 0.039 ± 0.005 | 95.8 ± 2.1 | 0.3 M |
+| deployed `follow_field.npz` (ES) | 1 | 10.3 | 9.2 | 0.046 | 0.041 | 99.5 | not logged |
+
+**Onion profile**
+
+| Controller | n | Cross-track RMSE (cm) | Heading RMSE (°) | Jerk | Effort \|ω\| (rad/s) | Success (%) | Training steps |
+|---|---|---|---|---|---|---|---|
+| Pure pursuit + integral | – | 9.7 | 4.4 | 0.010 | **0.016** | 100 | – |
+| MPC (MPPI, onion setting) | – | 8.1 | **3.5** | 0.031 | 0.028 | 100 | – |
+| ES (NumPy) | 3 | **7.7 ± 0.2** | 4.2 ± 0.1 | 0.018 ± 0.002 | 0.023 ± 0.001 | 100 | 19.1 M |
+| PPO (SB3, gSDE) | 3 | 8.6 ± 0.4 | 4.4 ± 0.2 | 0.007 ± 0.001 | 0.022 ± 0.003 | 100 | 2.0 M |
+| SAC (SB3) | 3 | 8.7 ± 0.3 | 4.5 ± 0.7 | **0.005 ± 0.001** | 0.021 ± 0.004 | 100 | 0.3 M |
+| deployed `follow_onion.npz` (ES) | 1 | 8.0 | 4.4 | 0.016 | 0.022 | 100 | not logged |
+
+What this shows:
+- **The learned-steering result does not depend on the in-house optimiser.** PPO, from a standard library, reaches the same tracking as ES within about one seed SD (soybean 11.1 vs 10.5 cm), with half the jerk, using 9× fewer simulator steps.
+- **The deployed policies are reproducible:** `follow_field` and `follow_onion` lie inside the spread of three fresh ES seeds trained with the recorded command.
+- **Every learned controller beats pure pursuit on cross-track error** in both profiles. On the onion profile, all learned policies are within 1 cm of each other and of MPC.
+- **SAC at 3·10⁵ steps had not converged on the soybean profile** (validation return still rising, below pursuit on cross-track); it trades accuracy for the smoothest control.  A 1 M-step SAC run is listed in `run_trainer_study.sh` (`ALGOS=sac1m`).
+- Trade-off: ES tracks slightly tighter; the SB3 policies are smoother (lower jerk). Which to deploy is the accuracy–smoothness choice of §5.4.
+
+### 9.5 Reproduce
 
 
 
@@ -333,6 +438,10 @@ python3 scripts/eval_onion_growth.py --robust
 # re-train the deployed policies with a recorded command (recommended before submission)
 python3 scripts/train_rl.py --iters 300 --c-u 0.8 --c-du 8.0 --seed 0 --out policies/follow_field.npz
 python3 scripts/train_rl.py --iters 300 --c-u 0.8 --c-du 8.0 --seed 0 --profile onion --out policies/follow_onion.npz
+# training study: ES + PPO + SAC, 3 seeds, both profiles, then the test tables + figure
+pip install -r requirements-sim.txt          # dev PC only
+bash scripts/run_trainer_study.sh            # ~1.5 h on 4 cores
+python3 scripts/compare_trainers.py          # re-run tables/figure from the saved policies
 # sim calibration from a field run
 python3 scripts/calibrate_sim_from_run.py runs/<run>/telemetry.jsonl
 # open-loop replay of real estimates through all controllers

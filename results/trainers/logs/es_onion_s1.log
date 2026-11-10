@@ -1,0 +1,37 @@
+[sim profile: onion]
+params=385  pop=40  sigma=0.1  lr=0.05  reward[c_e=2.0 c_theta=0.5 c_u=0.8 c_du(jerk)=8.0]
+[baseline pure-pursuit] return=+100.87  xtrack_rmse=9.4cm  heading_rmse=4.3deg  jerk=0.010  success=100%
+iter    1  return=+82.92  xtrack=20.8cm  heading=4.9deg  jerk=0.001  success=94%
+iter   10  return=+94.38  xtrack=15.0cm  heading=4.5deg  jerk=0.002  success=100%
+iter   20  return=+101.03  xtrack=8.3cm  heading=5.1deg  jerk=0.009  success=100%
+iter   30  return=+101.01  xtrack=8.1cm  heading=4.2deg  jerk=0.016  success=100%
+iter   40  return=+100.72  xtrack=7.3cm  heading=4.4deg  jerk=0.019  success=100%
+iter   50  return=+100.34  xtrack=7.1cm  heading=4.6deg  jerk=0.019  success=100%
+iter   60  return=+100.72  xtrack=7.2cm  heading=4.6deg  jerk=0.017  success=100%
+iter   70  return=+100.57  xtrack=7.2cm  heading=4.3deg  jerk=0.019  success=100%
+iter   80  return=+100.63  xtrack=7.9cm  heading=3.7deg  jerk=0.019  success=100%
+iter   90  return=+100.12  xtrack=7.2cm  heading=4.5deg  jerk=0.021  success=100%
+iter  100  return=+100.58  xtrack=7.6cm  heading=4.2deg  jerk=0.019  success=100%
+iter  110  return=+101.06  xtrack=7.7cm  heading=4.0deg  jerk=0.016  success=100%
+iter  120  return=+100.47  xtrack=7.2cm  heading=4.0deg  jerk=0.021  success=100%
+iter  130  return=+100.29  xtrack=7.2cm  heading=4.2deg  jerk=0.022  success=100%
+iter  140  return=+100.30  xtrack=6.8cm  heading=4.7deg  jerk=0.021  success=100%
+iter  150  return=+100.86  xtrack=7.3cm  heading=4.3deg  jerk=0.017  success=100%
+iter  160  return=+100.19  xtrack=7.6cm  heading=4.4deg  jerk=0.020  success=100%
+iter  170  return=+100.59  xtrack=7.4cm  heading=4.4deg  jerk=0.019  success=100%
+iter  180  return=+100.23  xtrack=7.2cm  heading=4.7deg  jerk=0.019  success=100%
+iter  190  return=+100.44  xtrack=7.3cm  heading=4.3deg  jerk=0.020  success=100%
+iter  200  return=+101.00  xtrack=7.6cm  heading=4.3deg  jerk=0.017  success=100%
+iter  210  return=+100.66  xtrack=7.5cm  heading=4.3deg  jerk=0.019  success=100%
+iter  220  return=+99.75  xtrack=7.8cm  heading=4.0deg  jerk=0.024  success=100%
+iter  230  return=+100.12  xtrack=7.3cm  heading=4.8deg  jerk=0.019  success=100%
+iter  240  return=+100.77  xtrack=7.4cm  heading=4.4deg  jerk=0.018  success=100%
+iter  250  return=+100.12  xtrack=7.4cm  heading=4.4deg  jerk=0.021  success=100%
+iter  260  return=+100.93  xtrack=7.6cm  heading=4.4deg  jerk=0.016  success=100%
+iter  270  return=+99.51  xtrack=6.9cm  heading=4.2deg  jerk=0.025  success=100%
+iter  280  return=+100.40  xtrack=7.3cm  heading=4.7deg  jerk=0.018  success=100%
+iter  290  return=+99.76  xtrack=7.4cm  heading=4.4deg  jerk=0.024  success=100%
+iter  300  return=+100.39  xtrack=7.3cm  heading=4.2deg  jerk=0.021  success=100%
+
+saved best policy -> policies/trainers/es_onion_s1.npz  (held-out return +101.06 vs baseline +100.87)
+compare in detail with:  python3 scripts/eval_controller.py --policy policies/trainers/es_onion_s1.npz --mpc --profile onion

@@ -115,7 +115,14 @@ cd ~/auto_navigation_vidalia
 
 > **Paper methods (simulators, RL, MPC, evaluation protocol, regenerated
 > results):** `docs/SIMULATION_METHODS.md`; raw outputs in
-> `results/eval_*_20261110.*`.
+> `results/eval_*_20261110.*`.  **Standard-library training study** (§5.5 /
+> §9.4): the steering sim is also a Gymnasium env (`sim/gym_env.py`); the same
+> 385-parameter policy is trained with ES, Stable-Baselines3 PPO (gSDE
+> exploration) and SAC, 3 seeds each, exported exactly to the robot's `.npz`
+> (`scripts/train_sb3.py`, `scripts/run_trainer_study.sh`,
+> `scripts/compare_trainers.py`; policies in `policies/trainers/`, curves and
+> test tables in `results/trainers/`).  Dev PC only: `pip install -r
+> requirements-sim.txt` — the robot never needs PyTorch.
 
 ### Unit tests (any machine — no hardware, no farm-ng SDK required)
 

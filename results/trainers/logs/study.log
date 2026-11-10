@@ -1,0 +1,8 @@
+skip es_soybean_s0 (exists; FORCE=1 to redo)
+skip es_soybean_s1 (exists; FORCE=1 to redo)
+skip es_soybean_s2 (exists; FORCE=1 to redo)
+skip es_onion_s0 (exists; FORCE=1 to redo)
+skip es_onion_s1 (exists; FORCE=1 to redo)
+skip es_onion_s2 (exists; FORCE=1 to redo)
+12 training runs, 4 at a time
+scripts/run_trainer_study.sh: line 58: unexpected EOF while looking for matching `"'

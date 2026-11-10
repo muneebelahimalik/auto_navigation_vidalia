@@ -1,0 +1,26 @@
+[PPO | profile onion | seed 1 | 2000000 steps | reward {'c_e': 2.0, 'c_theta': 0.5, 'c_u': 0.8, 'c_du': 8.0} | explore gsde]
+          0 steps       0s | val return  +75.57 | xtrack  23.8 cm | heading  6.0° | jerk 0.000 | success  84.4%  *best
+     100000 steps      19s | val return +101.52 | xtrack   8.5 cm | heading  4.2° | jerk 0.006 | success 100.0%  *best
+     200000 steps      37s | val return +101.70 | xtrack   8.2 cm | heading  4.3° | jerk 0.007 | success 100.0%  *best
+     300000 steps      57s | val return +101.69 | xtrack   8.1 cm | heading  4.3° | jerk 0.006 | success 100.0%
+     400000 steps      76s | val return +101.64 | xtrack   8.0 cm | heading  4.4° | jerk 0.007 | success 100.0%
+     500000 steps      96s | val return +101.56 | xtrack   7.8 cm | heading  4.5° | jerk 0.008 | success 100.0%
+     600000 steps     114s | val return +101.37 | xtrack   7.7 cm | heading  4.7° | jerk 0.009 | success 100.0%
+     700000 steps     133s | val return +101.33 | xtrack   7.7 cm | heading  4.8° | jerk 0.009 | success 100.0%
+     800000 steps     152s | val return +101.10 | xtrack   7.6 cm | heading  5.0° | jerk 0.010 | success 100.0%
+     900000 steps     171s | val return +101.10 | xtrack   7.6 cm | heading  5.0° | jerk 0.009 | success 100.0%
+    1000000 steps     191s | val return +101.00 | xtrack   7.5 cm | heading  5.1° | jerk 0.010 | success 100.0%
+    1100000 steps     210s | val return +100.95 | xtrack   7.6 cm | heading  5.1° | jerk 0.010 | success 100.0%
+    1200000 steps     230s | val return +100.90 | xtrack   7.6 cm | heading  5.2° | jerk 0.009 | success 100.0%
+    1300000 steps     249s | val return +100.75 | xtrack   7.6 cm | heading  5.4° | jerk 0.009 | success 100.0%
+    1400000 steps     268s | val return +100.74 | xtrack   7.5 cm | heading  5.3° | jerk 0.009 | success 100.0%
+    1500000 steps     287s | val return +100.85 | xtrack   7.5 cm | heading  5.2° | jerk 0.009 | success 100.0%
+    1600000 steps     306s | val return +100.72 | xtrack   7.4 cm | heading  5.3° | jerk 0.009 | success 100.0%
+    1700000 steps     324s | val return +100.74 | xtrack   7.5 cm | heading  5.3° | jerk 0.009 | success 100.0%
+    1800000 steps     342s | val return +100.74 | xtrack   7.5 cm | heading  5.2° | jerk 0.009 | success 100.0%
+    1900000 steps     361s | val return +100.85 | xtrack   7.4 cm | heading  5.2° | jerk 0.009 | success 100.0%
+    2000000 steps     381s | val return +100.84 | xtrack   7.4 cm | heading  5.2° | jerk 0.008 | success 100.0%
+    2007040 steps     383s | val return +100.84 | xtrack   7.4 cm | heading  5.2° | jerk 0.009 | success 100.0%
+
+saved best policy -> policies/trainers/ppo_onion_s1.npz  (validation return +101.70); curve -> results/trainers/ppo_onion_s1_curve.csv
+Test it: python3 scripts/eval_controller.py --profile onion --policy policies/trainers/ppo_onion_s1.npz --mpc

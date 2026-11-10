@@ -1,0 +1,37 @@
+[sim profile: soybean]
+params=385  pop=40  sigma=0.1  lr=0.05  reward[c_e=2.0 c_theta=0.5 c_u=0.8 c_du(jerk)=8.0]
+[baseline pure-pursuit] return=+74.87  xtrack_rmse=22.5cm  heading_rmse=9.8deg  jerk=0.032  success=97%
+iter    1  return=+44.36  xtrack=31.1cm  heading=9.1deg  jerk=0.005  success=34%
+iter   10  return=+53.69  xtrack=29.9cm  heading=4.7deg  jerk=0.014  success=50%
+iter   20  return=+74.93  xtrack=20.2cm  heading=11.5deg  jerk=0.041  success=95%
+iter   30  return=+78.16  xtrack=16.1cm  heading=13.7deg  jerk=0.047  success=97%
+iter   40  return=+78.75  xtrack=14.1cm  heading=12.9deg  jerk=0.056  success=97%
+iter   50  return=+79.43  xtrack=15.0cm  heading=11.5deg  jerk=0.055  success=97%
+iter   60  return=+80.78  xtrack=15.1cm  heading=12.5deg  jerk=0.048  success=97%
+iter   70  return=+77.34  xtrack=14.3cm  heading=12.1deg  jerk=0.056  success=97%
+iter   80  return=+82.69  xtrack=13.0cm  heading=11.8deg  jerk=0.049  success=97%
+iter   90  return=+80.09  xtrack=14.3cm  heading=11.1deg  jerk=0.056  success=97%
+iter  100  return=+81.43  xtrack=12.6cm  heading=11.7deg  jerk=0.056  success=97%
+iter  110  return=+82.34  xtrack=13.6cm  heading=11.5deg  jerk=0.050  success=97%
+iter  120  return=+83.25  xtrack=13.7cm  heading=10.7deg  jerk=0.051  success=97%
+iter  130  return=+82.70  xtrack=14.7cm  heading=11.0deg  jerk=0.047  success=97%
+iter  140  return=+82.11  xtrack=13.0cm  heading=11.0deg  jerk=0.055  success=97%
+iter  150  return=+81.20  xtrack=13.9cm  heading=11.1deg  jerk=0.056  success=97%
+iter  160  return=+80.54  xtrack=14.3cm  heading=11.4deg  jerk=0.053  success=97%
+iter  170  return=+82.20  xtrack=12.7cm  heading=11.8deg  jerk=0.053  success=97%
+iter  180  return=+81.79  xtrack=13.8cm  heading=11.3deg  jerk=0.054  success=97%
+iter  190  return=+79.27  xtrack=14.7cm  heading=12.6deg  jerk=0.048  success=97%
+iter  200  return=+79.87  xtrack=14.2cm  heading=11.9deg  jerk=0.054  success=97%
+iter  210  return=+81.23  xtrack=13.8cm  heading=11.9deg  jerk=0.054  success=97%
+iter  220  return=+81.50  xtrack=14.3cm  heading=11.0deg  jerk=0.053  success=97%
+iter  230  return=+80.74  xtrack=12.5cm  heading=12.3deg  jerk=0.057  success=97%
+iter  240  return=+81.27  xtrack=13.0cm  heading=11.6deg  jerk=0.055  success=97%
+iter  250  return=+80.76  xtrack=12.4cm  heading=12.2deg  jerk=0.056  success=97%
+iter  260  return=+81.28  xtrack=14.4cm  heading=10.7deg  jerk=0.056  success=97%
+iter  270  return=+82.64  xtrack=13.7cm  heading=10.9deg  jerk=0.052  success=97%
+iter  280  return=+82.37  xtrack=12.6cm  heading=12.5deg  jerk=0.047  success=97%
+iter  290  return=+79.67  xtrack=12.9cm  heading=11.3deg  jerk=0.060  success=97%
+iter  300  return=+82.04  xtrack=13.5cm  heading=11.6deg  jerk=0.053  success=97%
+
+saved best policy -> policies/trainers/es_soybean_s1.npz  (held-out return +83.25 vs baseline +74.87)
+compare in detail with:  python3 scripts/eval_controller.py --policy policies/trainers/es_soybean_s1.npz --mpc --profile soybean

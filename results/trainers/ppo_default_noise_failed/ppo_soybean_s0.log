@@ -1,0 +1,9 @@
+[PPO | profile soybean | seed 0 | 5000000 steps | reward {'c_e': 2.0, 'c_theta': 0.5, 'c_u': 0.8, 'c_du': 8.0}]
+          0 steps       0s | val return  +48.50 | xtrack  30.1 cm | heading  6.0° | jerk 0.000 | success  39.1%  *best
+     100000 steps      17s | val return -108.46 | xtrack  33.9 cm | heading 53.3° | jerk 0.031 | success  12.5%
+     200000 steps      34s | val return -282.28 | xtrack  32.7 cm | heading 74.7° | jerk 0.023 | success  18.8%
+     300000 steps      50s | val return  -67.18 | xtrack  33.6 cm | heading 37.8° | jerk 0.046 | success   9.4%
+     400000 steps      68s | val return  -51.96 | xtrack  33.2 cm | heading 33.7° | jerk 0.049 | success   7.8%
+     500000 steps      86s | val return  +10.31 | xtrack  32.1 cm | heading 27.7° | jerk 0.033 | success  29.7%
+     600000 steps     103s | val return  +28.17 | xtrack  30.0 cm | heading 19.4° | jerk 0.029 | success  31.2%
+     700000 steps     120s | val return  +40.99 | xtrack  27.6 cm | heading 12.6° | jerk 0.023 | success  46.9%

@@ -1,0 +1,11 @@
+# Simulation / training study — DEV PC ONLY (never needed on the Amiga brain:
+# the robot runs the exported .npz policies with NumPy).
+#   pip install -r requirements-sim.txt
+# Versions used for docs/SIMULATION_METHODS.md §5.5 / §9.5 (2026-11-10):
+#   numpy 2.4.6, gymnasium 1.4.0, stable-baselines3 2.9.2, torch 2.15.0, Python 3.11
+numpy>=1.24
+pytest
+matplotlib
+gymnasium>=1.0
+stable-baselines3>=2.3
+torch>=2.1

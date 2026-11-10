@@ -20,6 +20,8 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import csv
+import time
 import sys
 from pathlib import Path
 
@@ -33,11 +35,17 @@ from sim.evaluate import (evaluate, policy_act_fn, pursuit_act_fn,
 from sim.row_follow_env import EnvConfig, RowFollowEnv, onion_bed_config
 
 
+ENV_STEPS = 0   # simulator steps consumed by training (for the learning curve)
+
+
 def fitness(policy: MLPPolicy, flat, env: RowFollowEnv, seeds, make_act) -> float:
     """Mean episode return of the policy(flat) over the given eval seeds."""
+    global ENV_STEPS
     policy.set_params(flat)
     act = make_act(policy)
-    return float(np.mean([rollout(env, act, int(s))["return"] for s in seeds]))
+    eps = [rollout(env, act, int(s)) for s in seeds]
+    ENV_STEPS += sum(e["steps"] for e in eps)
+    return float(np.mean([e["return"] for e in eps]))
 
 
 def rank_normalise(returns: np.ndarray) -> np.ndarray:
@@ -77,6 +85,9 @@ def main() -> None:
                          "wander, 0.20 m/s, flat)")
     ap.add_argument("--residual-scale", type=float, default=0.5,
                     help="authority of the residual delta (fraction of max_angular)")
+    ap.add_argument("--curve-csv", default="", metavar="PATH",
+                    help="write the validation learning curve (same columns as "
+                         "train_sb3.py: timesteps = simulator steps used for training)")
     args = ap.parse_args()
 
     rng = np.random.default_rng(args.seed)
@@ -113,6 +124,8 @@ def main() -> None:
           f"jerk={base['control_jerk'][0]:.3f}  success={base['success_rate']*100:.0f}%")
 
     best_theta, best_score = theta.copy(), -1e18
+    curve = []
+    t0 = time.time()
     for it in range(1, args.iters + 1):
         # Common random numbers: all candidates this iter share the eval seeds.
         seeds = rng.integers(0, 1_000_000, size=args.episodes)
@@ -134,6 +147,17 @@ def main() -> None:
             score = cur["return"][0]
             if score > best_score:
                 best_score, best_theta = score, theta.copy()
+            curve.append({"return": score, "xtrack_cm": cur["xtrack_rmse_m"][0] * 100,
+                          "heading_deg": cur["heading_rmse_deg"][0],
+                          "jerk": cur["control_jerk"][0], "effort": cur["control_effort"][0],
+                          "success": cur["success_rate"], "timesteps": ENV_STEPS,
+                          "wall_s": round(time.time() - t0, 1), "iter": it})
+            if args.curve_csv:
+                Path(args.curve_csv).parent.mkdir(parents=True, exist_ok=True)
+                with open(args.curve_csv, "w", newline="") as f:
+                    w = csv.DictWriter(f, fieldnames=list(curve[0].keys()))
+                    w.writeheader()
+                    w.writerows(curve)
             print(f"iter {it:4d}  return={score:+.2f}  "
                   f"xtrack={cur['xtrack_rmse_m'][0]*100:.1f}cm  "
                   f"heading={cur['heading_rmse_deg'][0]:.1f}deg  "

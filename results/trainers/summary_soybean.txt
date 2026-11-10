@@ -1,0 +1,10 @@
+Steering controllers — soybean profile, 200 held-out test episodes (seeds 50000–50199); reward weights {'c_u': 0.8, 'c_du': 8.0}.
+Trained policies: mean ± SD across training seeds (n = seeds); every policy is the exported NumPy file the robot loads.
+
+controller                      n   cross-track cm     heading °           jerk     |ω| effort     success %  train steps
+pure pursuit                    1    17.88           7.81          0.0285          0.0235           98.0                     
+MPC (MPPI)                      1    14.18           6.09          0.0542          0.0356           99.5                     
+deployed ES (follow_field.npz)  1    10.25           9.17          0.0457          0.0411           99.5                     
+ES (NumPy)                      3   10.47 ±   0.60   9.14 ±  0.58  0.0433 ± 0.0010  0.0412 ± 0.0029   99.5 ±   0.0      18.39 M
+PPO (SB3)                       3   11.08 ±   0.86   9.28 ±  0.63  0.0229 ± 0.0010  0.0439 ± 0.0069   99.5 ±   0.0       2.01 M
+SAC (SB3) 0.3 M                 3   18.09 ±   0.51  11.80 ±  1.32  0.0080 ± 0.0010  0.0394 ± 0.0053   95.8 ±   2.1       0.30 M

@@ -55,7 +55,18 @@ def encode_obs(lateral: float, heading: float, conf: float, prev_action: float,
 
 
 class MLPPolicy:
-    def __init__(self, obs_dim: int = 4, hidden=(16, 16), seed: int = 0) -> None:
+    """``out_act``: how the last layer is bounded to [-1, 1] — ``"tanh"``
+    (the ES-trained policies, and Stable-Baselines3 SAC's squashed mean) or
+    ``"clip"`` (Stable-Baselines3 PPO's deterministic Gaussian mean, which the
+    environment clips).  Stored in the .npz; old files default to tanh."""
+
+    OUT_ACTS = ("tanh", "clip")
+
+    def __init__(self, obs_dim: int = 4, hidden=(16, 16), seed: int = 0,
+                 out_act: str = "tanh") -> None:
+        if out_act not in self.OUT_ACTS:
+            raise ValueError(f"out_act must be one of {self.OUT_ACTS}")
+        self.out_act = out_act
         self.obs_dim = obs_dim
         self.hidden = tuple(hidden)
         self.sizes = (obs_dim, *self.hidden, 1)
@@ -78,7 +89,8 @@ class MLPPolicy:
         x = ro * _OBS_SCALE[:self.obs_dim]
         for W, b in zip(self._W[:-1], self._b[:-1]):
             x = np.tanh(x @ W + b)
-        x = np.tanh(x @ self._W[-1] + self._b[-1])   # bounded output
+        x = x @ self._W[-1] + self._b[-1]
+        x = np.tanh(x) if self.out_act == "tanh" else np.clip(x, -1.0, 1.0)   # bounded
         return float(x[0])
 
     # ------------------------------------------------------------------
@@ -103,12 +115,14 @@ class MLPPolicy:
 
     # ------------------------------------------------------------------
     def save(self, path: str) -> None:
-        np.savez(path, sizes=np.array(self.sizes), params=self.get_params())
+        np.savez(path, sizes=np.array(self.sizes), params=self.get_params(),
+                 out_act=np.array(self.out_act))
 
     @classmethod
     def load(cls, path: str) -> "MLPPolicy":
         data = np.load(path)
         sizes = [int(s) for s in data["sizes"]]
-        pol = cls(obs_dim=sizes[0], hidden=tuple(sizes[1:-1]))
+        out_act = str(data["out_act"]) if "out_act" in data.files else "tanh"
+        pol = cls(obs_dim=sizes[0], hidden=tuple(sizes[1:-1]), out_act=out_act)
         pol.set_params(data["params"])
         return pol
