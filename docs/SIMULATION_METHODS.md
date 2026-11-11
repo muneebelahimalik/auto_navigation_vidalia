@@ -444,6 +444,7 @@ python3 scripts/train_rl.py --iters 300 --c-u 0.8 --c-du 8.0 --seed 0 --profile 
 pip install -r requirements-sim.txt          # dev PC only
 bash scripts/run_trainer_study.sh            # ~1.5 h on 4 cores
 python3 scripts/compare_trainers.py          # re-run tables/figure from the saved policies
+python3 scripts/watch_episode.py --hardest --gif   # one test episode, every controller (figure + animation)
 # sim calibration from a field run
 python3 scripts/calibrate_sim_from_run.py runs/<run>/telemetry.jsonl
 # open-loop replay of real estimates through all controllers

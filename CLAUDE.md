@@ -122,7 +122,11 @@ cd ~/auto_navigation_vidalia
 > (`scripts/train_sb3.py`, `scripts/run_trainer_study.sh`,
 > `scripts/compare_trainers.py`; policies in `policies/trainers/`, curves and
 > test tables in `results/trainers/`).  Dev PC only: `pip install -r
-> requirements-sim.txt` — the robot never needs PyTorch.
+> requirements-sim.txt` — the robot never needs PyTorch.  **Dev-PC how-to +
+> sending field data:** `docs/DEV_PC.md` — `scripts/watch_episode.py` plots /
+> animates every controller on one simulated test episode;
+> `scripts/pack_run.py` packs a `--record` run into one git-committable
+> `field_data/<run>.npz` (int16 mm points) and `--unpack`s it back.
 
 ### Unit tests (any machine — no hardware, no farm-ng SDK required)
 
