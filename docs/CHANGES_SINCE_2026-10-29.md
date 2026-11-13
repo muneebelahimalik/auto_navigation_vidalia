@@ -109,6 +109,27 @@ Command: `--auto --preset onion --controller pursuit --speed 0.20 --beds-left 2
 - `dropout_scans` (1 525) counts scans with no crop points; in bed-shape mode
   that is normal (young onions invisible), not LiDAR dropouts.
 
+## Controller choice for the 2026-11-13 MPC / RL runs (same 3 beds)
+
+All steady FOLLOW scans of the pursuit run (17 983 scans, 3 beds) replayed
+open-loop through each controller; the pursuit replay reproduces the logged
+command exactly (|ω| 0.0089 = 0.0089).  Ratios are to pursuit on the same
+estimates; sim = onion profile, 200 held-out test episodes.
+
+| Controller | Real: effort ×pursuit | Real: jerk ×pursuit | Real: peak rad/s | Sim xtrack cm | Sim jerk |
+|---|---|---|---|---|---|
+| pure pursuit | 1.00 | 1.0 | 0.110 | 9.7 | 0.010 |
+| MPC, preset (noise 0.20, temp 0.3) | 2.9 | 8.7 | 0.19 | 8.1 | 0.031 |
+| **MPC, noise 0.10, temp 0.1** | **2.1** | **4.9** | **0.15** | **8.5** | **0.018** |
+| RL `follow_onion` (deployed ES) + slew 0.12 | 3.5 | 3.3 | 0.22 | 8.0 | 0.016 |
+| **RL `ppo_onion_s1` + slew 0.12** | **2.7** | **0.9** | **0.09** | **8.6** | **0.007** |
+
+Choice: MPC `--mpc-noise 0.10 --mpc-temp 0.1`; RL
+`--policy policies/trainers/ppo_onion_s1.npz` (calmest learned policy on the
+real estimates: lower peak and jerk than pursuit, better sim tracking).  The
+preset is unchanged until these are confirmed in the field.  (MPC noise 0.07
+was calmer still but lost the tracking edge in the sim — 9.3 cm.)
+
 ## Next field visit — what to run, in order
 
 1. `bash scripts/field_speed_test.sh` (robot parked on a bed, ~5 min, does
