@@ -92,3 +92,32 @@ def test_stop_is_idempotent(tmp_path):
     rec.stop()
     rec.stop()  # must not raise
     assert rec.saved == 1
+
+
+def test_index_carries_clock_and_odometry_pose(tmp_path):
+    """Live SLAM off (field 2026-11-13): the map is rebuilt offline, so each
+    saved scan's index row carries the monotonic clock and the odometry pose."""
+    import csv as _csv
+    from navigation.scan_recorder import ScanRecorder as _SR
+    rec = _SR(tmp_path, every=1)
+    pts = np.ones((10, 3), dtype=np.float32)
+    rec.submit(pts, {"state": "FOLLOW", "mono": 123.4567, "odom_x": 1.5,
+                     "odom_y": -0.25, "odom_th_deg": 12.0})
+    rec.submit(pts, {"state": "FOLLOW"})                 # no odometry → empty cells
+    rec.stop()
+    rows = list(_csv.DictReader(open(tmp_path / "index.csv")))
+    assert rows[0]["mono"] == "123.4567" and rows[0]["odom_x"] == "1.5"
+    assert rows[0]["odom_y"] == "-0.25" and rows[0]["odom_th_deg"] == "12.0"
+    assert rows[1]["odom_x"] == "" and rows[1]["file"] == "scan_00001.npy"
+
+
+def test_odometry_reports_which_velocity_it_integrated():
+    from navigation.odometry import WheelOdometry
+    od = WheelOdometry()
+    od.tick(0.2, 0.05, 0.1)
+    assert od.last_source == "cmd" and od.last_speed == 0.2 and od.last_angular == 0.05
+    od.available, od._meas_speed, od._meas_angular = True, 0.18, 0.01
+    import time as _t
+    od._meas_t = _t.monotonic()
+    od.tick(0.2, 0.05, 0.1)
+    assert od.last_source == "wheel" and od.last_speed == 0.18

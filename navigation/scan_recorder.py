@@ -8,7 +8,9 @@ from ANY moment offline, later.
 
 Writes into ``<run>/scans/``:
     scan_00000.npy, scan_00001.npy, …   Nx3 corrected robot-frame clouds
-    index.csv                            file, t, state, lateral, heading_deg, conf, n
+    index.csv                            file, t, state, lateral, heading_deg, conf, n,
+                                         mono, odom_x, odom_y, odom_th_deg (pose before this
+                                         scan's odometry tick; empty without odometry)
 
 The heavy work (numpy save) runs in a **background daemon thread** fed by an
 O(1) ``submit`` from the control loop, so recording can never slow or destabilise
@@ -28,6 +30,11 @@ from pathlib import Path
 import numpy as np
 
 
+def _r(v, nd):
+    """Round a number for the index, or leave the cell empty."""
+    return "" if v is None else round(float(v), nd)
+
+
 class ScanRecorder:
     def __init__(self, out_dir, *, every: int = 10, queue_max: int = 64) -> None:
         self.dir = Path(out_dir)
@@ -44,7 +51,8 @@ class ScanRecorder:
         self._t0 = time.monotonic()
         self._index = open(self.dir / "index.csv", "w", newline="")
         self._w = csv.writer(self._index)
-        self._w.writerow(["file", "t", "state", "lateral", "heading_deg", "conf", "n"])
+        self._w.writerow(["file", "t", "state", "lateral", "heading_deg", "conf", "n",
+                          "mono", "odom_x", "odom_y", "odom_th_deg"])
         self._thread = threading.Thread(target=self._loop, daemon=True, name="scanrec")
         self._thread.start()
 
@@ -89,7 +97,9 @@ class ScanRecorder:
                     fn, round(meta.get("t", time.monotonic() - self._t0), 3),
                     meta.get("state", ""), round(float(meta.get("lateral", 0.0)), 4),
                     round(float(meta.get("heading_deg", 0.0)), 3),
-                    round(float(meta.get("conf", 0.0)), 3), int(meta.get("n", 0))])
+                    round(float(meta.get("conf", 0.0)), 3), int(meta.get("n", 0)),
+                    _r(meta.get("mono"), 4), _r(meta.get("odom_x"), 4),
+                    _r(meta.get("odom_y"), 4), _r(meta.get("odom_th_deg"), 3)])
                 self.saved += 1
             except Exception:
                 pass

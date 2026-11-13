@@ -501,13 +501,20 @@ class RowNavigator:
                 rec_pts = pts
                 if intensity is not None and len(intensity) == len(pts):
                     rec_pts = np.column_stack((pts, intensity))
-                self.scan_recorder.submit(rec_pts, {
+                meta = {
                     "state": self.state,
                     "lateral": float(est.lateral_offset),
                     "heading_deg": math.degrees(est.heading_error),
                     "conf": float(est.confidence),
                     "n": int(est.n_points),
-                })
+                    "mono": time.monotonic(),
+                }
+                od = self.odometry
+                if od is not None:
+                    # Pose for rebuilding the map offline (no live SLAM needed).
+                    meta.update(odom_x=od.x, odom_y=od.y,
+                                odom_th_deg=math.degrees(od.theta))
+                self.scan_recorder.submit(rec_pts, meta)
 
             # --- 3-D camera depth cloud: fill LiDAR blind zone ---
             # Projects depth images to 3D, merges with LiDAR cloud so that
@@ -1318,6 +1325,19 @@ class RowNavigator:
             rec["lidar_skipped"] = info.get("skipped")
             rec["scan_partial"] = bool(info.get("partial", False))
         rec["fwd_cov"] = round(float(getattr(self, "_fwd_cov", 1.0)), 2)
+        od = self.odometry
+        if od is not None:
+            # Wheel-odometry pose + the velocity it integrated, so the field map
+            # can be rebuilt offline from the saved scans (live SLAM off).
+            try:
+                rec["odom_x"] = round(float(od.x), 4)
+                rec["odom_y"] = round(float(od.y), 4)
+                rec["odom_th_deg"] = round(math.degrees(float(od.theta)), 3)
+                rec["v_meas"] = round(float(getattr(od, "last_speed", 0.0)), 4)
+                rec["w_meas"] = round(float(getattr(od, "last_angular", 0.0)), 4)
+                rec["odom_src"] = getattr(od, "last_source", "")
+            except Exception:
+                pass
         t_scan = getattr(self, "_t_scan", None)
         if t_scan is not None:
             rec["loop_ms"] = round((time.monotonic() - t_scan) * 1000.0, 1)

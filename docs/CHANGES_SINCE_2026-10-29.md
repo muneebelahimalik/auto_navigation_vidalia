@@ -15,6 +15,7 @@ switched off or rolled back if the field says so.
 
 | Commit | Date | Change | Affects driving? | Field status | Switch off without a code change |
 |---|---|---|---|---|---|
+| (this commit) | 2026-11-13 | **Odometry pose logged** for rebuilding the map offline with live SLAM off: telemetry `odom_x/odom_y/odom_th_deg/v_meas/w_meas/odom_src`, scan `index.csv` gains `mono` + the pose | No (logging only) | Unit-tested; first field use 2026-11-13 | — |
 | `090a151` | 2026-11-10 | **LiDAR reader thread**: every packet is read in a background thread; navigation takes the newest *complete* scan, so a slow loop skips whole scans instead of getting half-scans | Yes (input data) | Lab test only: fake LiDAR + slow consumer → 0 of 8 scans partial (old path: 7 of 8) | `--lidar-reader inline` |
 | `090a151` | 2026-11-10 | **numpy on one CPU core** (`OPENBLAS_NUM_THREADS=1` etc., set at the top of `row_follow.py`) — suspected cause of the 2× slowdown since the SLAM rework | Speed only | Not field-tested | prefix the command with `OPENBLAS_NUM_THREADS=6 OMP_NUM_THREADS=6` |
 | `090a151` | 2026-11-10 | **SLAM rate limit** `--slam-hz 2` (mapping only) | Speed only | Not field-tested | `--slam-hz 0` |

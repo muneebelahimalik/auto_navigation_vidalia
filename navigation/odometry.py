@@ -65,6 +65,11 @@ class WheelOdometry:
         self.theta: float = 0.0
         self.distance: float = 0.0
         self.available: bool = False
+        # Logging: which velocity the last tick integrated ("wheel" = measured
+        # AmigaTpdo1, "cmd" = commanded fallback) and its values.
+        self.last_source: str = "cmd"
+        self.last_speed: float = 0.0
+        self.last_angular: float = 0.0
 
         self._meas_speed: float = 0.0
         self._meas_angular: float = 0.0
@@ -84,9 +89,12 @@ class WheelOdometry:
         if self.available and (now - self._meas_t) < _STALE_SECS:
             speed = self._meas_speed
             angular = self._meas_angular
+            self.last_source = "wheel"
         else:
             speed = cmd_speed
             angular = cmd_angular
+            self.last_source = "cmd"
+        self.last_speed, self.last_angular = float(speed), float(angular)
         return self._integrate(speed, angular, dt)
 
     def reset_distance(self) -> None:
