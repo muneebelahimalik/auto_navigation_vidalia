@@ -124,11 +124,13 @@ class WheelOdometry:
 
         for path in _CANBUS_PATHS:
             try:
-                await asyncio.wait_for(
-                    self._subscribe(path),
-                    timeout=_SUBSCRIBE_TIMEOUT,
-                )
-                return  # successful subscription finished (CancelledError raises out)
+                # Only the FIRST message is timed out.  Wrapping the whole
+                # stream in wait_for (the old code) cancelled a WORKING
+                # subscription after 5 s, so every run since fell back to
+                # commanded velocity (field 2026-11-13: odom_src = cmd on all
+                # 19 267 scans).
+                await self._subscribe(path)
+                return  # stream ended normally
             except asyncio.TimeoutError:
                 continue
             except asyncio.CancelledError:
@@ -137,6 +139,8 @@ class WheelOdometry:
                 log.debug("[odometry] path %s failed: %s", path, exc)
                 continue
 
+        print("\n[odometry] no wheel-speed stream from the canbus service — "
+              "distances use the commanded speed")
         log.debug("[odometry] no working canbus subscription path — using commanded velocity")
 
     async def _subscribe(self, path: str) -> None:
@@ -145,24 +149,26 @@ class WheelOdometry:
         from farm_ng.core.uri_pb2 import Uri
 
         req = SubscribeRequest(uri=Uri(path=path), every_n=1)
-        client = EventClient(self._config)
-        first = True
-        async for _event, msg in client.subscribe(req, decode=True):
+        client = EventClient(self._config)            # keep a reference alive
+        stream = client.subscribe(req, decode=True).__aiter__()
+        _event, msg = await asyncio.wait_for(stream.__anext__(), timeout=_SUBSCRIBE_TIMEOUT)
+        # Probe the message for the fields we need.
+        if not (hasattr(msg, "measured_speed") and hasattr(msg, "measured_angular_rate")):
+            raise ValueError(f"path {path}: unexpected message type {type(msg)}")
+        log.debug("[odometry] subscribed AmigaTpdo1 at %s", path)
+        if not self.available:
+            print(f"\n[odometry] wheel speed available at {path}")
+        self._update(msg)
+        async for _event, msg in stream:
             if not self._running:
                 return
-            if first:
-                first = False
-                # Probe the message for the fields we need.
-                if not (hasattr(msg, "measured_speed") and hasattr(msg, "measured_angular_rate")):
-                    # Wrong message type on this path.
-                    raise ValueError(f"path {path}: unexpected message type {type(msg)}")
-                log.debug("[odometry] subscribed AmigaTpdo1 at %s", path)
-                if not self.available:
-                    print(f"\n[odometry] wheel speed available at {path}")
-            self._meas_speed = float(msg.measured_speed)
-            self._meas_angular = float(msg.measured_angular_rate)
-            self._meas_t = time.monotonic()
-            self.available = True
+            self._update(msg)
+
+    def _update(self, msg) -> None:
+        self._meas_speed = float(msg.measured_speed)
+        self._meas_angular = float(msg.measured_angular_rate)
+        self._meas_t = time.monotonic()
+        self.available = True
 
     # ------------------------------------------------------------------
     # Internal

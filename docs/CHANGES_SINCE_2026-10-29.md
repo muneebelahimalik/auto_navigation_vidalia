@@ -15,7 +15,8 @@ switched off or rolled back if the field says so.
 
 | Commit | Date | Change | Affects driving? | Field status | Switch off without a code change |
 |---|---|---|---|---|---|
-| (this commit) | 2026-11-13 | **Odometry pose logged** for rebuilding the map offline with live SLAM off: telemetry `odom_x/odom_y/odom_th_deg/v_meas/w_meas/odom_src`, scan `index.csv` gains `mono` + the pose | No (logging only) | Unit-tested; first field use 2026-11-13 | — |
+| (this commit) | 2026-11-13 | **Wheel odometry kept listening**: the canbus subscription was wrapped in a 5 s timeout that cancelled a WORKING stream, so distances, row length, U-turn arc and approach distance all used the COMMANDED speed (2026-11-13 run: `odom_src=cmd` on all 19 267 scans). Now only the first message is timed out (same as the IMU heading); a failed subscription prints a line | Yes: distances become measured, not commanded | Unit-tested (old code fails the new tests); check for `[odometry] wheel speed available` and `odom_src=wheel` | roll back this commit |
+| `90fe77f` | 2026-11-13 | **Odometry pose logged** for rebuilding the map offline with live SLAM off: telemetry `odom_x/odom_y/odom_th_deg/v_meas/w_meas/odom_src`, scan `index.csv` gains `mono` + the pose | No (logging only) | Unit-tested; first field use 2026-11-13 | — |
 | `090a151` | 2026-11-10 | **LiDAR reader thread**: every packet is read in a background thread; navigation takes the newest *complete* scan, so a slow loop skips whole scans instead of getting half-scans | Yes (input data) | Lab test only: fake LiDAR + slow consumer → 0 of 8 scans partial (old path: 7 of 8) | `--lidar-reader inline` |
 | `090a151` | 2026-11-10 | **numpy on one CPU core** (`OPENBLAS_NUM_THREADS=1` etc., set at the top of `row_follow.py`) — suspected cause of the 2× slowdown since the SLAM rework | Speed only | Not field-tested | prefix the command with `OPENBLAS_NUM_THREADS=6 OMP_NUM_THREADS=6` |
 | `090a151` | 2026-11-10 | **SLAM rate limit** `--slam-hz 2` (mapping only) | Speed only | Not field-tested | `--slam-hz 0` |
@@ -87,6 +88,26 @@ Conclusions:
 - Decision for driving: **`--no-slam`** with the new defaults. Keep
   `--save-scans 2` so the map can be rebuilt offline from the saved scans.
   To do: move SLAM out of the driving process (separate process or offline).
+
+## Field result 2026-11-13 — 3 onion beds, pure pursuit, `--no-slam` (`run_pursuit_20261113_201426`)
+
+Command: `--auto --preset onion --controller pursuit --speed 0.20 --beds-left 2
+--beds-right 0 --headland-arc-cap 4.5 --record --no-slam --save-scans 2`.
+
+- 3 of 3 beds, 717 m (commanded-speed odometry; see the odometry fix above),
+  49 min, **both U-turns completed on the IMU** (L 177.8°, R 178.0°; 8.0 m and
+  7.3 m of arc, ~30 s each). First onion U-turns in the field.
+- Loop 6.5 scans/s while driving (146 ms), **0 % half-scans**, 0.01 %
+  incomplete; 0 obstacle stops, 0 FOLLOW losses mid-row; speed 0.19 ± 0.02 m/s.
+- Self-reported tracking (the detector's own estimate, not ground truth):
+  lateral RMSE 7.6 cm (rows 5.6 / 8.3 / 8.4), median |lateral| 1.9–4.0 cm,
+  heading RMSE 2.1°.  The 41 cm maxima are at bed ends and post-turn re-entry;
+  mid-row values over 20 cm are 1–8-scan spikes at confidence ~0.5.
+- Re-entry after turn 2 was marginal: FOLLOW lost after 1.3 m (bed-presence
+  gate read `no-bed`), APPROACH crept straight for 2.66 m of its 3.0 m limit
+  before re-locking.  To investigate from the saved scans.
+- `dropout_scans` (1 525) counts scans with no crop points; in bed-shape mode
+  that is normal (young onions invisible), not LiDAR dropouts.
 
 ## Next field visit — what to run, in order
 
