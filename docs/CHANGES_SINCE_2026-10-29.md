@@ -59,6 +59,34 @@ git tag field-2026-11-06 43968a1
 git tag pre-slam-rework  7e6cbc4
 ```
 
+## Field result 2026-11-13 — speed test (`runs/speedtest_20261113_194101/`)
+
+Robot parked on an onion bed, perception only, 40 s per configuration.
+(The first attempt logged no scans because the Brain had lost its LiDAR
+address after a reboot. Fix: `sudo bash scripts/setup_lidar_network.sh` after
+every power-up.)
+
+| Configuration | scans/s | loop ms | incomplete % | half-scans % |
+|---|---|---|---|---|
+| 1 new defaults (thread reader, 1-core numpy, SLAM 2 Hz) | 3.6 | 225 | 1 | 1 |
+| 2 old inline reader | 8.7 | 124 | **50** | **35** |
+| 3 numpy on all cores | 2.9 | 328 | 2 | 1 |
+| 4 SLAM unlimited | 4.0 | 203 | 1 | 1 |
+| **5 no SLAM** | **7.7** | **119** | **1** | **1** |
+| 6 as on Nov 6 | 4.7 | 197 | 72 | 52 |
+
+Conclusions:
+- **The SLAM thread is what halves the loop.** Throttled to 2 Hz it still
+  costs ~100 ms per loop on the Jetson, presumably GIL contention with the
+  driving loop. Without it, the loop runs at 7.7 scans/s.
+- **Numpy on all cores makes it worse** (2.9 vs 3.6 scans/s), so the one-core
+  setting stays.
+- **The reader thread fixes the half-scans** (1 % vs 35–52 %). The old inline
+  reader is fast only because it hands over broken scans.
+- Decision for driving: **`--no-slam`** with the new defaults. Keep
+  `--save-scans 2` so the map can be rebuilt offline from the saved scans.
+  To do: move SLAM out of the driving process (separate process or offline).
+
 ## Next field visit — what to run, in order
 
 1. `bash scripts/field_speed_test.sh` (robot parked on a bed, ~5 min, does
