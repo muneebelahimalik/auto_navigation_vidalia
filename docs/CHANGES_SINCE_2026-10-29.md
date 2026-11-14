@@ -130,6 +130,27 @@ real estimates: lower peak and jerk than pursuit, better sim tracking).  The
 preset is unchanged until these are confirmed in the field.  (MPC noise 0.07
 was calmer still but lost the tracking edge in the sim — 9.3 cm.)
 
+## GNSS logs from 2026-11-06 — no RTK fix, not usable as ground truth
+
+`gnss_20261106_192425.jsonl` (15 min) and `gnss_20261106_194930.jsonl`
+(52 min), logged read-only by `scripts/gnss_logger.py` (topics `/pvt`,
+`/relposned`, `/ecef` on the gps service, 2.5 Hz).
+
+- **No RTK solution at any time**: the status flags show only `diff_soln`
+  (differential GPS), with no carrier-phase float or fixed flag.  Reported
+  horizontal accuracy 0.4–0.8 m (first file), median 1.35 m (second file; 9 %
+  of fixes with no position at all).  Base–rover accuracy (`/relposned`)
+  0.4–1.1 m.  8–11 satellites.
+- Along straight beds the track scatters 40 cm to 3 m about a straight line
+  and wanders by metres over minutes (`results/gnss/gnss_tracks_20261106.png`),
+  so it cannot measure a 5–10 cm cross-track error.
+- To use it as ground truth later, the receiver must report a FIXED carrier
+  solution, and FIXED must be checked: rover static on a marked point for
+  10 min (scatter < 2 cm), then two marked points a taped distance apart.
+- Field ground truth for the controller comparison: tire-track tape
+  measurements at flagged stations (offset = (dL − dR)/2 from the outer onion
+  rows).
+
 ## Next field visit — what to run, in order
 
 1. `bash scripts/field_speed_test.sh` (robot parked on a bed, ~5 min, does
