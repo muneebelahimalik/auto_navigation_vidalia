@@ -94,7 +94,8 @@ Conclusions:
 Command: `--auto --preset onion --controller pursuit --speed 0.20 --beds-left 2
 --beds-right 0 --headland-arc-cap 4.5 --record --no-slam --save-scans 2`.
 
-- 3 of 3 beds, 717 m (commanded-speed odometry; see the odometry fix above),
+- 3 of 3 beds, 534 m of bed (172 / 183 / 179 m; commanded-speed odometry, see
+  the odometry fix above; the summary's 717 m double-counted the last bed — fixed),
   49 min, **both U-turns completed on the IMU** (L 177.8°, R 178.0°; 8.0 m and
   7.3 m of arc, ~30 s each). First onion U-turns in the field.
 - Loop 6.5 scans/s while driving (146 ms), **0 % half-scans**, 0.01 %

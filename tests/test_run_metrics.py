@@ -144,3 +144,23 @@ def test_scan_health_block():
                                                   "lin_cmd", "ang_cmd", "n", "rows_done")}
                                for r in recs])["scan_health"]
     assert set(old) == {"interval_ms_p50", "interval_ms_p95"}
+
+
+def test_distance_does_not_count_the_last_row_twice():
+    """2026-11-14: rows_done increments at ROW_END while row_dist still holds
+    the finished row, so a 165.6 m single-bed run reported 331.3 m."""
+    from navigation.run_metrics import compute_run_metrics
+    recs = []
+    t = 0.0
+    for d in np.linspace(0, 165.6, 200):
+        recs.append({"t": t, "state": "FOLLOW", "rows_done": 0, "rows_total": 1,
+                     "row_dist": float(d), "lateral": 0.01, "heading_deg": 0.5,
+                     "conf": 0.9, "n": 50, "lin_cmd": 0.2, "ang_cmd": 0.0})
+        t += 0.13
+    for st in ("ROW_END", "DONE", "DONE"):
+        recs.append({"t": t, "state": st, "rows_done": 1, "rows_total": 1,
+                     "row_dist": 165.6, "lateral": 0.0, "heading_deg": 0.0,
+                     "conf": 0.3, "n": 20, "lin_cmd": 0.0, "ang_cmd": 0.0})
+        t += 0.13
+    m = compute_run_metrics(recs)
+    assert abs(m["distance_m"] - 165.6) < 0.01

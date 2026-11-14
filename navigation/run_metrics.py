@@ -161,8 +161,14 @@ def compute_run_metrics(records: List[dict], *, coverage: Optional[dict] = None)
     # (wheel odometry).  The SLAM path is only trusted if it roughly agrees
     # with the in-row odometry: on 2026-10-29 SLAM collapsed the along-row
     # motion (no odometry fed) and reported 7.9 m for a 180 m run.
+    # Only FOLLOW scans: after a row ends, rows_done increments while row_dist
+    # still holds the finished row's length (ROW_END / HEADLAND / DONE / the
+    # first APPROACH scan), which counted the last row twice (2026-11-14:
+    # a 165.6 m single-bed run reported 331.3 m).
     per_row_dist = {}
     for r in records:
+        if r.get("state") != "FOLLOW":
+            continue
         per_row_dist[int(r.get("rows_done", 0))] = max(
             per_row_dist.get(int(r.get("rows_done", 0)), 0.0),
             float(r.get("row_dist", 0.0) or 0.0))
