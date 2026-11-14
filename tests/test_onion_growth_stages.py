@@ -287,6 +287,24 @@ def test_navigator_calls_turn_hooks(monkeypatch):
     nav._enter(_S.APPROACH)
     assert det.calls[:2] == ["begin", "end"] and "reset" in det.calls
 
+    # A turn that re-acquires the next row ends straight in FOLLOW: the
+    # controller memory (MPC observer, RL integrator, pursuit integral) from
+    # the previous row, driven the other way, must be cleared there too.
+    class _Ctl:
+        n = 0
+
+        def reset(self):
+            _Ctl.n += 1
+
+        def compute(self, est):
+            return 0.0, 0.0
+    det2 = _Det()
+    nav2 = RowNavigator(None, det2, SafetyMonitor(), _Ctl())
+    nav2._enter(_S.ROW_END)
+    nav2._enter(_S.HEADLAND)
+    nav2._enter(_S.FOLLOW)
+    assert det2.calls == ["begin", "end"] and _Ctl.n == 1
+
 
 def test_bed_axis_trusts_count_cues_over_height_variance():
     """The height-variance cue is 5–17° off under a mature canopy but its
@@ -336,3 +354,31 @@ def test_bed_followed_past_the_last_onion_to_the_real_bed_end(stage, bed_h):
             lost = yr
         yr += 0.075
     assert lost is not None and 26.0 <= lost <= 29.5, (stage, lost)
+
+
+def test_each_bed_is_judged_on_its_own_relief_after_a_u_turn():
+    """Field 2026-11-13/14: beds 1-2 had ~9.8 cm relief, the start of bed 3
+    ~4 cm.  The bed-presence baseline survived the U-turn, so bed 3 read as
+    "no bed" 0.6 m in and the robot stopped (pursuit, MPC and RL alike).
+    end_turn() must start the presence / bed-end memory afresh."""
+    tall = OnionField(stage_config("bare", bed_h=0.15), seed=0)
+    low = OnionField(stage_config("bare", bed_h=0.045), seed=1)
+    for hooks in (True, False):
+        det = _det()
+        rng = np.random.default_rng(2)
+        for i in range(300):
+            det.update(tall.scan(0.0, 0.04 * i, rng=rng))
+        assert det._relief_cnt >= det.bed_latch_scans        # presence gate latched
+        if hooks:
+            det.begin_turn()
+            det.end_turn()
+        present, conf = [], []
+        for i in range(60):
+            e = det.update(low.scan(0.10, 0.04 * i, rng=rng))
+            present.append(det.last_bed_present)
+            conf.append(e.confidence)
+        if hooks:
+            assert all(present), sum(present)
+            assert min(conf[10:]) > 0.5, min(conf[10:])
+        else:                                    # no turn: a lower bed IS "bed ended"
+            assert not all(present)

@@ -1097,6 +1097,13 @@ class RowNavigator:
             elif prev_state == _S.HEADLAND and state != _S.HEADLAND:
                 if hasattr(self.detector, "end_turn"):
                     self.detector.end_turn()
+                # A turn that re-acquires the next row ends straight in FOLLOW
+                # (no APPROACH), which skipped the controller reset below: MPC's
+                # drift observer / plan, RL's drift integrator and pursuit's
+                # integral carried over from the previous row, driven in the
+                # opposite direction.
+                if state == _S.FOLLOW and hasattr(self.controller, "reset"):
+                    self.controller.reset()
             if state == _S.APPROACH and prev_state == _S.HEADLAND:
                 # New row: the smoothed estimates accumulated while the ROI
                 # swept across the headland are garbage; without a reset their

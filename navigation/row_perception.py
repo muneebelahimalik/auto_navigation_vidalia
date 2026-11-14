@@ -945,6 +945,28 @@ class RowDetector:
         """Navigator hook: the U-turn is over (any state after HEADLAND)."""
         self._turning = False
         self._bed_axis = None
+        self._new_bed_memory()
+
+    def _new_bed_memory(self) -> None:
+        """Judge each bed on its own relief.  The bed-presence and bed-end
+        baselines used to survive U-turns, so a bed with less relief than the
+        previous one read as "no bed" at its start (field 2026-11-13/14: bed 2
+        relief 9.8 cm, bed 3 ~4 cm → `no-bed` 0.6 m into bed 3, robot stopped
+        after the second U-turn with pursuit, MPC and RL; replaying the real
+        scans with a fresh baseline kept the bed present on 22/22 scans).
+        The presence gate re-latches after ``bed_latch_scans`` on the new bed."""
+        self._relief_base = None
+        self._relief_cnt = 0
+        self._relief_sm = None
+        self._present_run = 0
+        self.last_bed_present = True
+        self._far_base = None
+        self._q2_base = None
+        self._q2_tick = 0
+        self._bed_end_armed = False
+        self._bed_ending = False
+        self._qcut_run = 0
+        self._bed_y_cut = None
 
     # ------------------------------------------------------------------
     def _is_half_scan(self, pts: np.ndarray) -> bool:
