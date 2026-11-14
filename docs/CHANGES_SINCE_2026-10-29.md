@@ -153,6 +153,33 @@ was calmer still but lost the tracking edge in the sim — 9.3 cm.)
   measurements at flagged stations (offset = (dL − dR)/2 from the outer onion
   rows).
 
+## RL retrained on the November-refit onion simulator (2026-11-14) — no change of field policy
+
+Simulator profile `onion_nov` (refit on the 11-13 and 11-14 pure-pursuit
+runs, `a76551c`); PPO (gSDE) and ES, 3 seeds each, reward c_u 0.8 / c_du 8.0.
+Scored by `scripts/select_onion_policy.py`: 200 held-out sim episodes, plus the
+two MPC runs (11-13, 11-14; NOT used for the fit, 23 499 FOLLOW scans, 4 beds)
+replayed open-loop through every controller.
+
+| Controller | Sim xtrack cm | Sim heading ° | Sim jerk | Real \|ω\| ×pursuit | Real jerk ×pursuit | Real peak rad/s |
+|---|---|---|---|---|---|---|
+| pure pursuit | 9.37 | 4.64 | 0.0074 | 1.00 | 1.00 | 0.074 |
+| MPC (noise 0.10, temp 0.1) | 8.34 | 3.62 | 0.0196 | 1.67 | 4.51 | 0.143 |
+| **RL `ppo_onion_s1` (field policy)** | **8.60** | 4.45 | 0.0049 | 2.77 | **0.81** | **0.074** |
+| RL `follow_onion` (ES, Oct) | 7.99 | 4.52 | 0.0082 | 3.41 | 3.66 | 0.228 |
+| ES `onion_nov` s0 / s1 / s2 | **7.74 / 7.78 / 7.88** | 4.09 / 3.99 / 4.22 | 0.011 / 0.009 / 0.012 | 3.9 / 4.2 / 3.8 | 2.4 / 2.2 / 1.9 | 0.26 / 0.21 / 0.23 |
+| PPO `onion_nov` s0 / s1 / s2 | 8.95 / 8.61 / 8.96 | 4.28 / 4.52 / 4.25 | 0.004 / 0.005 / 0.004 | 2.7 / 3.2 / 3.6 | 0.62 / 1.05 / 1.07 | 0.079 / 0.080 / 0.079 |
+
+- No retrained policy beats `ppo_onion_s1` on both counts, so it stays the
+  field RL policy.  On the field-fitted simulator it tracks better than pure
+  pursuit (8.6 vs 9.4 cm) with lower jerk, and on unseen real estimates its
+  jerk and peak steering are at or below pursuit's.
+- The new ES policies track best in simulation (7.7–7.9 cm, better than MPC's
+  8.3) but steer 4× pursuit's effort with 3× its peak on the real estimates,
+  so they are an "aggressive" option only.
+- Every learned policy steers 2.7–4× pursuit's effort on the real estimates:
+  open-loop they react to estimate noise that pursuit's 2 m look-ahead filters.
+
 ## Next field visit — what to run, in order
 
 1. `bash scripts/field_speed_test.sh` (robot parked on a bed, ~5 min, does
