@@ -32,7 +32,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from navigation.rl_policy import MLPPolicy
 from sim.evaluate import (evaluate, policy_act_fn, pursuit_act_fn,
                           residual_act_fn, rollout)
-from sim.row_follow_env import EnvConfig, RowFollowEnv, onion_bed_config
+from sim.row_follow_env import EnvConfig, RowFollowEnv, onion_bed_config, profile_config
 
 
 ENV_STEPS = 0   # simulator steps consumed by training (for the learning curve)
@@ -78,7 +78,7 @@ def main() -> None:
     ap.add_argument("--init", default="", metavar="NPZ",
                     help="start from an existing policy (fine-tune, e.g. the soybean "
                          "policies/follow_field.npz on the onion profile) instead of random")
-    ap.add_argument("--profile", choices=["soybean", "onion"], default="soybean",
+    ap.add_argument("--profile", choices=["soybean", "onion", "onion_nov"], default="soybean",
                     help="disturbance model: 'soybean' (default sim: cross-slope drift, "
                          "white noise, dropouts) or 'onion' (system-identified from the "
                          "2026-10-15 Vidalia bed-relief run: estimate noise + slow target "
@@ -92,7 +92,7 @@ def main() -> None:
 
     rng = np.random.default_rng(args.seed)
     weights = dict(c_du=args.c_du, c_e=args.c_e, c_theta=args.c_theta, c_u=args.c_u)
-    cfg = onion_bed_config(**weights) if args.profile == "onion" else EnvConfig(**weights)
+    cfg = profile_config(args.profile, **weights)
     print(f"[sim profile: {args.profile}]")
     env = RowFollowEnv(cfg)
     if args.init:

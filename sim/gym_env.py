@@ -27,9 +27,9 @@ import numpy as np
 from gymnasium import spaces
 
 from navigation.rl_policy import encode_obs
-from sim.row_follow_env import EnvConfig, RowFollowEnv, onion_bed_config
+from sim.row_follow_env import EnvConfig, RowFollowEnv, profile_config
 
-PROFILES = ("soybean", "onion")
+PROFILES = ("soybean", "onion", "onion_nov")
 OBS_BOUND = 10.0
 
 
@@ -37,7 +37,7 @@ def make_config(profile: str = "soybean", **reward_weights) -> EnvConfig:
     """Disturbance profile + optional reward-weight overrides (c_e, c_theta, c_u, c_du)."""
     if profile not in PROFILES:
         raise ValueError(f"profile must be one of {PROFILES}")
-    return onion_bed_config(**reward_weights) if profile == "onion" else EnvConfig(**reward_weights)
+    return profile_config(profile, **reward_weights)
 
 
 class RowFollowGymEnv(gym.Env):

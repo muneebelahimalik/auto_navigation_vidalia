@@ -40,9 +40,12 @@ from sim.gym_env import make_config                                  # noqa: E40
 ALGOS = ("es", "ppo", "sac", "sac1m")
 LABEL = {"es": "ES (NumPy)", "ppo": "PPO (SB3)", "sac": "SAC (SB3) 0.3 M",
          "sac1m": "SAC (SB3) 1 M"}
-DEPLOYED = {"soybean": "policies/follow_field.npz", "onion": "policies/follow_onion.npz"}
+DEPLOYED = {"soybean": "policies/follow_field.npz", "onion": "policies/follow_onion.npz",
+            "onion_nov": "policies/follow_onion.npz"}
 # MPC settings used on the robot for each profile (see --preset onion in row_follow.py).
-MPC_KW = {"soybean": {}, "onion": dict(noise_sigma=0.20, temperature=0.3, drift_gain=0.05)}
+MPC_KW = {"soybean": {}, "onion": dict(noise_sigma=0.20, temperature=0.3, drift_gain=0.05),
+          # field setting since 2026-11-13 (replay-tuned, docs/CHANGES_SINCE_2026-10-29.md)
+          "onion_nov": dict(noise_sigma=0.10, temperature=0.1, drift_gain=0.05)}
 VALIDATION_SEEDS = list(range(10_000, 10_064))   # model-selection seeds
 METRICS = ("xtrack_cm", "heading_deg", "jerk", "effort", "success_pct", "return")
 
@@ -157,7 +160,7 @@ def plot_curves(profiles, res_dir: Path, weights, algos=ALGOS) -> None:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="Compare ES / PPO / SAC steering policies")
-    ap.add_argument("--profile", action="append", choices=["soybean", "onion"])
+    ap.add_argument("--profile", action="append", choices=["soybean", "onion", "onion_nov"])
     ap.add_argument("--episodes", type=int, default=200)
     ap.add_argument("--seed-base", type=int, default=50_000)
     ap.add_argument("--policies", default="policies/trainers")

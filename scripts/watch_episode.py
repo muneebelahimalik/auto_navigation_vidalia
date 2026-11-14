@@ -35,8 +35,11 @@ from sim.evaluate import mpc_act_fn, policy_act_fn, pursuit_act_fn      # noqa: 
 from sim.gym_env import make_config                                     # noqa: E402
 from sim.row_follow_env import RowFollowEnv                             # noqa: E402
 
-DEPLOYED = {"soybean": "policies/follow_field.npz", "onion": "policies/follow_onion.npz"}
-MPC_KW = {"soybean": {}, "onion": dict(noise_sigma=0.20, temperature=0.3, drift_gain=0.05)}
+DEPLOYED = {"soybean": "policies/follow_field.npz", "onion": "policies/follow_onion.npz",
+            "onion_nov": "policies/follow_onion.npz"}
+MPC_KW = {"soybean": {}, "onion": dict(noise_sigma=0.20, temperature=0.3, drift_gain=0.05),
+          # field setting since 2026-11-13 (replay-tuned, docs/CHANGES_SINCE_2026-10-29.md)
+          "onion_nov": dict(noise_sigma=0.10, temperature=0.1, drift_gain=0.05)}
 COLORS = {"pure pursuit": "#555555", "MPC": "#e08a1e", "ES (deployed)": "#2a6fdb",
           "PPO": "#d1495b", "SAC": "#2e9e6a"}
 
@@ -75,7 +78,7 @@ def controllers(profile: str, pol_dir: Path, train_seed: int) -> dict:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="Watch controllers drive one simulated row")
-    ap.add_argument("--profile", choices=["soybean", "onion"], default="soybean")
+    ap.add_argument("--profile", choices=["soybean", "onion", "onion_nov"], default="soybean")
     ap.add_argument("--seed", type=int, default=50_000, help="test episode seed")
     ap.add_argument("--hardest", action="store_true",
                     help="pick the test seed (50000–50199) with the steepest cross-slope drift")

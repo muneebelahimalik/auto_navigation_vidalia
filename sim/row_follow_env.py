@@ -135,6 +135,35 @@ def onion_bed_config(**overrides) -> "EnvConfig":
 ONION_FIT = dict(e_noise=0.0691, theta_noise=0.0192, e_bias_std=0.0223, e_bias_rho=0.9194,
                  th_bias_std=0.0022, th_bias_rho=0.9631)
 
+# Refit 2026-11-14 on 6 beds / 2 fields / 34 916 steady FOLLOW scans: the
+# 2026-11-13 and 2026-11-14 three-bed pure-pursuit runs (onions ~0.1-0.2 m,
+# 1.035 m mount, 6.5-7.5 scans/s), with the detector EMA also fitted:
+#   python3 scripts/calibrate_sim_from_run.py <1113>/telemetry.jsonl \
+#       <1114>/telemetry.jsonl --iters 800 --seed 1 --fit-ema       (loss 0.57)
+# field vs fit: lateral std 6.3 / 6.1 cm, scan-to-scan 2.4 / 2.7 cm, lateral
+# autocorrelation 0.93 / 0.90 (1 scan), 0.61 / 0.41 (10 — the field estimate
+# wanders more slowly than this noise model can reproduce), heading std
+# 1.5° / 2.2°, |ω| 0.0080 / 0.0092 rad/s.
+ONION_NOV_FIT = dict(e_noise=0.0415, theta_noise=0.0034, e_bias_std=0.0490, e_bias_rho=0.8247,
+                     th_bias_std=0.0000, th_bias_rho=0.9768)
+ONION_NOV_EMA = 0.3856
+
+
+def onion_nov_config(**overrides) -> "EnvConfig":
+    """Onion profile refit on the November 2026 field runs (see ONION_NOV_FIT);
+    same structure as :func:`onion_bed_config`, new noise parameters."""
+    base = dict(
+        max_linear=0.20,
+        grade_drift_std=0.004, theta_noise_grade_k=0.0,
+        dropout_p=0.002,
+        e_noise=ONION_NOV_FIT["e_noise"], theta_noise=ONION_NOV_FIT["theta_noise"],
+        e_bias_std=ONION_NOV_FIT["e_bias_std"], e_bias_rho=ONION_NOV_FIT["e_bias_rho"],
+        th_bias_std=ONION_NOV_FIT["th_bias_std"], th_bias_rho=ONION_NOV_FIT["th_bias_rho"],
+        obs_ema=ONION_NOV_EMA,
+    )
+    base.update(overrides)
+    return EnvConfig(**base)
+
 
 class RowFollowEnv:
     OBS_DIM = 5   # [lateral, heading, confidence, prev_action, drift_integral]
@@ -252,3 +281,18 @@ class RowFollowEnv:
         info = {"e": float(self._e), "theta": float(self._theta), "v": float(v),
                 "a": a, "off_road": off_road, "slip": self._slip, "grade": self._grade}
         return obs, float(reward), bool(done), info
+
+
+PROFILE_NAMES = ("soybean", "onion", "onion_nov")
+
+
+def profile_config(profile: str = "soybean", **overrides) -> "EnvConfig":
+    """Simulator profile by name (NumPy only): 'soybean' (defaults), 'onion'
+    (2026-10-15 fit) or 'onion_nov' (2026-11 refit)."""
+    if profile == "onion":
+        return onion_bed_config(**overrides)
+    if profile == "onion_nov":
+        return onion_nov_config(**overrides)
+    if profile == "soybean":
+        return EnvConfig(**overrides)
+    raise ValueError(f"profile must be one of {PROFILE_NAMES}")

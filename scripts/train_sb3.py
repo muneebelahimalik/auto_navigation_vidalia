@@ -160,7 +160,7 @@ def build(algo: str, env, seed: int, explore: str = "gsde"):
 def main() -> None:
     ap = argparse.ArgumentParser(description="Train steering with Stable-Baselines3 PPO/SAC")
     ap.add_argument("--algo", choices=["ppo", "sac"], required=True)
-    ap.add_argument("--profile", choices=["soybean", "onion"], default="soybean")
+    ap.add_argument("--profile", choices=["soybean", "onion", "onion_nov"], default="soybean")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--timesteps", type=int, default=1_000_000)
     ap.add_argument("--n-envs", type=int, default=8, help="parallel envs (PPO only)")
