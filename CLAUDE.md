@@ -126,7 +126,11 @@ cd ~/auto_navigation_vidalia
 > sending field data:** `docs/DEV_PC.md` — `scripts/watch_episode.py` plots /
 > animates every controller on one simulated test episode;
 > `scripts/pack_run.py` packs a `--record` run into one git-committable
-> `field_data/<run>.npz` (int16 mm points) and `--unpack`s it back.
+> `field_data/<run>.npz` (int16 mm points) and `--unpack`s it back.  **Field
+> experiment design** (controllers × establishment × stage, Graeco-Latin
+> schedule, tape ground truth, analysis plan): `docs/EXPERIMENTAL_PLAN.md`;
+> schedules from `scripts/make_run_schedule.py`; data sheets in
+> `docs/field_sheets/`.
 
 ### Unit tests (any machine — no hardware, no farm-ng SDK required)
 
